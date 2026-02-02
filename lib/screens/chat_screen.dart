@@ -35,7 +35,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _typingTimer;
   Timer? _typingUpdateThrottle;
   DateTime? _lastTypingUpdate;
-  Color _headerColor = const Color(0xFF1E1E1E); // Default dark color
+  Color _headerColor = const Color(0xFF4C1D95); // Default purple color
   bool _showResetButton = false;
 
   @override
@@ -388,16 +388,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _sendMessage() {
+  Future<void> _sendMessage() async {
     final content = _messageController.text.trim();
     if (content.isEmpty) return;
-
-    // Send via Socket.IO for real-time delivery
-    _socketService.sendMessage(
-      recipientId: widget.otherUser.id,
-      content: content,
-      messageType: 'text',
-    );
 
     // Create optimistic message for immediate UI update
     final optimisticMessage = Message(
@@ -433,6 +426,63 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom();
     });
+
+    // Try to send message
+    try {
+      // Check if Socket.IO is connected
+      if (_socketService.isConnected) {
+        // Send via Socket.IO for real-time delivery
+        debugPrint('✅ Sending message via Socket.IO');
+        _socketService.sendMessage(
+          recipientId: widget.otherUser.id,
+          content: content,
+          messageType: 'text',
+        );
+      } else {
+        // Fallback to REST API
+        debugPrint('⚠️ Socket.IO not connected, using REST API fallback');
+        final sentMessage = await MessageService.sendMessage(
+          recipientId: widget.otherUser.id,
+          content: content,
+          messageType: 'text',
+        );
+        
+        // Update optimistic message with real message data
+        if (sentMessage != null && mounted) {
+          setState(() {
+            final index = _messages.indexWhere((m) => m.id == optimisticMessage.id);
+            if (index != -1) {
+              _messages[index] = sentMessage;
+            }
+          });
+          debugPrint('✅ Message sent via REST API');
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error sending message: $e');
+      // Update message status to failed
+      if (mounted) {
+        setState(() {
+          final index = _messages.indexWhere((m) => m.id == optimisticMessage.id);
+          if (index != -1) {
+            _messages[index] = Message(
+              id: _messages[index].id,
+              senderId: _messages[index].senderId,
+              recipientId: _messages[index].recipientId,
+              content: _messages[index].content,
+              messageType: _messages[index].messageType,
+              timestamp: _messages[index].timestamp,
+              timestampMs: _messages[index].timestampMs,
+              isRead: _messages[index].isRead,
+              status: 'failed',
+              threadId: _messages[index].threadId,
+              reactions: _messages[index].reactions,
+              isDeleted: _messages[index].isDeleted,
+            );
+          }
+        });
+      }
+    }
   }
 
   void _onTextChanged(String text) {
@@ -654,7 +704,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: false,
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: const Color(0xFF2C2C2C),
       appBar: AppBar(
         backgroundColor: _headerColor,
         elevation: 0,
@@ -764,7 +814,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? const EdgeInsets.symmetric(horizontal: 16, vertical: 8)
                 : EdgeInsets.zero,
             decoration: const BoxDecoration(
-              color: Color(0xFF1A1A1A),
+              color: Color(0xFF2C2C2C),
               border: Border(
                 top: BorderSide(color: Color(0xFF3D3D3D), width: 1),
               ),
@@ -802,7 +852,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       hintText: 'Type a message...',
                       hintStyle: TextStyle(color: Colors.grey[600]),
                       filled: true,
-                      fillColor: const Color(0xFF1A1A1A),
+                      fillColor: const Color(0xFF4D4D4D),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide.none,

@@ -29,8 +29,14 @@ class LobbyService {
         final lobbyUsers = data['lobby_users'] as List;
         return lobbyUsers.map((json) => LobbyUser.fromJson(json)).toList();
       } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['error'] ?? 'Failed to load lobby users');
+        debugPrint('❌ Lobby API Error - Status: ${response.statusCode}');
+        debugPrint('❌ Response body: ${response.body}');
+        try {
+          final error = jsonDecode(response.body);
+          throw Exception(error['error'] ?? 'Failed to load lobby users');
+        } catch (e) {
+          throw Exception('Failed to load lobby users - Status: ${response.statusCode}');
+        }
       }
     } catch (e) {
       debugPrint('Get lobby users error: $e');

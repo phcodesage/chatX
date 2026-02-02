@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'dart:async';
+import '../config/api_config.dart';
 
 /// Service for handling Socket.IO real-time communication
 class SocketService {
@@ -53,8 +54,8 @@ class SocketService {
       return;
     }
 
-    // Use the same base URL as the API
-    const serverUrl = 'https://dev.flask-meet.site';
+    // Use the same base URL as the API from centralized config
+    final serverUrl = ApiConfig.baseUrl;
 
     debugPrint('=== Attempting Socket.IO Connection ===');
     debugPrint('Server URL: $serverUrl');
@@ -171,7 +172,7 @@ class SocketService {
     });
 
     // Presence events
-    _socket!.on('presence_update', (data) {
+    _socket!.on('user_status_change', (data) {
       debugPrint('👤 Presence update: $data');
       onPresenceUpdate?.call(data as Map<String, dynamic>);
     });
