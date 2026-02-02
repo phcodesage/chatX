@@ -116,4 +116,51 @@ class MessageService {
       debugPrint('Mark as read error: $e');
     }
   }
+
+  /// Upload a file to the server
+  static Future<Map<String, dynamic>?> uploadFile({
+    required dynamic file,
+    required int recipientId,
+  }) async {
+    try {
+      final token = await StorageService.getToken();
+      
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final uri = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.mobilePrefix}/messages/upload');
+      
+      final request = http.MultipartRequest('POST', uri);
+      request.headers['Authorization'] = 'Bearer $token';
+      request.fields['recipient_id'] = recipientId.toString();
+      
+      // Add file to request
+      if (file is http.MultipartFile) {
+        request.files.add(file);
+      } else {
+        // Assume it's a dart:io File
+        request.files.add(await http.MultipartFile.fromPath('file', file.path));
+      }
+
+      final streamedResponse = await request.send().timeout(const Duration(minutes: 2));
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        return {
+          'success': true,
+          'file_url': data['file_url'] ?? data['url'],
+          'file_id': data['file_id'] ?? data['id'],
+          ...data,
+        };
+      } else {
+        final error = jsonDecode(response.body);
+        throw Exception(error['error'] ?? 'Upload failed');
+      }
+    } catch (e) {
+      debugPrint('Upload file error: $e');
+      return {'success': false, 'error': e.toString()};
+    }
+  }
 }

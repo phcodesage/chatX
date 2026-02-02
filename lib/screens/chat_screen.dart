@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:mime/mime.dart';
 import '../models/lobby_user.dart';
 import '../models/message.dart';
 import '../services/message_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/color_picker_modal.dart';
+import '../config/api_config.dart';
 
 /// Chat screen for messaging with a specific user
 class ChatScreen extends StatefulWidget {
@@ -109,19 +114,28 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     };
 
-    // Listen for typing indicator
+    // Listen for typing indicator (includes live typing preview)
     _socketService.onUserTyping = (data) {
       if (data['user_id'] == widget.otherUser.id) {
         setState(() {
-          _otherUserTyping = data['is_typing'] ?? false;
-          if (!_otherUserTyping) {
+          final isTyping = data['is_typing'] ?? false;
+          final message = data['message'] as String? ?? '';
+          
+          if (isTyping) {
+            _otherUserTyping = true;
+            // Update preview if message is provided
+            if (message.isNotEmpty) {
+              _typingPreview = message;
+            }
+          } else {
+            _otherUserTyping = false;
             _typingPreview = '';
           }
         });
       }
     };
 
-    // Listen for live typing preview
+    // Listen for live typing preview (separate event if used)
     _socketService.onTypingUpdate = (data) {
       if (data['user_id'] == widget.otherUser.id || 
           data['sender_id'] == widget.otherUser.id) {
@@ -159,9 +173,59 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     };
 
+    // Listen for file messages (received from web)
+    _socketService.onFileReceived = (data) {
+      debugPrint('📎 Received file_message in chat: $data');
+      if (data['sender_id'] == widget.otherUser.id) {
+        _handleIncomingFileMessage(data);
+      }
+    };
     // Listen for all messages deleted event
     _socketService.onAllMessagesDeleted = (data) {
       _handleAllMessagesDeleted(data);
+    };
+
+    // Listen for file messages from web
+    _socketService.onFileReceived = (data) {
+      debugPrint('📎 File message received in chat: $data');
+      // Only process if it's from the current conversation partner
+      if (data['sender_id'] == widget.otherUser.id) {
+        final now = DateTime.now();
+        final timestampMs = data['timestamp_ms'] ?? now.millisecondsSinceEpoch;
+        // Create a message from the file data
+        final message = Message(
+          id: data['message_id'] ?? timestampMs,
+          senderId: data['sender_id'],
+          recipientId: _currentUserId ?? 0,
+          content: data['file_name'] ?? 'File',
+          messageType: (data['file_type'] as String?)?.startsWith('image/') == true ? 'image' : 'file',
+          timestamp: now.toIso8601String(),
+          timestampMs: timestampMs,
+          isRead: false,
+          status: 'delivered',
+          threadId: '',
+          reactions: {},
+          isDeleted: false,
+          fileUrl: data['file_url'],
+          fileName: data['file_name'],
+          fileType: data['file_type'],
+          fileSize: data['file_size'],
+        );
+        
+        setState(() {
+          _messages.insert(0, message);
+        });
+        
+        // Play message sound
+        try {
+          _audioPlayer.play(AssetSource('sounds/splat2.m4a'));
+        } catch (e) {
+          debugPrint('Error playing message sound: $e');
+        }
+        
+        // Scroll to bottom
+        _scrollToBottom();
+      }
     };
   }
 
@@ -674,6 +738,460 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Handle incoming file message from web
+  void _handleIncomingFileMessage(Map<String, dynamic> data) {
+    final now = DateTime.now();
+    final fileUrl = data['file_url'] as String?;
+    final fileName = data['file_name'] as String? ?? 'File';
+    final fileType = data['file_type'] as String? ?? 'application/octet-stream';
+    final fileSize = data['file_size'] as int? ?? 0;
+    final messageType = fileType.startsWith('image/') ? 'image' : 
+                        fileType.startsWith('video/') ? 'video' : 'file';
+    
+    final message = Message(
+      id: data['message_id'] ?? now.millisecondsSinceEpoch,
+      senderId: widget.otherUser.id,
+      recipientId: _currentUserId!,
+      content: fileName,
+      messageType: messageType,
+      timestamp: data['timestamp'] ?? now.toIso8601String(),
+      timestampMs: data['timestamp_ms'] ?? now.millisecondsSinceEpoch,
+      isRead: false,
+      status: 'received',
+      threadId: '',
+      reactions: {},
+      isDeleted: false,
+      fileUrl: fileUrl,
+      fileName: fileName,
+      fileType: fileType,
+      fileSize: fileSize,
+    );
+
+    setState(() {
+      _messages.insert(0, message);
+    });
+
+    // Scroll to bottom to show the new message
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+    });
+    
+    // Play notification sound
+    try {
+      _audioPlayer.play(AssetSource('sounds/notif-sound.wav'));
+    } catch (e) {
+      debugPrint('Error playing notification sound: $e');
+    }
+  }
+
+  final ImagePicker _imagePicker = ImagePicker();
+
+  /// Pick a file from device storage
+  Future<void> _pickFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        allowMultiple: false,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        if (file.path != null) {
+          _showFilePreviewModal(File(file.path!), file.name, isFromCamera: false);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error picking file: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error picking file: $e')),
+        );
+      }
+    }
+  }
+
+  bool _useFrontCamera = false;
+
+  /// Take a photo with camera
+  Future<void> _takePhoto() async {
+    try {
+      final XFile? photo = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+        preferredCameraDevice: _useFrontCamera ? CameraDevice.front : CameraDevice.rear,
+      );
+
+      if (photo != null) {
+        _showFilePreviewModal(File(photo.path), photo.name, isFromCamera: true);
+      }
+    } catch (e) {
+      debugPrint('Error taking photo: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error accessing camera: $e')),
+        );
+      }
+    }
+  }
+
+  /// Show file preview modal before sending
+  void _showFilePreviewModal(File file, String fileName, {bool isFromCamera = false}) {
+    final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
+    final isImage = mimeType.startsWith('image/');
+    final isVideo = mimeType.startsWith('video/');
+    final fileSize = file.lengthSync();
+    
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: const BoxDecoration(
+          color: Color(0xFF2D2D2D),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Title
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Send File',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            // Preview area
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  children: [
+                    // Image/Video/File preview
+                    if (isImage)
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.file(
+                            file,
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      )
+                    else if (isVideo)
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.videocam, color: Colors.white, size: 64),
+                                SizedBox(height: 8),
+                                Text(
+                                  'Video File',
+                                  style: TextStyle(color: Colors.white, fontSize: 16),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.grey[800],
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _getFileIcon(mimeType),
+                                  color: Colors.white,
+                                  size: 64,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  fileName,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _formatFileSize(fileSize),
+                                  style: TextStyle(
+                                    color: Colors.grey[400],
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    // File info
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[800],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(_getFileIcon(mimeType), color: Colors.white70, size: 24),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  fileName,
+                                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                Text(
+                                  '${_formatFileSize(fileSize)} • $mimeType',
+                                  style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Action buttons
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  // Camera switch button (only for camera captures)
+                  if (isFromCamera) ...[
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        setState(() {
+                          _useFrontCamera = !_useFrontCamera;
+                        });
+                        _takePhoto();
+                      },
+                      icon: const Icon(Icons.cameraswitch),
+                      label: Text(_useFrontCamera ? 'Switch to Back Camera' : 'Switch to Front Camera'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white70,
+                        side: const BorderSide(color: Colors.white30),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  Row(
+                    children: [
+                      // Replace / Take Another button
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            if (isFromCamera) {
+                              _takePhoto();
+                            } else {
+                              _pickFile();
+                            }
+                          },
+                          icon: Icon(isFromCamera ? Icons.camera_alt : Icons.refresh),
+                          label: Text(isFromCamera ? 'Take Another' : 'Replace'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: const BorderSide(color: Colors.white54),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Send button
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _uploadAndSendFile(file, fileName, mimeType);
+                          },
+                          icon: const Icon(Icons.send),
+                          label: const Text('Send'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6D28D9),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _getFileIcon(String mimeType) {
+    if (mimeType.startsWith('image/')) return Icons.image;
+    if (mimeType.startsWith('video/')) return Icons.videocam;
+    if (mimeType.startsWith('audio/')) return Icons.audiotrack;
+    if (mimeType.contains('pdf')) return Icons.picture_as_pdf;
+    if (mimeType.contains('word') || mimeType.contains('document')) return Icons.description;
+    if (mimeType.contains('excel') || mimeType.contains('spreadsheet')) return Icons.table_chart;
+    if (mimeType.contains('zip') || mimeType.contains('archive')) return Icons.folder_zip;
+    return Icons.insert_drive_file;
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
+  /// Upload file to server and send via socket
+  Future<void> _uploadAndSendFile(File file, String fileName, String mimeType) async {
+    try {
+      // Show uploading indicator
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 12),
+              Text('Uploading file...'),
+            ],
+          ),
+          duration: Duration(seconds: 30),
+        ),
+      );
+
+      // Upload file using MessageService
+      final result = await MessageService.uploadFile(
+        file: file,
+        recipientId: widget.otherUser.id,
+      );
+
+      // Hide uploading indicator
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+      if (result != null && result['success'] == true) {
+        final fileData = result['file'] ?? result;
+        
+        // Emit file message via socket
+        _socketService.emit('send_file', {
+          'recipient_id': widget.otherUser.id,
+          'file_id': fileData['file_id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
+          'file_name': fileName,
+          'file_type': mimeType,
+          'file_size': file.lengthSync(),
+          'file_url': fileData['file_url'] ?? fileData['url'],
+        });
+
+        // Create local message to show in chat
+        final now = DateTime.now();
+        final message = Message(
+          id: DateTime.now().millisecondsSinceEpoch,
+          senderId: _currentUserId!,
+          recipientId: widget.otherUser.id,
+          content: fileName,
+          messageType: mimeType.startsWith('image/') ? 'image' : 
+                       mimeType.startsWith('video/') ? 'video' : 'file',
+          timestamp: now.toIso8601String(),
+          timestampMs: now.millisecondsSinceEpoch,
+          isRead: false,
+          status: 'sent',
+          threadId: '',
+          reactions: {},
+          isDeleted: false,
+          fileUrl: fileData['file_url'] ?? fileData['url'],
+          fileName: fileName,
+          fileType: mimeType,
+          fileSize: file.lengthSync(),
+        );
+
+        setState(() {
+          _messages.insert(0, message);
+        });
+        _scrollToBottom();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('File sent!'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } else {
+        throw Exception(result?['error'] ?? 'Upload failed');
+      }
+    } catch (e) {
+      debugPrint('Error uploading file: $e');
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to send file: $e')),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
     _messageController.dispose();
@@ -964,12 +1482,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     // Send File
                     ElevatedButton(
-                      onPressed: () {
-                        // TODO: Implement send file
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Send File - Coming soon!')),
-                        );
-                      },
+                      onPressed: _pickFile,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF10B981), // Green
                         foregroundColor: Colors.white,
@@ -980,6 +1493,20 @@ class _ChatScreenState extends State<ChatScreen> {
                         textStyle: const TextStyle(fontSize: 12),
                       ),
                       child: const Text('Send File'),
+                    ),
+                    // Camera
+                    ElevatedButton(
+                      onPressed: _takePhoto,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF3B82F6), // Blue
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        textStyle: const TextStyle(fontSize: 12),
+                      ),
+                      child: const Text('Camera'),
                     ),
                     // Record Voice Message
                     ElevatedButton(
@@ -1063,40 +1590,28 @@ class _ChatScreenState extends State<ChatScreen> {
           color: const Color(0xFFA32CC4), // Purple color for typing preview
           borderRadius: BorderRadius.circular(18),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(
-              width: 12,
-              height: 12,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white70),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                _typingPreview,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
-          ],
+        child: Text(
+          '${widget.otherUser.fullName}: $_typingPreview',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+          ),
         ),
       ),
     );
   }
 
   Widget _buildMessageBubble(Message message, bool isSentByMe) {
+    final bool isImage = message.messageType == 'image' || 
+        (message.fileType?.startsWith('image/') ?? false);
+    final bool isVideo = message.messageType == 'video' || 
+        (message.fileType?.startsWith('video/') ?? false);
+    final bool isMedia = isImage || isVideo;
+    
     return Align(
       alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
@@ -1112,42 +1627,208 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              message.content,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 15,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  message.formattedTime,
-                  style: TextStyle(
-                    color: Colors.grey[400],
-                    fontSize: 11,
+            // Image/Video content
+            if (isMedia && message.fileUrl != null) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: Radius.circular(message.content.isNotEmpty && !_isOnlyFilename(message.content) ? 0 : (isSentByMe ? 16 : 4)),
+                  bottomRight: Radius.circular(message.content.isNotEmpty && !_isOnlyFilename(message.content) ? 0 : (isSentByMe ? 4 : 16)),
+                ),
+                child: GestureDetector(
+                  onTap: () => _openMediaViewer(message),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      if (isImage)
+                        Image.network(
+                          message.fileUrl!,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Container(
+                              height: 150,
+                              color: Colors.grey[800],
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value: loadingProgress.expectedTotalBytes != null
+                                      ? loadingProgress.cumulativeBytesLoaded / 
+                                        loadingProgress.expectedTotalBytes!
+                                      : null,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              height: 100,
+                              color: Colors.grey[800],
+                              child: const Center(
+                                child: Icon(Icons.broken_image, color: Colors.white54, size: 40),
+                              ),
+                            );
+                          },
+                        )
+                      else if (isVideo)
+                        Container(
+                          height: 150,
+                          color: Colors.black87,
+                          child: const Center(
+                            child: Icon(Icons.play_circle_fill, color: Colors.white, size: 60),
+                          ),
+                        ),
+                      // Play button overlay for video
+                      if (isVideo)
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.black45,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.play_arrow, color: Colors.white, size: 36),
+                        ),
+                    ],
                   ),
                 ),
-                if (isSentByMe) ...[
-                  const SizedBox(width: 4),
-                  Icon(
-                    message.isRead
-                        ? Icons.done_all
-                        : (message.status == 'delivered'
-                            ? Icons.done_all
-                            : Icons.done),
-                    size: 14,
-                    color: message.isRead ? const Color(0xFF4CAF50) : Colors.grey[400],
+              ),
+            ],
+            // Text content (if not just filename)
+            if (!isMedia || (message.content.isNotEmpty && !_isOnlyFilename(message.content)))
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Text(
+                  isMedia ? (message.fileName ?? message.content) : message.content,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
                   ),
+                ),
+              )
+            else if (isMedia)
+              const SizedBox(height: 8),
+            // Timestamp and read status
+            Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                bottom: 8,
+                top: isMedia && (message.content.isEmpty || _isOnlyFilename(message.content)) ? 0 : 0,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Show file size for file messages
+                  if (message.fileSize != null && message.fileSize! > 0) ...[
+                    Text(
+                      _formatFileSize(message.fileSize!),
+                      style: TextStyle(
+                        color: Colors.grey[500],
+                        fontSize: 11,
+                      ),
+                    ),
+                    Text(
+                      ' • ',
+                      style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                    ),
+                  ],
+                  Text(
+                    message.formattedTime,
+                    style: TextStyle(
+                      color: Colors.grey[400],
+                      fontSize: 11,
+                    ),
+                  ),
+                  if (isSentByMe) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      message.isRead
+                          ? Icons.done_all
+                          : (message.status == 'delivered'
+                              ? Icons.done_all
+                              : Icons.done),
+                      size: 14,
+                      color: message.isRead ? const Color(0xFF4CAF50) : Colors.grey[400],
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// Check if content is just a filename (for media messages)
+  bool _isOnlyFilename(String content) {
+    if (content.isEmpty) return true;
+    // Check if it looks like a filename with extension
+    final filenamePattern = RegExp(r'^[\w\-\.\s]+\.\w{2,5}$');
+    return filenamePattern.hasMatch(content.trim());
+  }
+
+  /// Open full screen media viewer
+  void _openMediaViewer(Message message) {
+    if (message.fileUrl == null) return;
+    
+    final isVideo = message.messageType == 'video' || 
+        (message.fileType?.startsWith('video/') ?? false);
+    
+    if (isVideo) {
+      // For video, we could open in external player or implement video player
+      // For now, show a snackbar
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Video: ${message.fileName ?? "Video"}'),
+          action: SnackBarAction(
+            label: 'Open',
+            onPressed: () {
+              // Could use url_launcher to open video URL
+            },
+          ),
+        ),
+      );
+    } else {
+      // Show image in full screen dialog
+      showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: EdgeInsets.zero,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Dark background
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(color: Colors.black87),
+              ),
+              // Image
+              Center(
+                child: InteractiveViewer(
+                  child: Image.network(
+                    message.fileUrl!,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+              // Close button
+              Positioned(
+                top: 40,
+                right: 16,
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
   }
 
   Color _getAvatarColor() {

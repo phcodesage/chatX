@@ -26,6 +26,7 @@ class SocketService {
   Function(Map<String, dynamic>)? onColorChanged;
   Function(Map<String, dynamic>)? onColorReset;
   Function(Map<String, dynamic>)? onAllMessagesDeleted;
+  Function(Map<String, dynamic>)? onFileReceived;
 
   bool get isConnected => _socket?.connected ?? false;
   int? get currentUserId => _currentUserId;
@@ -206,6 +207,12 @@ class SocketService {
       debugPrint('📭 All messages deleted: $data');
       onAllMessagesDeleted?.call(data as Map<String, dynamic>);
     });
+
+    // File message event (receiving files from web)
+    _socket!.on('file_message', (data) {
+      debugPrint('📎 File received: $data');
+      onFileReceived?.call(data as Map<String, dynamic>);
+    });
   }
 
   /// Disconnect from Socket.IO server
@@ -301,5 +308,6 @@ class SocketService {
     onColorChanged = null;
     onColorReset = null;
     onAllMessagesDeleted = null;
+    onFileReceived = null;
   }
 }

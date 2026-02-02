@@ -47,6 +47,15 @@ dependencies:
   # Audio player for sound effects
   audioplayers: ^5.2.1
   
+  # Image picker for camera
+  image_picker: ^1.0.7
+  
+  # File picker for selecting files
+  file_picker: ^8.1.2
+  
+  # Mime type detection
+  mime: ^1.0.4
+  
   # Firebase Cloud Messaging for push notifications
   firebase_core: ^2.24.2
   firebase_messaging: ^14.7.9
