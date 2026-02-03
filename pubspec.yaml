@@ -75,6 +75,9 @@ dependencies:
   
   # Share files with other apps
   share_plus: ^7.2.1
+  
+  # WebRTC for video/audio calling
+  flutter_webrtc: ^0.12.1
 
 dev_dependencies:
   flutter_test:

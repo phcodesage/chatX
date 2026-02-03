@@ -17,6 +17,7 @@ import '../services/message_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/color_picker_modal.dart';
+import '../widgets/call_setup_modal.dart';
 import '../config/api_config.dart';
 
 /// Chat screen for messaging with a specific user
@@ -63,6 +64,9 @@ class _ChatScreenState extends State<ChatScreen> {
   // Scroll to bottom button state
   bool _isAtBottom = true;
   int _unreadCount = 0;
+  
+  // Reply state
+  Message? _replyingToMessage;
 
   @override
   void initState() {
@@ -719,6 +723,31 @@ class _ChatScreenState extends State<ChatScreen> {
     final content = _messageController.text.trim();
     if (content.isEmpty) return;
 
+    // Capture reply info before clearing
+    final replyToId = _replyingToMessage?.id;
+    String? replyPreviewContent;
+    if (_replyingToMessage != null) {
+      final msg = _replyingToMessage!;
+      final senderName = msg.senderId == _currentUserId ? 'You' : widget.otherUser.fullName;
+      String previewText;
+      // Handle different message types
+      if (msg.isDeleted) {
+        previewText = 'Deleted message';
+      } else if (msg.messageType == 'voice' || msg.messageType == 'audio') {
+        previewText = '🎤 Voice message';
+      } else if (msg.messageType == 'image') {
+        previewText = '📷 Photo';
+      } else if (msg.messageType == 'video') {
+        previewText = '🎬 Video';
+      } else if (msg.messageType == 'file') {
+        previewText = '📎 ${msg.fileName ?? "File"}';
+      } else {
+        // For text, truncate if too long
+        previewText = msg.content.length > 60 ? '${msg.content.substring(0, 60)}...' : msg.content;
+      }
+      replyPreviewContent = '$senderName: $previewText';
+    }
+
     // Create optimistic message for immediate UI update
     final optimisticMessage = Message(
       id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
@@ -731,12 +760,15 @@ class _ChatScreenState extends State<ChatScreen> {
       isRead: false,
       status: 'sending',
       threadId: 'thread_${_currentUserId}_${widget.otherUser.id}',
+      replyToId: replyToId,
+      replyPreview: replyPreviewContent,
       reactions: {},
       isDeleted: false,
     );
 
     setState(() {
       _messages.insert(0, optimisticMessage);
+      _replyingToMessage = null; // Clear reply after sending
     });
 
     // Play message sound when sending
@@ -759,11 +791,12 @@ class _ChatScreenState extends State<ChatScreen> {
       // Check if Socket.IO is connected
       if (_socketService.isConnected) {
         // Send via Socket.IO for real-time delivery
-        debugPrint('✅ Sending message via Socket.IO');
+        debugPrint('✅ Sending message via Socket.IO${replyToId != null ? ' (replying to $replyToId)' : ''}');
         _socketService.sendMessage(
           recipientId: widget.otherUser.id,
           content: content,
           messageType: 'text',
+          replyToId: replyToId,
         );
       } else {
         // Fallback to REST API
@@ -999,6 +1032,38 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom();
     });
+  }
+
+  /// Show call setup modal for video/audio calls
+  void _showCallSetupModal(CallType callType) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        builder: (context, scrollController) => CallSetupModal(
+          recipientName: widget.otherUser.fullName,
+          callType: callType,
+          onStartCall: (localStream, selectedMic, selectedSpeaker, selectedCamera, videoEnabled) {
+            Navigator.pop(context); // Close modal
+            debugPrint('🎥 Starting ${callType.name} call with ${widget.otherUser.fullName}');
+            debugPrint('📱 Video enabled: $videoEnabled');
+            debugPrint('🎤 Mic: $selectedMic, Speaker: $selectedSpeaker, Camera: $selectedCamera');
+            // TODO: Implement actual call initiation via socket
+            ScaffoldMessenger.of(this.context).showSnackBar(
+              SnackBar(
+                content: Text('Starting ${callType.name} call with ${widget.otherUser.fullName}...'),
+                backgroundColor: const Color(0xFF8B5CF6),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   /// Handle incoming file message from web
@@ -1707,7 +1772,20 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
-        actions: const [],
+        actions: [
+          // Video call button
+          IconButton(
+            icon: const Icon(Icons.videocam, color: Colors.white),
+            onPressed: () => _showCallSetupModal(CallType.video),
+            tooltip: 'Video Call',
+          ),
+          // Audio call button
+          IconButton(
+            icon: const Icon(Icons.call, color: Colors.white),
+            onPressed: () => _showCallSetupModal(CallType.audio),
+            tooltip: 'Audio Call',
+          ),
+        ],
       ),
       body: Stack(
         children: [
@@ -1768,7 +1846,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                 return Column(
                                   children: [
                                     if (dateSeparator != null) dateSeparator,
-                                    _buildMessageBubble(message, isSentByMe),
+                                    _buildSwipeableMessage(
+                                      message,
+                                      isSentByMe,
+                                      _buildMessageBubble(message, isSentByMe),
+                                    ),
                                   ],
                                 );
                               },
@@ -1875,6 +1957,8 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                // Reply preview (when replying to a message)
+                _buildReplyPreview(),
                 // Text input field - full width, max 3 lines
                 RepaintBoundary(
                   child: TextField(
@@ -2104,6 +2188,230 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// Clear reply state
+  void _clearReply() {
+    setState(() {
+      _replyingToMessage = null;
+    });
+  }
+
+  /// Set reply target
+  void _setReplyTo(Message message) {
+    setState(() {
+      _replyingToMessage = message;
+    });
+    // Give haptic feedback
+    _inputFocusNode.requestFocus();
+  }
+
+  /// Build swipeable message wrapper with slide animation
+  Widget _buildSwipeableMessage(Message message, bool isSentByMe, Widget child) {
+    // Swipe direction: incoming (from left) swipe right, outgoing (from right) swipe left
+    const double maxSlide = 70.0;
+    const double threshold = 50.0;
+    
+    // Use ValueNotifier for proper state tracking during drag
+    final dragOffset = ValueNotifier<double>(0.0);
+    
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: (details) {
+        if (isSentByMe) {
+          // Outgoing: swipe left (negative)
+          dragOffset.value = (dragOffset.value + details.delta.dx).clamp(-maxSlide, 0.0);
+        } else {
+          // Incoming: swipe right (positive)
+          dragOffset.value = (dragOffset.value + details.delta.dx).clamp(0.0, maxSlide);
+        }
+      },
+      onHorizontalDragEnd: (details) {
+        // If swiped far enough, trigger reply
+        if (dragOffset.value.abs() > threshold) {
+          _setReplyTo(message);
+        }
+        // Animate back to 0
+        dragOffset.value = 0.0;
+      },
+      onLongPress: () => _showMessageContextMenu(message, isSentByMe),
+      child: ValueListenableBuilder<double>(
+        valueListenable: dragOffset,
+        builder: (context, offset, _) {
+          return Transform.translate(
+            offset: Offset(offset, 0),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // Reply icon that appears when swiping
+                if (offset.abs() > 10)
+                  Positioned(
+                    left: isSentByMe ? -35 : null,
+                    right: isSentByMe ? null : -35,
+                    top: 0,
+                    bottom: 0,
+                    child: Center(
+                      child: Opacity(
+                        opacity: (offset.abs() / maxSlide).clamp(0.0, 1.0),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF7C3AED).withOpacity(0.9),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.reply,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                child,
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Show context menu for message
+  void _showMessageContextMenu(Message message, bool isSentByMe) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Reply option
+              ListTile(
+                leading: const Icon(Icons.reply, color: Colors.white),
+                title: const Text('Reply', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _setReplyTo(message);
+                },
+              ),
+              // Copy option (for text messages)
+              if (message.messageType == 'text' && !message.isDeleted)
+                ListTile(
+                  leading: const Icon(Icons.copy, color: Colors.white),
+                  title: const Text('Copy', style: TextStyle(color: Colors.white)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    // Copy to clipboard
+                    // Clipboard.setData(ClipboardData(text: message.content));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Message copied')),
+                    );
+                  },
+                ),
+              // Delete option (for own messages)
+              if (isSentByMe && !message.isDeleted)
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text('Delete', style: TextStyle(color: Colors.red)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    // TODO: Implement delete
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Delete coming soon')),
+                    );
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Build reply preview widget (shown above input)
+  Widget _buildReplyPreview() {
+    if (_replyingToMessage == null) return const SizedBox.shrink();
+    
+    final message = _replyingToMessage!;
+    final isSentByMe = message.senderId == _currentUserId;
+    final senderName = isSentByMe ? 'You' : widget.otherUser.fullName;
+    
+    // Get preview content
+    String content;
+    if (message.isDeleted) {
+      content = 'Deleted message';
+    } else if (message.messageType == 'voice' || message.messageType == 'audio') {
+      content = '🎤 Voice message';
+    } else if (message.messageType == 'image') {
+      content = '📷 Photo';
+    } else if (message.messageType == 'video') {
+      content = '🎬 Video';
+    } else if (message.messageType == 'file') {
+      content = '📎 ${message.fileName ?? "File"}';
+    } else {
+      content = message.content.length > 50 
+          ? '${message.content.substring(0, 50)}...' 
+          : message.content;
+    }
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2D2D44),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: const Color(0xFF7C3AED),
+            width: 4,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.reply, color: Color(0xFF7C3AED), size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Replying to $senderName',
+                  style: const TextStyle(
+                    color: Color(0xFF7C3AED),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  content,
+                  style: TextStyle(
+                    color: Colors.grey[400],
+                    fontSize: 13,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: _clearReply,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              child: const Icon(Icons.close, color: Colors.grey, size: 18),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Check if two timestamps are on the same day
   bool _isSameDay(String timestamp1, String timestamp2) {
     try {
@@ -2195,6 +2503,70 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Quoted reply (if this is a reply to another message)
+            if (message.replyToId != null || message.replyPreview != null)
+              Opacity(
+                opacity: 0.85, // WhatsApp-like dimmed effect
+                child: Container(
+                  margin: const EdgeInsets.only(left: 8, right: 8, top: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: const Border(
+                      left: BorderSide(
+                        color: Color(0xFFB794F6),
+                        width: 3,
+                      ),
+                    ),
+                  ),
+                  child: Builder(
+                    builder: (context) {
+                      // Parse reply preview
+                      final preview = message.replyPreview ?? '';
+                      final colonIndex = preview.indexOf(':');
+                      final senderName = colonIndex > 0 ? preview.substring(0, colonIndex) : 'Reply';
+                      var contentText = colonIndex > 0 ? preview.substring(colonIndex + 1).trim() : preview;
+                      
+                      // Improve display for file messages
+                      if (contentText.contains('<audio') || contentText.contains('audio/')) {
+                        contentText = '🎤 Voice message';
+                      } else if (contentText.contains('<img') || contentText.contains('image/')) {
+                        contentText = '📷 Photo';
+                      } else if (contentText.contains('<video') || contentText.contains('video/')) {
+                        contentText = '🎬 Video';
+                      } else if (contentText.contains('file/') || contentText.endsWith('.pdf') || contentText.endsWith('.doc')) {
+                        contentText = '📎 File';
+                      }
+                      
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            senderName,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            contentText,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 12,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
             // Image/Video content
             if (isMedia && message.fileUrl != null) ...[
               ClipRRect(

@@ -7,6 +7,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   file_selector_windows
   firebase_core
   flutter_sound
+  flutter_webrtc
   permission_handler_windows
   share_plus
   url_launcher_windows

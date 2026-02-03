@@ -164,7 +164,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void _updateUserPresence(Map<String, dynamic> data) {
     final userId = data['user_id'] as int;
     final status = data['status'] as String;
-    final isOnline = data['is_online'] as bool;
+    final isOnline = data['is_online'] as bool? ?? (status == 'online');
     
     setState(() {
       final userIndex = _lobbyUsers.indexWhere((u) => u.id == userId);

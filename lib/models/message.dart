@@ -48,6 +48,44 @@ class Message {
     required this.isDeleted,
   });
 
+  /// Parse reply_preview which can be String or Map from backend
+  /// Also handles HTML content for file messages
+  static String? _parseReplyPreview(dynamic value) {
+    if (value == null) return null;
+    
+    String? rawContent;
+    String? sender;
+    
+    if (value is String) {
+      rawContent = value;
+    } else if (value is Map) {
+      sender = value['sender']?.toString() ?? value['sender_id']?.toString();
+      rawContent = value['content']?.toString() ?? value['message']?.toString() ?? '';
+    }
+    
+    if (rawContent == null || rawContent.isEmpty) return null;
+    
+    // Detect file type from HTML and replace with emoji
+    String cleanContent = rawContent;
+    if (rawContent.contains('<audio') || rawContent.contains('audio/')) {
+      cleanContent = '🎤 Voice message';
+    } else if (rawContent.contains('<img') || rawContent.contains('image/')) {
+      cleanContent = '📷 Photo';
+    } else if (rawContent.contains('<video') || rawContent.contains('video/')) {
+      cleanContent = '🎬 Video';
+    } else if (rawContent.contains('<') && rawContent.contains('>')) {
+      // Strip any other HTML tags
+      cleanContent = rawContent.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+      if (cleanContent.isEmpty) cleanContent = '📎 File';
+    }
+    
+    // Only add sender prefix if we had a Map with sender info
+    if (sender != null && sender.isNotEmpty) {
+      return '$sender: $cleanContent';
+    }
+    return cleanContent;
+  }
+
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(
       id: json['id'] as int,
@@ -65,7 +103,7 @@ class Message {
       status: json['status'] as String,
       threadId: json['thread_id'] as String,
       replyToId: json['reply_to_id'] as int?,
-      replyPreview: json['reply_preview'] as String?,
+      replyPreview: _parseReplyPreview(json['reply_preview']),
       reactions: json['reactions'] as Map<String, dynamic>? ?? {},
       fileUrl: json['file_url'] as String?,
       fileName: json['file_name'] as String?,
