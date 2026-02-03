@@ -8,6 +8,7 @@ import 'package:mime/mime.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/lobby_user.dart';
 import '../models/message.dart';
 import '../services/message_service.dart';
@@ -53,6 +54,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Duration _recordingDuration = Duration.zero;
   Timer? _recordingTimer;
   List<double> _waveformData = [];
+  
+  // Timestamp visibility toggle (hidden by default like web)
+  bool _showTimestamps = false;
 
   @override
   void initState() {
@@ -73,9 +77,44 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _initialize() async {
     _currentUserId = await StorageService.getUserId();
+    await _loadTimestampPreference();
     await _loadMessages();
     _joinChatRoom();
     _setupRealtimeListeners();
+  }
+
+  /// Load timestamp visibility preference from SharedPreferences
+  Future<void> _loadTimestampPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getBool('showTimestamps') ?? false;
+    if (mounted) {
+      setState(() {
+        _showTimestamps = saved;
+      });
+    }
+  }
+
+  /// Toggle timestamp visibility and save preference
+  Future<void> _toggleTimestamps() async {
+    final newValue = !_showTimestamps;
+    setState(() {
+      _showTimestamps = newValue;
+    });
+    
+    // Save to SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('showTimestamps', newValue);
+    
+    // Show feedback snackbar
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(newValue ? 'Timestamps shown' : 'Timestamps hidden'),
+          duration: const Duration(seconds: 1),
+          backgroundColor: newValue ? const Color(0xFF4F46E5) : Colors.grey[700],
+        ),
+      );
+    }
   }
 
   void _joinChatRoom() {
@@ -1703,14 +1742,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     // Show Timestamps
                     ElevatedButton(
-                      onPressed: () {
-                        // TODO: Implement show timestamps
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Show Timestamps - Coming soon!')),
-                        );
-                      },
+                      onPressed: _toggleTimestamps,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF8B5CF6), // Purple
+                        backgroundColor: _showTimestamps 
+                            ? const Color(0xFF4F46E5)  // Indigo when ON
+                            : const Color(0xFF8B5CF6), // Purple when OFF
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         shape: RoundedRectangleBorder(
@@ -1718,7 +1754,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         textStyle: const TextStyle(fontSize: 12),
                       ),
-                      child: const Text('Show Timestamps'),
+                      child: Text(_showTimestamps ? 'Hide Timestamps' : 'Show Timestamps'),
                     ),
                     // Export Chat
                     ElevatedButton(
@@ -1893,53 +1929,19 @@ class _ChatScreenState extends State<ChatScreen> {
               )
             else if (isMedia || isAudio)
               const SizedBox(height: 8),
-            // Timestamp and read status
-            Padding(
-              padding: EdgeInsets.only(
-                left: 16,
-                right: 16,
-                bottom: 8,
-                top: isMedia && (message.content.isEmpty || _isOnlyFilename(message.content)) ? 0 : 0,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Show file size for file messages
-                  if (message.fileSize != null && message.fileSize! > 0) ...[
-                    Text(
-                      _formatFileSize(message.fileSize!),
-                      style: TextStyle(
-                        color: Colors.grey[500],
-                        fontSize: 11,
-                      ),
-                    ),
-                    Text(
-                      ' • ',
-                      style: TextStyle(color: Colors.grey[500], fontSize: 11),
-                    ),
-                  ],
-                  Text(
-                    message.formattedTime,
-                    style: TextStyle(
-                      color: Colors.grey[400],
-                      fontSize: 11,
-                    ),
+            // Timestamp and read status - only visible when _showTimestamps is true
+            if (_showTimestamps)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Text(
+                  message.formattedTimestampFull,
+                  style: const TextStyle(
+                    color: Color(0xFFFF69B4), // Hot pink
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
                   ),
-                  if (isSentByMe) ...[
-                    const SizedBox(width: 4),
-                    Icon(
-                      message.isRead
-                          ? Icons.done_all
-                          : (message.status == 'delivered'
-                              ? Icons.done_all
-                              : Icons.done),
-                      size: 14,
-                      color: message.isRead ? const Color(0xFF4CAF50) : Colors.grey[400],
-                    ),
-                  ],
-                ],
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -2473,11 +2475,28 @@ class _AudioMessagePlayerState extends State<_AudioMessagePlayer> {
         await _audioPlayer.pause();
         setState(() => _isPlaying = false);
       } else {
+        // Stop any current playback first to ensure clean state
+        await _audioPlayer.stop();
+        
+        // Small delay to ensure player is ready
+        await Future.delayed(const Duration(milliseconds: 100));
+        
+        // Play from URL
         await _audioPlayer.play(UrlSource(widget.audioUrl));
         setState(() => _isPlaying = true);
       }
     } catch (e) {
-      debugPrint('Error playing audio: $e');
+      debugPrint('AudioPlayers Exception: $e');
+      if (mounted) {
+        setState(() => _isPlaying = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error playing audio: ${e.toString().split(':').last.trim()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
     }
   }
 

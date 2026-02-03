@@ -102,7 +102,7 @@ class Message {
     };
   }
 
-  /// Format timestamp for display
+  /// Format timestamp for display (short format for message bubbles)
   String get formattedTime {
     try {
       final dateTime = DateTime.parse(timestamp);
@@ -123,6 +123,33 @@ class Message {
       } else {
         return '${dateTime.month}/${dateTime.day}/${dateTime.year}';
       }
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /// Format timestamp for full display with square brackets and timezone
+  /// Format: [MM/DD/YYYY, HH:MM:SS GMT+offset]
+  String get formattedTimestampFull {
+    try {
+      final dateTime = DateTime.parse(timestamp).toLocal();
+      
+      // Format date parts
+      final month = dateTime.month.toString().padLeft(2, '0');
+      final day = dateTime.day.toString().padLeft(2, '0');
+      final year = dateTime.year;
+      
+      // Format time parts
+      final hour = dateTime.hour.toString().padLeft(2, '0');
+      final minute = dateTime.minute.toString().padLeft(2, '0');
+      final second = dateTime.second.toString().padLeft(2, '0');
+      
+      // Get timezone offset
+      final offset = dateTime.timeZoneOffset;
+      final offsetHours = offset.inHours.abs();
+      final offsetSign = offset.isNegative ? '-' : '+';
+      
+      return '[$month/$day/$year, $hour:$minute:$second GMT$offsetSign$offsetHours]';
     } catch (e) {
       return '';
     }
