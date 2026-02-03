@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/lobby_user.dart';
 import 'storage_service.dart';
+import 'auth_error_handler.dart';
 
 /// Service for handling lobby/contact list API calls
 class LobbyService {
@@ -28,6 +29,13 @@ class LobbyService {
         final data = jsonDecode(response.body);
         final lobbyUsers = data['lobby_users'] as List;
         return lobbyUsers.map((json) => LobbyUser.fromJson(json)).toList();
+      } else if (response.statusCode == 401) {
+        // Token expired or invalid - trigger auth error handler
+        debugPrint('🔐 Token expired - redirecting to sign in');
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        throw Exception('Session expired');
       } else {
         debugPrint('❌ Lobby API Error - Status: ${response.statusCode}');
         debugPrint('❌ Response body: ${response.body}');

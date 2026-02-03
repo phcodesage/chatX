@@ -4,9 +4,14 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import 'storage_service.dart';
+import 'auth_error_handler.dart';
 
 /// Service for managing user presence and heartbeat
 class PresenceService {
+  static final PresenceService _instance = PresenceService._internal();
+  factory PresenceService() => _instance;
+  PresenceService._internal();
+
   Timer? _heartbeatTimer;
   bool _isActive = false;
 
@@ -40,13 +45,23 @@ class PresenceService {
       final token = await StorageService.getToken();
       if (token == null) return;
 
-      await http.post(
+      final response = await http.post(
         Uri.parse(ApiConfig.heartbeatUrl),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
       ).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 401) {
+        // Token expired - stop heartbeat and trigger auth error
+        debugPrint('🔐 Heartbeat - Token expired');
+        stopHeartbeat();
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        return;
+      }
       
       debugPrint('💓 Heartbeat sent');
     } catch (e) {
@@ -60,7 +75,7 @@ class PresenceService {
       final token = await StorageService.getToken();
       if (token == null) return;
 
-      await http.post(
+      final response = await http.post(
         Uri.parse(ApiConfig.presenceStatusUrl),
         headers: {
           'Content-Type': 'application/json',
@@ -71,6 +86,15 @@ class PresenceService {
           if (statusMessage != null) 'status_message': statusMessage,
         }),
       ).timeout(ApiConfig.connectionTimeout);
+      
+      if (response.statusCode == 401) {
+        // Token expired - trigger auth error
+        debugPrint('🔐 Status update - Token expired');
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        return;
+      }
       
       debugPrint('Status updated to: $status');
     } catch (e) {

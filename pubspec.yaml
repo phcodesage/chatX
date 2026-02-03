@@ -63,6 +63,15 @@ dependencies:
   
   # Google Fonts for beautiful typography
   google_fonts: ^6.1.0
+  
+  # Audio recording for voice messages
+  flutter_sound: ^9.16.3
+  
+  # Permission handling for microphone access
+  permission_handler: ^11.3.1
+  
+  # Path provider for saving audio files
+  path_provider: ^2.1.2
 
 dev_dependencies:
   flutter_test:

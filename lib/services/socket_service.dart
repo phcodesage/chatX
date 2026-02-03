@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'dart:async';
 import '../config/api_config.dart';
+import 'auth_error_handler.dart';
 
 /// Service for handling Socket.IO real-time communication
 class SocketService {
@@ -112,6 +113,14 @@ class SocketService {
 
     _socket!.on('disconnect', (reason) {
       debugPrint('❌ Socket disconnected - Reason: $reason');
+      // If the server explicitly disconnected us (e.g., due to expired token)
+      // trigger the auth error handler
+      if (reason == 'io server disconnect') {
+        debugPrint('🔐 Server disconnected us - likely expired token');
+        AuthErrorHandler().handleAuthError(
+          message: 'Connection lost. Please sign in again.',
+        );
+      }
     });
 
     _socket!.on('connect_error', (error) {

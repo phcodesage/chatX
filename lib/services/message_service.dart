@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/message.dart';
 import 'storage_service.dart';
+import 'auth_error_handler.dart';
 
 /// Service for handling message API calls
 class MessageService {
@@ -40,6 +41,13 @@ class MessageService {
         final data = jsonDecode(response.body);
         final messages = data['messages'] as List;
         return messages.map((json) => Message.fromJson(json)).toList();
+      } else if (response.statusCode == 401) {
+        // Token expired - trigger auth error handler
+        debugPrint('🔐 Token expired - redirecting to sign in');
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        throw Exception('Session expired');
       } else {
         final error = jsonDecode(response.body);
         throw Exception(error['error'] ?? 'Failed to load messages');
@@ -81,6 +89,13 @@ class MessageService {
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body);
         return Message.fromJson(data['data']);
+      } else if (response.statusCode == 401) {
+        // Token expired - trigger auth error handler
+        debugPrint('🔐 Token expired - redirecting to sign in');
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        throw Exception('Session expired');
       } else {
         final error = jsonDecode(response.body);
         throw Exception(error['error'] ?? 'Failed to send message');

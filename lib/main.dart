@@ -10,6 +10,7 @@ import 'screens/home_page.dart';
 import 'screens/lobby_screen.dart';
 import 'services/firebase_messaging_service.dart';
 import 'services/fcm_service.dart';
+import 'services/auth_error_handler.dart';
 import 'utils/notification_handler.dart';
 
 void main() async {
@@ -27,6 +28,9 @@ void main() async {
   FirebaseMessagingService.instance.onNotificationTapped = (data) {
     NotificationHandler.handleNotificationTap(data);
   };
+  
+  // Set up auth error handler with navigator key
+  AuthErrorHandler.navigatorKey = NotificationHandler.navigatorKey;
   
   // Note: FCM token will be sent to backend after successful login
   

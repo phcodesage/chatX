@@ -5,6 +5,9 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:mime/mime.dart';
+import 'package:flutter_sound/flutter_sound.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/lobby_user.dart';
 import '../models/message.dart';
 import '../services/message_service.dart';
@@ -42,6 +45,14 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime? _lastTypingUpdate;
   Color _headerColor = const Color(0xFF4C1D95); // Default purple color
   bool _showResetButton = false;
+  
+  // Voice recording state
+  bool _isRecording = false;
+  bool _isPaused = false;
+  String? _recordingPath;
+  Duration _recordingDuration = Duration.zero;
+  Timer? _recordingTimer;
+  List<double> _waveformData = [];
 
   @override
   void initState() {
@@ -1099,6 +1110,174 @@ class _ChatScreenState extends State<ChatScreen> {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
+  /// Format duration for display (mm:ss)
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
+  }
+
+  /// Show voice recording modal
+  Future<void> _showVoiceRecordingModal() async {
+    // Request microphone permission
+    final status = await Permission.microphone.request();
+    if (status != PermissionStatus.granted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Microphone permission is required to record voice messages'),
+            action: SnackBarAction(
+              label: 'Settings',
+              onPressed: () => openAppSettings(),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Reset recording state
+    setState(() {
+      _isRecording = false;
+      _isPaused = false;
+      _recordingPath = null;
+      _recordingDuration = Duration.zero;
+      _waveformData = [];
+    });
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (context) => _VoiceRecordingModal(
+        onSend: (path, duration) async {
+          Navigator.pop(context);
+          await _uploadAndSendVoiceMessage(path, duration);
+        },
+        onCancel: () {
+          // Recording lifecycle is managed inside _VoiceRecordingModal.
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
+
+  /// Upload and send voice message
+  Future<void> _uploadAndSendVoiceMessage(String path, Duration duration) async {
+    try {
+      // Show uploading indicator
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 12),
+              Text('Sending voice message...'),
+            ],
+          ),
+          duration: Duration(seconds: 30),
+        ),
+      );
+
+      final file = File(path);
+      final fileName = 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      
+      // Upload file using MessageService
+      final result = await MessageService.uploadFile(
+        file: file,
+        recipientId: widget.otherUser.id,
+      );
+
+      // Hide uploading indicator
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+      if (result != null && result['success'] == true) {
+        final fileData = result['file'] ?? result;
+        
+        // Emit file message via socket
+        _socketService.emit('send_file', {
+          'recipient_id': widget.otherUser.id,
+          'file_id': fileData['file_id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
+          'file_name': fileName,
+          'file_type': 'audio/m4a',
+          'file_size': file.lengthSync(),
+          'file_url': fileData['file_url'] ?? fileData['url'],
+        });
+
+        // Create local message to show in chat
+        final now = DateTime.now();
+        final message = Message(
+          id: DateTime.now().millisecondsSinceEpoch,
+          senderId: _currentUserId!,
+          recipientId: widget.otherUser.id,
+          content: fileName,
+          messageType: 'voice',
+          timestamp: now.toIso8601String(),
+          timestampMs: now.millisecondsSinceEpoch,
+          isRead: false,
+          status: 'sent',
+          threadId: '',
+          reactions: {},
+          isDeleted: false,
+          fileUrl: fileData['file_url'] ?? fileData['url'],
+          fileName: fileName,
+          fileType: 'audio/m4a',
+          fileSize: file.lengthSync(),
+        );
+
+        setState(() {
+          _messages.insert(0, message);
+        });
+
+        // Scroll to bottom
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scrollToBottom();
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Voice message sent!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+
+        // Clean up recording file
+        try {
+          await file.delete();
+        } catch (_) {}
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send voice message'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error uploading voice message: $e');
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error sending voice message: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   /// Upload file to server and send via socket
   Future<void> _uploadAndSendFile(File file, String fileName, String mimeType) async {
     try {
@@ -1510,12 +1689,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     // Record Voice Message
                     ElevatedButton(
-                      onPressed: () {
-                        // TODO: Implement record voice
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Record Voice Message - Coming soon!')),
-                        );
-                      },
+                      onPressed: _showVoiceRecordingModal,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFEF4444), // Red
                         foregroundColor: Colors.white,
@@ -1525,7 +1699,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         textStyle: const TextStyle(fontSize: 12),
                       ),
-                      child: const Text('Record Voice Message'),
+                      child: const Text('Voice'),
                     ),
                     // Show Timestamps
                     ElevatedButton(
@@ -1606,6 +1780,9 @@ class _ChatScreenState extends State<ChatScreen> {
         (message.fileType?.startsWith('image/') ?? false);
     final bool isVideo = message.messageType == 'video' || 
         (message.fileType?.startsWith('video/') ?? false);
+    final bool isAudio = message.messageType == 'voice' || 
+        message.messageType == 'audio' ||
+        (message.fileType?.startsWith('audio/') ?? false);
     final bool isMedia = isImage || isVideo;
     
     return Align(
@@ -1695,8 +1872,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
             ],
-            // Text content (if not just filename)
-            if (!isMedia || (message.content.isNotEmpty && !_isOnlyFilename(message.content)))
+            // Audio/Voice message content
+            if (isAudio && message.fileUrl != null) ...[
+              _AudioMessagePlayer(
+                audioUrl: message.fileUrl!,
+                fileSize: message.fileSize,
+              ),
+            ],
+            // Text content (if not just filename and not audio)
+            if ((!isMedia && !isAudio) || (message.content.isNotEmpty && !_isOnlyFilename(message.content) && !isAudio))
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 child: Text(
@@ -1707,7 +1891,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               )
-            else if (isMedia)
+            else if (isMedia || isAudio)
               const SizedBox(height: 8),
             // Timestamp and read status
             Padding(
@@ -1845,5 +2029,532 @@ class _ChatScreenState extends State<ChatScreen> {
       Color(0xFFFF5722),
     ];
     return colors[widget.otherUser.avatarColorIndex % colors.length];
+  }
+}
+
+/// Voice Recording Modal Widget
+class _VoiceRecordingModal extends StatefulWidget {
+  final Function(String path, Duration duration) onSend;
+  final VoidCallback onCancel;
+
+  const _VoiceRecordingModal({
+    required this.onSend,
+    required this.onCancel,
+  });
+
+  @override
+  State<_VoiceRecordingModal> createState() => _VoiceRecordingModalState();
+}
+
+class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
+  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  final FlutterSoundPlayer _player = FlutterSoundPlayer();
+  
+  bool _isRecorderInitialized = false;
+  bool _isPlayerInitialized = false;
+  bool _isRecording = false;
+  bool _isPaused = false;
+  bool _hasRecording = false;
+  String? _recordingPath;
+  Duration _duration = Duration.zero;
+  Timer? _timer;
+  List<double> _waveformData = [];
+  bool _isPlaying = false;
+  StreamSubscription? _recorderSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _initRecorder();
+  }
+
+  Future<void> _initRecorder() async {
+    try {
+      await _recorder.openRecorder();
+      await _player.openPlayer();
+      setState(() {
+        _isRecorderInitialized = true;
+        _isPlayerInitialized = true;
+      });
+      
+      // Set up subscription for recording updates
+      _recorder.setSubscriptionDuration(const Duration(milliseconds: 100));
+    } catch (e) {
+      debugPrint('Error initializing recorder: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _recorderSubscription?.cancel();
+    _recorder.closeRecorder();
+    _player.closePlayer();
+    super.dispose();
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
+  }
+
+  Future<void> _startRecording() async {
+    if (!_isRecorderInitialized) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Recorder not initialized')),
+      );
+      return;
+    }
+    
+    try {
+      final directory = await getTemporaryDirectory();
+      final path = '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.aac';
+      
+      _recorderSubscription = _recorder.onProgress?.listen((e) {
+        if (mounted && _isRecording && !_isPaused) {
+          setState(() {
+            _duration = e.duration;
+            // Generate waveform data from decibels
+            final db = e.decibels ?? -160.0;
+            final normalized = ((db + 160) / 160).clamp(0.1, 1.0);
+            _waveformData.add(normalized);
+            if (_waveformData.length > 50) {
+              _waveformData.removeAt(0);
+            }
+          });
+        }
+      });
+      
+      await _recorder.startRecorder(
+        toFile: path,
+        codec: Codec.aacADTS,
+      );
+      
+      setState(() {
+        _isRecording = true;
+        _isPaused = false;
+        _recordingPath = path;
+        _duration = Duration.zero;
+        _waveformData = [];
+      });
+    } catch (e) {
+      debugPrint('Error starting recording: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error starting recording: $e')),
+      );
+    }
+  }
+
+  Future<void> _pauseRecording() async {
+    try {
+      await _recorder.pauseRecorder();
+      setState(() => _isPaused = true);
+    } catch (e) {
+      debugPrint('Error pausing recording: $e');
+    }
+  }
+
+  Future<void> _resumeRecording() async {
+    try {
+      await _recorder.resumeRecorder();
+      setState(() => _isPaused = false);
+    } catch (e) {
+      debugPrint('Error resuming recording: $e');
+    }
+  }
+
+  Future<void> _stopRecording() async {
+    try {
+      _recorderSubscription?.cancel();
+      await _recorder.stopRecorder();
+      setState(() {
+        _isRecording = false;
+        _isPaused = false;
+        _hasRecording = true;
+      });
+    } catch (e) {
+      debugPrint('Error stopping recording: $e');
+    }
+  }
+
+  Future<void> _playRecording() async {
+    if (_recordingPath == null || !_isPlayerInitialized) return;
+    try {
+      await _player.startPlayer(
+        fromURI: _recordingPath!,
+        whenFinished: () {
+          if (mounted) setState(() => _isPlaying = false);
+        },
+      );
+      setState(() => _isPlaying = true);
+    } catch (e) {
+      debugPrint('Error playing recording: $e');
+    }
+  }
+
+  Future<void> _stopPlaying() async {
+    try {
+      await _player.stopPlayer();
+      setState(() => _isPlaying = false);
+    } catch (e) {
+      debugPrint('Error stopping playback: $e');
+    }
+  }
+
+  void _discardRecording() {
+    setState(() {
+      _hasRecording = false;
+      _waveformData = [];
+      _duration = Duration.zero;
+    });
+    // Delete the file
+    if (_recordingPath != null) {
+      try {
+        File(_recordingPath!).delete();
+      } catch (_) {}
+    }
+    _recordingPath = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.45,
+      decoration: const BoxDecoration(
+        color: Color(0xFF2D2D2D),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // Handle bar
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey[600],
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // Title
+          const Text(
+            'Voice Message',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 24),
+          
+          // Duration display
+          Text(
+            _formatDuration(_duration),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 48,
+              fontWeight: FontWeight.w300,
+              fontFamily: 'monospace',
+            ),
+          ),
+          const SizedBox(height: 24),
+          
+          // Waveform visualization
+          Container(
+            height: 60,
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (int i = 0; i < 50; i++)
+                  Container(
+                    width: 4,
+                    height: (i < _waveformData.length ? _waveformData[i] : 0.1) * 50,
+                    margin: const EdgeInsets.symmetric(horizontal: 1),
+                    decoration: BoxDecoration(
+                      color: _isRecording && !_isPaused
+                          ? const Color(0xFFEF4444)
+                          : (_hasRecording ? const Color(0xFF10B981) : Colors.grey[600]),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          
+          // Controls
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (!_isRecording && !_hasRecording) ...[
+                    // Initial state - Start button
+                    ElevatedButton.icon(
+                      onPressed: _isRecorderInitialized ? _startRecording : null,
+                      icon: const Icon(Icons.mic, size: 28),
+                      label: Text(
+                        _isRecorderInitialized ? 'Start Recording' : 'Initializing...',
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFEF4444),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                      ),
+                    ),
+                  ] else if (_isRecording) ...[
+                    // Recording state - Pause/Resume and Stop
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Pause/Resume button
+                        IconButton(
+                          onPressed: _isPaused ? _resumeRecording : _pauseRecording,
+                          icon: Icon(
+                            _isPaused ? Icons.play_arrow : Icons.pause,
+                            size: 36,
+                            color: Colors.white,
+                          ),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.grey[700],
+                            padding: const EdgeInsets.all(16),
+                          ),
+                        ),
+                        const SizedBox(width: 24),
+                        // Stop button
+                        IconButton(
+                          onPressed: _stopRecording,
+                          icon: const Icon(Icons.stop, size: 36, color: Colors.white),
+                          style: IconButton.styleFrom(
+                            backgroundColor: const Color(0xFFEF4444),
+                            padding: const EdgeInsets.all(16),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else if (_hasRecording) ...[
+                    // Has recording - Play, Discard, Send
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        // Discard button
+                        IconButton(
+                          onPressed: _discardRecording,
+                          icon: const Icon(Icons.delete, size: 28, color: Colors.white),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.grey[700],
+                            padding: const EdgeInsets.all(12),
+                          ),
+                        ),
+                        // Play/Stop button
+                        IconButton(
+                          onPressed: _isPlaying ? _stopPlaying : _playRecording,
+                          icon: Icon(
+                            _isPlaying ? Icons.stop : Icons.play_arrow,
+                            size: 36,
+                            color: Colors.white,
+                          ),
+                          style: IconButton.styleFrom(
+                            backgroundColor: const Color(0xFF3B82F6),
+                            padding: const EdgeInsets.all(16),
+                          ),
+                        ),
+                        // Send button
+                        IconButton(
+                          onPressed: () {
+                            if (_recordingPath != null) {
+                              widget.onSend(_recordingPath!, _duration);
+                            }
+                          },
+                          icon: const Icon(Icons.send, size: 28, color: Colors.white),
+                          style: IconButton.styleFrom(
+                            backgroundColor: const Color(0xFF10B981),
+                            padding: const EdgeInsets.all(12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          
+          // Cancel button
+          Padding(
+            padding: const EdgeInsets.only(bottom: 32),
+            child: TextButton(
+              onPressed: () async {
+                if (_isRecording) {
+                  await _recorder.stopRecorder();
+                }
+                widget.onCancel();
+              },
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.grey, fontSize: 16),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Audio Message Player Widget for playing voice messages in chat
+class _AudioMessagePlayer extends StatefulWidget {
+  final String audioUrl;
+  final int? fileSize;
+
+  const _AudioMessagePlayer({
+    required this.audioUrl,
+    this.fileSize,
+  });
+
+  @override
+  State<_AudioMessagePlayer> createState() => _AudioMessagePlayerState();
+}
+
+class _AudioMessagePlayerState extends State<_AudioMessagePlayer> {
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  bool _isPlaying = false;
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+  StreamSubscription? _durationSubscription;
+  StreamSubscription? _positionSubscription;
+  StreamSubscription? _completeSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupAudioPlayer();
+  }
+
+  void _setupAudioPlayer() {
+    _durationSubscription = _audioPlayer.onDurationChanged.listen((d) {
+      if (mounted) setState(() => _duration = d);
+    });
+    
+    _positionSubscription = _audioPlayer.onPositionChanged.listen((p) {
+      if (mounted) setState(() => _position = p);
+    });
+    
+    _completeSubscription = _audioPlayer.onPlayerComplete.listen((_) {
+      if (mounted) {
+        setState(() {
+          _isPlaying = false;
+          _position = Duration.zero;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _durationSubscription?.cancel();
+    _positionSubscription?.cancel();
+    _completeSubscription?.cancel();
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _togglePlayPause() async {
+    try {
+      if (_isPlaying) {
+        await _audioPlayer.pause();
+        setState(() => _isPlaying = false);
+      } else {
+        await _audioPlayer.play(UrlSource(widget.audioUrl));
+        setState(() => _isPlaying = true);
+      }
+    } catch (e) {
+      debugPrint('Error playing audio: $e');
+    }
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = _duration.inMilliseconds > 0
+        ? _position.inMilliseconds / _duration.inMilliseconds
+        : 0.0;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Play/Pause button
+          GestureDetector(
+            onTap: _togglePlayPause,
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                _isPlaying ? Icons.pause : Icons.play_arrow,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Waveform and progress
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Waveform visualization (static bars)
+                Row(
+                  children: List.generate(20, (index) {
+                    final barHeight = [8.0, 14.0, 10.0, 18.0, 12.0, 20.0, 16.0, 22.0, 14.0, 18.0,
+                                       12.0, 16.0, 20.0, 14.0, 10.0, 18.0, 12.0, 8.0, 14.0, 10.0][index];
+                    final isPlayed = progress > (index / 20);
+                    return Container(
+                      width: 3,
+                      height: barHeight,
+                      margin: const EdgeInsets.symmetric(horizontal: 1),
+                      decoration: BoxDecoration(
+                        color: isPlayed ? Colors.white : Colors.white38,
+                        borderRadius: BorderRadius.circular(1.5),
+                      ),
+                    );
+                  }),
+                ),
+                const SizedBox(height: 4),
+                // Duration text
+                Text(
+                  _isPlaying || _position > Duration.zero
+                      ? '${_formatDuration(_position)} / ${_formatDuration(_duration)}'
+                      : _formatDuration(_duration),
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
