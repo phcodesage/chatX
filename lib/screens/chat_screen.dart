@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/lobby_user.dart';
 import '../models/message.dart';
 import '../services/message_service.dart';
@@ -57,12 +59,33 @@ class _ChatScreenState extends State<ChatScreen> {
   
   // Timestamp visibility toggle (hidden by default like web)
   bool _showTimestamps = false;
+  
+  // Scroll to bottom button state
+  bool _isAtBottom = true;
+  int _unreadCount = 0;
 
   @override
   void initState() {
     super.initState();
     _inputFocusNode.addListener(_onFocusChange);
+    _scrollController.addListener(_onScroll);
     _initialize();
+  }
+  
+  /// Listen to scroll position to show/hide scroll-to-bottom button
+  void _onScroll() {
+    // Since list is reversed, position 0 means we're at the bottom (newest messages)
+    // We're "at bottom" if scroll offset is near 0
+    final isAtBottom = _scrollController.offset < 100;
+    if (_isAtBottom != isAtBottom) {
+      setState(() {
+        _isAtBottom = isAtBottom;
+        // Reset unread count when at bottom
+        if (isAtBottom) {
+          _unreadCount = 0;
+        }
+      });
+    }
   }
 
   void _onFocusChange() {
@@ -138,6 +161,11 @@ class _ChatScreenState extends State<ChatScreen> {
           // Clear typing preview when message is received
           _otherUserTyping = false;
           _typingPreview = '';
+          
+          // Increment unread count if not at bottom (for incoming messages)
+          if (!_isAtBottom && message.senderId == widget.otherUser.id) {
+            _unreadCount++;
+          }
         });
         
         // Play message sound for incoming messages
@@ -149,18 +177,24 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         }
         
-        // Confirm delivery and read
-        _socketService.confirmDelivery(message.id);
-        _socketService.confirmRead(message.id);
-        
-        // Mark as read via API
-        MessageService.markAsRead(
-          senderId: widget.otherUser.id,
-          lastMessageId: message.id,
-        );
-        
-        // Scroll to bottom
-        _scrollToBottom();
+        // If at bottom, auto-scroll and mark as read
+        if (_isAtBottom) {
+          // Confirm delivery and read
+          _socketService.confirmDelivery(message.id);
+          _socketService.confirmRead(message.id);
+          
+          // Mark as read via API
+          MessageService.markAsRead(
+            senderId: widget.otherUser.id,
+            lastMessageId: message.id,
+          );
+          
+          // Scroll to bottom
+          _scrollToBottom();
+        } else {
+          // Just confirm delivery, not read yet
+          _socketService.confirmDelivery(message.id);
+        }
       }
     };
 
@@ -499,6 +533,185 @@ class _ChatScreenState extends State<ChatScreen> {
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
+    }
+  }
+  
+  /// Scroll to bottom and mark all messages as read
+  Future<void> _scrollToBottomAndMarkRead() async {
+    // Scroll to bottom
+    _scrollToBottom();
+    
+    // Reset unread count
+    setState(() {
+      _unreadCount = 0;
+      _isAtBottom = true;
+    });
+    
+    // Mark all messages as read
+    if (_messages.isNotEmpty) {
+      final latestMessage = _messages.first;
+      await MessageService.markAsRead(
+        senderId: widget.otherUser.id,
+        lastMessageId: latestMessage.id,
+      );
+      _socketService.confirmRead(latestMessage.id);
+    }
+  }
+  
+  /// Export chat to a text file
+  Future<void> _exportChat() async {
+    try {
+      // Request storage permission first
+      final storageStatus = await Permission.storage.request();
+      if (!storageStatus.isGranted) {
+        // Try manage external storage for Android 11+
+        final manageStatus = await Permission.manageExternalStorage.request();
+        if (!manageStatus.isGranted) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Storage permission required to save file'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+          return;
+        }
+      }
+      
+      // Show loading indicator
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Preparing chat export...'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+      
+      // Build the export content
+      final buffer = StringBuffer();
+      final myName = 'Me'; // TODO: Get actual user name if available
+      final otherName = widget.otherUser.fullName;
+      
+      buffer.writeln('Chat Export');
+      buffer.writeln('Conversation with: $otherName');
+      buffer.writeln('Exported on: ${DateTime.now().toString()}');
+      buffer.writeln('=' * 50);
+      buffer.writeln();
+      
+      // Messages are reversed (newest first), so reverse them for export
+      final sortedMessages = _messages.reversed.toList();
+      
+      String? lastDate;
+      for (final message in sortedMessages) {
+        // Add date separator if day changed
+        final messageDate = _formatExportDate(message.timestamp);
+        if (messageDate != lastDate) {
+          buffer.writeln();
+          buffer.writeln('--- $messageDate ---');
+          buffer.writeln();
+          lastDate = messageDate;
+        }
+        
+        final senderName = message.senderId == _currentUserId ? myName : otherName;
+        final time = _formatExportTime(message.timestamp);
+        final content = message.isDeleted ? '[Message deleted]' : message.content;
+        
+        // Handle different message types
+        String messageContent;
+        if (message.messageType == 'voice' || message.messageType == 'audio') {
+          messageContent = '[Voice message]';
+        } else if (message.messageType == 'image') {
+          messageContent = '[Image: ${message.fileName ?? "image"}]';
+        } else if (message.messageType == 'video') {
+          messageContent = '[Video: ${message.fileName ?? "video"}]';
+        } else if (message.messageType == 'file') {
+          messageContent = '[File: ${message.fileName ?? "file"}]';
+        } else {
+          messageContent = content;
+        }
+        
+        buffer.writeln('[$time] $senderName: $messageContent');
+      }
+      
+      buffer.writeln();
+      buffer.writeln('=' * 50);
+      buffer.writeln('End of export - ${sortedMessages.length} messages');
+      
+      // Generate default filename and convert content to bytes
+      final defaultFileName = 'chat_${widget.otherUser.fullName.replaceAll(' ', '_')}_${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}.txt';
+      final contentBytes = buffer.toString().codeUnits;
+      
+      // Let user choose where to save the file (pass bytes for Android/iOS)
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save Chat Export',
+        fileName: defaultFileName,
+        type: FileType.custom,
+        allowedExtensions: ['txt'],
+        bytes: Uint8List.fromList(contentBytes),
+      );
+      
+      if (savePath == null) {
+        // User cancelled the picker
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Export cancelled'),
+              duration: Duration(seconds: 1),
+            ),
+          );
+        }
+        return;
+      }
+      
+      // On Android, the file is already saved when bytes are provided
+      // On other platforms, we may need to write the file
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Chat saved to: ${savePath.split('/').last}'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error exporting chat: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to export chat: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+  
+  /// Format date for export separator
+  String _formatExportDate(String timestamp) {
+    try {
+      final date = DateTime.parse(timestamp).toLocal();
+      final weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      final months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                      'July', 'August', 'September', 'October', 'November', 'December'];
+      return '${weekdays[date.weekday - 1]}, ${months[date.month - 1]} ${date.day}, ${date.year}';
+    } catch (e) {
+      return timestamp;
+    }
+  }
+  
+  /// Format time for export message
+  String _formatExportTime(String timestamp) {
+    try {
+      final date = DateTime.parse(timestamp).toLocal();
+      final hour = date.hour.toString().padLeft(2, '0');
+      final minute = date.minute.toString().padLeft(2, '0');
+      return '$hour:$minute';
+    } catch (e) {
+      return '';
     }
   }
 
@@ -1523,22 +1736,107 @@ class _ChatScreenState extends State<ChatScreen> {
                           ],
                         ),
                       )
-                    : RepaintBoundary(
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          reverse: true,
-                          padding: const EdgeInsets.all(16),
-                          physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
-                          cacheExtent: 500,
-                          itemCount: _messages.length,
-                          addAutomaticKeepAlives: true,
-                          addRepaintBoundaries: true,
-                          itemBuilder: (context, index) {
-                            final message = _messages[index];
-                            final isSentByMe = message.senderId == _currentUserId;
-                            return _buildMessageBubble(message, isSentByMe);
-                          },
-                        ),
+                    : Stack(
+                        children: [
+                          RepaintBoundary(
+                            child: ListView.builder(
+                              controller: _scrollController,
+                              reverse: true,
+                              padding: const EdgeInsets.all(16),
+                              physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+                              cacheExtent: 500,
+                              itemCount: _messages.length,
+                              addAutomaticKeepAlives: true,
+                              addRepaintBoundaries: true,
+                              itemBuilder: (context, index) {
+                                final message = _messages[index];
+                                final isSentByMe = message.senderId == _currentUserId;
+                                
+                                // Check if we need to show date separator
+                                // Since list is reversed, check the NEXT message (index + 1) for date change
+                                Widget? dateSeparator;
+                                if (index < _messages.length - 1) {
+                                  final nextMessage = _messages[index + 1];
+                                  if (!_isSameDay(message.timestamp, nextMessage.timestamp)) {
+                                    dateSeparator = _buildDateSeparator(message.timestamp);
+                                  }
+                                } else {
+                                  // First message (oldest) always shows date
+                                  dateSeparator = _buildDateSeparator(message.timestamp);
+                                }
+                                
+                                return Column(
+                                  children: [
+                                    if (dateSeparator != null) dateSeparator,
+                                    _buildMessageBubble(message, isSentByMe),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                          // Scroll to bottom button - positioned inside messages area
+                          if (!_isAtBottom)
+                            Positioned(
+                              bottom: 16,
+                              left: 0,
+                              right: 0,
+                              child: Center(
+                                child: GestureDetector(
+                                  onTap: _scrollToBottomAndMarkRead,
+                                  child: Container(
+                                    width: 48,
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF7C3AED),
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.3),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Stack(
+                                      alignment: Alignment.center,
+                                      children: [
+                                        const Icon(
+                                          Icons.keyboard_arrow_down,
+                                          color: Colors.white,
+                                          size: 28,
+                                        ),
+                                        if (_unreadCount > 0)
+                                          Positioned(
+                                            top: 2,
+                                            right: 2,
+                                            child: Container(
+                                              padding: const EdgeInsets.all(4),
+                                              decoration: const BoxDecoration(
+                                                color: Colors.red,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              constraints: const BoxConstraints(
+                                                minWidth: 18,
+                                                minHeight: 18,
+                                              ),
+                                              child: Text(
+                                                _unreadCount > 99 ? '99+' : _unreadCount.toString(),
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                                textAlign: TextAlign.center,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
           ),
           // Typing preview - pinned at bottom, always visible
@@ -1758,12 +2056,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     // Export Chat
                     ElevatedButton(
-                      onPressed: () {
-                        // TODO: Implement export chat
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Export Chat - Coming soon!')),
-                        );
-                      },
+                      onPressed: _exportChat,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF6B7280), // Gray
                         foregroundColor: Colors.white,
@@ -1809,6 +2102,68 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+  }
+
+  /// Check if two timestamps are on the same day
+  bool _isSameDay(String timestamp1, String timestamp2) {
+    try {
+      final date1 = DateTime.parse(timestamp1).toLocal();
+      final date2 = DateTime.parse(timestamp2).toLocal();
+      return date1.year == date2.year && 
+             date1.month == date2.month && 
+             date1.day == date2.day;
+    } catch (e) {
+      return true; // Assume same day if parsing fails
+    }
+  }
+
+  /// Build date separator widget like Skype (Today, Yesterday, or full date)
+  Widget _buildDateSeparator(String timestamp) {
+    try {
+      final date = DateTime.parse(timestamp).toLocal();
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final yesterday = today.subtract(const Duration(days: 1));
+      final messageDate = DateTime(date.year, date.month, date.day);
+      
+      String dateText;
+      if (messageDate == today) {
+        dateText = 'Today';
+      } else if (messageDate == yesterday) {
+        dateText = 'Yesterday';
+      } else {
+        // Format: Tue. Jan 20, 2026
+        final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        final weekday = weekdays[date.weekday - 1];
+        final month = months[date.month - 1];
+        dateText = '$weekday. $month ${date.day}, ${date.year}';
+      }
+      
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF3D4752), // Dark gray like the image
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              dateText,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
   }
 
   Widget _buildMessageBubble(Message message, bool isSentByMe) {

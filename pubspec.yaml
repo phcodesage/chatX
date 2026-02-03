@@ -72,6 +72,9 @@ dependencies:
   
   # Path provider for saving audio files
   path_provider: ^2.1.2
+  
+  # Share files with other apps
+  share_plus: ^7.2.1
 
 dev_dependencies:
   flutter_test:
