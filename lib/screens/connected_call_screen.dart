@@ -40,6 +40,8 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
   bool _isVideoHidden = false;
   bool _showControls = true;
   bool _isSpeakerOn = true;
+  bool _isScreenSharing = false;
+  bool _remoteIsScreenSharing = false;
   
   // Call duration
   Timer? _durationTimer;
@@ -101,6 +103,19 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
       debugPrint('📞 Call state changed to: $state');
       if (state == CallState.ended || state == CallState.failed) {
         _endCall();
+      }
+    };
+    
+    // Listen for screen share changes (local or remote)
+    widget.callService.onScreenShareChanged = (isSharing) {
+      debugPrint('🖥️ Screen share changed: $isSharing');
+      if (mounted) {
+        setState(() {
+          // If we're not sharing, it means remote started/stopped
+          if (!_isScreenSharing) {
+            _remoteIsScreenSharing = isSharing;
+          }
+        });
       }
     };
     
@@ -203,6 +218,13 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
     });
     // On mobile, toggle between earpiece and speaker
     Helper.setSpeakerphoneOn(_isSpeakerOn);
+  }
+
+  Future<void> _toggleScreenShare() async {
+    final result = await widget.callService.toggleScreenShare();
+    setState(() {
+      _isScreenSharing = result;
+    });
   }
 
   void _endCall() {
@@ -445,14 +467,49 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
     }
     
     // Use RTCVideoViewObjectFitContain to show full width video without cropping
-    return Container(
-      color: Colors.black,
-      width: double.infinity,
-      height: double.infinity,
-      child: RTCVideoView(
-        _remoteRenderer,
-        objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
-      ),
+    return Stack(
+      children: [
+        Container(
+          color: Colors.black,
+          width: double.infinity,
+          height: double.infinity,
+          child: RTCVideoView(
+            _remoteRenderer,
+            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+          ),
+        ),
+        // Screen share indicator
+        if (_remoteIsScreenSharing)
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 60,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF8B5CF6).withValues(alpha: 0.9),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.screen_share, color: Colors.white, size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'Screen is being shared',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -635,6 +692,14 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
                   isActive: _isSpeakerOn,
                   onTap: _toggleSpeaker,
                   onLongPress: () => _showDeviceSelector('speaker'),
+                ),
+                
+                // Screen share
+                _buildControlButton(
+                  icon: _isScreenSharing ? Icons.stop_screen_share : Icons.screen_share,
+                  label: _isScreenSharing ? 'Stop Share' : 'Share',
+                  isActive: _isScreenSharing,
+                  onTap: _toggleScreenShare,
                 ),
                 
                 // Chat (minimizes to overlay)

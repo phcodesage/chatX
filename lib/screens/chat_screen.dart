@@ -2375,7 +2375,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         textStyle: const TextStyle(fontSize: 12),
                       ),
-                      child: const Text('Voice'),
+                      child: const Text('Voice Message'),
                     ),
                     // Show Timestamps
                     ElevatedButton(

@@ -33,6 +33,12 @@ class CallService {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaStream? _remoteStream;
+  MediaStream? _screenStream;
+  RTCDataChannel? _dataChannel;
+  
+  // Screen sharing state
+  bool _isScreenSharing = false;
+  MediaStreamTrack? _originalVideoTrack;
   
   // Call state
   CallState _callState = CallState.idle;
@@ -48,6 +54,9 @@ class CallService {
   Function(MediaStream stream)? onRemoteStream;
   Function(Map<String, dynamic> data)? onIncomingCall;
   Function(String error)? onCallError;
+  Function(bool isSharing)? onScreenShareChanged;
+  Function(MediaStream stream)? onRemoteScreenShare;
+  Function(String message)? onDataChannelMessage;
   
   // ICE servers
   List<Map<String, dynamic>> _iceServers = [];
@@ -66,6 +75,8 @@ class CallService {
   int? get remoteUserId => _remoteUserId;
   MediaStream? get localStream => _localStream;
   MediaStream? get remoteStream => _remoteStream;
+  bool get isScreenSharing => _isScreenSharing;
+  MediaStream? get screenStream => _screenStream;
 
   /// Initialize the call service and set up socket listeners
   Future<void> initialize() async {
@@ -310,17 +321,81 @@ class CallService {
 
     // Handle remote tracks
     _peerConnection!.onTrack = (event) {
-      debugPrint('🎥 Received remote track: ${event.track.kind}');
+      debugPrint('🎥 Received remote track: ${event.track.kind}, streams: ${event.streams.length}');
+      debugPrint('🎥 Track ID: ${event.track.id}, enabled: ${event.track.enabled}');
+      
       if (event.streams.isNotEmpty) {
-        _remoteStream = event.streams[0];
+        // Check if this is a new stream (could be screen share)
+        final stream = event.streams[0];
+        debugPrint('🎥 Stream ID: ${stream.id}');
+        
+        // Always update remote stream - this handles both initial stream and screen share
+        _remoteStream = stream;
         onRemoteStream?.call(_remoteStream!);
+        
+        // Listen for track ended (e.g., when screen share stops)
+        event.track.onEnded = () {
+          debugPrint('🎥 Remote track ended: ${event.track.kind}');
+        };
+        
+        // Listen for track mute/unmute (can indicate screen share changes)
+        event.track.onMute = () {
+          debugPrint('🎥 Remote track muted: ${event.track.kind}');
+        };
+        event.track.onUnMute = () {
+          debugPrint('🎥 Remote track unmuted: ${event.track.kind}');
+        };
       }
+    };
+    
+    // Handle renegotiation needed (when tracks are added/removed)
+    _peerConnection!.onRenegotiationNeeded = () {
+      debugPrint('🔄 Renegotiation needed - tracks may have changed');
+    };
+    
+    // Handle data channel from remote peer
+    _peerConnection!.onDataChannel = (channel) {
+      debugPrint('📨 Data channel received: ${channel.label}');
+      _setupDataChannelListeners(channel);
     };
 
     // Handle connection state
     _peerConnection!.onConnectionState = (state) {
       debugPrint('🔗 Connection state: $state');
     };
+  }
+
+  /// Set up listeners for a data channel
+  void _setupDataChannelListeners(RTCDataChannel channel) {
+    _dataChannel = channel;
+    
+    channel.onMessage = (message) {
+      debugPrint('📨 Data channel message received: ${message.text}');
+      onDataChannelMessage?.call(message.text);
+      
+      // Handle screen share notifications via data channel
+      if (message.text.contains('screen-share-started')) {
+        debugPrint('🖥️ Remote started screen sharing (via data channel)');
+        onScreenShareChanged?.call(true);
+      } else if (message.text.contains('screen-share-stopped')) {
+        debugPrint('🖥️ Remote stopped screen sharing (via data channel)');
+        onScreenShareChanged?.call(false);
+      }
+    };
+    
+    channel.onDataChannelState = (state) {
+      debugPrint('📨 Data channel state: $state');
+    };
+  }
+
+  /// Send a message via data channel
+  void sendDataChannelMessage(String message) {
+    if (_dataChannel != null && _dataChannel!.state == RTCDataChannelState.RTCDataChannelOpen) {
+      _dataChannel!.send(RTCDataChannelMessage(message));
+      debugPrint('📨 Data channel message sent: $message');
+    } else {
+      debugPrint('⚠️ Data channel not available or not open');
+    }
   }
 
   /// Handle incoming signal (offer/answer/ICE candidate)
@@ -354,6 +429,16 @@ class CallService {
       case 'call_cancelled':
         debugPrint('📴 Received call termination signal: $type');
         handleCallEnded();
+        break;
+      case 'screen-share-started':
+        debugPrint('🖥️ Remote user started screen sharing');
+        // The video track in the remote stream will automatically update
+        // Just notify the UI that screen share has started
+        onScreenShareChanged?.call(true);
+        break;
+      case 'screen-share-stopped':
+        debugPrint('🖥️ Remote user stopped screen sharing');
+        onScreenShareChanged?.call(false);
         break;
       default:
         debugPrint('⚠️ Unknown signal type: $type');
@@ -620,6 +705,10 @@ class CallService {
   void _cleanup() {
     debugPrint('🧹 Cleaning up call resources');
     
+    // Close data channel
+    _dataChannel?.close();
+    _dataChannel = null;
+    
     // Close peer connection first
     _peerConnection?.close();
     _peerConnection = null;
@@ -648,6 +737,23 @@ class CallService {
   /// Call this when the call UI is being completely closed
   void fullCleanup() {
     debugPrint('🧹 Full cleanup - stopping all tracks and disposing streams');
+    
+    // Close data channel
+    _dataChannel?.close();
+    _dataChannel = null;
+    
+    // Stop screen sharing if active
+    if (_isScreenSharing) {
+      if (_screenStream != null) {
+        for (var track in _screenStream!.getTracks()) {
+          track.stop();
+        }
+        _screenStream!.dispose();
+        _screenStream = null;
+      }
+      _isScreenSharing = false;
+      _originalVideoTrack = null;
+    }
     
     // Stop all local tracks (camera, microphone)
     if (_localStream != null) {
@@ -717,6 +823,164 @@ class CallService {
       if (videoTrack != null) {
         await Helper.switchCamera(videoTrack);
       }
+    }
+  }
+
+  /// Start screen sharing
+  Future<bool> startScreenShare() async {
+    if (_peerConnection == null) {
+      debugPrint('❌ Cannot start screen share: no peer connection');
+      return false;
+    }
+    
+    if (_isScreenSharing) {
+      debugPrint('⚠️ Already sharing screen');
+      return true;
+    }
+    
+    try {
+      debugPrint('🖥️ Starting screen share...');
+      
+      // On Android, we need to start the foreground service first
+      // This is required for media projection on Android 10+
+      /*
+      try {
+        await Helper.startForegroundService(
+          notificationTitle: 'Screen Sharing',
+          notificationText: 'You are sharing your screen',
+          enableAudio: true,
+        );
+        debugPrint('🖥️ Foreground service started');
+      } catch (e) {
+        debugPrint('⚠️ Could not start foreground service (may not be needed on this platform): $e');
+      }
+      */
+      
+      // Get screen capture stream
+      _screenStream = await navigator.mediaDevices.getDisplayMedia({
+        'video': true,
+        'audio': true, // Include system audio if available
+      });
+      
+      if (_screenStream == null) {
+        debugPrint('❌ Failed to get screen stream');
+        return false;
+      }
+      
+      // Get the screen video track
+      final screenTrack = _screenStream!.getVideoTracks().firstOrNull;
+      if (screenTrack == null) {
+        debugPrint('❌ No video track in screen stream');
+        await _screenStream!.dispose();
+        _screenStream = null;
+        return false;
+      }
+      
+      // Store original video track for later restoration
+      if (_localStream != null) {
+        _originalVideoTrack = _localStream!.getVideoTracks().firstOrNull;
+      }
+      
+      // Replace the video track in the peer connection
+      final senders = await _peerConnection!.getSenders();
+      for (final sender in senders) {
+        if (sender.track?.kind == 'video') {
+          await sender.replaceTrack(screenTrack);
+          debugPrint('🖥️ Replaced video track with screen share');
+          break;
+        }
+      }
+      
+      // Listen for when user stops sharing via system UI
+      screenTrack.onEnded = () {
+        debugPrint('🖥️ Screen share ended by user');
+        stopScreenShare();
+      };
+      
+      _isScreenSharing = true;
+      onScreenShareChanged?.call(true);
+      
+      // Notify remote user about screen share via signal
+      _socketService.emit('signal', {
+        'room': _callRoomId,
+        'signal': {
+          'type': 'screen-share-started',
+        },
+      });
+      
+      debugPrint('✅ Screen sharing started');
+      return true;
+    } catch (e) {
+      debugPrint('❌ Error starting screen share: $e');
+      return false;
+    }
+  }
+
+  /// Stop screen sharing and restore camera
+  Future<void> stopScreenShare() async {
+    if (!_isScreenSharing) {
+      return;
+    }
+    
+    try {
+      debugPrint('🖥️ Stopping screen share...');
+      
+      // Restore original video track if available
+      if (_originalVideoTrack != null && _peerConnection != null) {
+        final senders = await _peerConnection!.getSenders();
+        for (final sender in senders) {
+          if (sender.track?.kind == 'video') {
+            await sender.replaceTrack(_originalVideoTrack);
+            debugPrint('🖥️ Restored original video track');
+            break;
+          }
+        }
+      }
+      
+      // Stop and dispose screen stream
+      if (_screenStream != null) {
+        for (var track in _screenStream!.getTracks()) {
+          track.stop();
+        }
+        await _screenStream!.dispose();
+        _screenStream = null;
+      }
+      
+      _isScreenSharing = false;
+      _originalVideoTrack = null;
+      onScreenShareChanged?.call(false);
+      
+      // Notify remote user about screen share stop via signal
+      _socketService.emit('signal', {
+        'room': _callRoomId,
+        'signal': {
+          'type': 'screen-share-stopped',
+        },
+      });
+      
+      // Stop the foreground service on Android
+      /*
+      try {
+        await Helper.stopForegroundService();
+        debugPrint('🖥️ Foreground service stopped');
+      } catch (e) {
+        debugPrint('⚠️ Could not stop foreground service: $e');
+      }
+      */
+      
+      debugPrint('✅ Screen sharing stopped');
+    } catch (e) {
+      debugPrint('❌ Error stopping screen share: $e');
+    }
+  }
+
+  /// Toggle screen sharing
+  Future<bool> toggleScreenShare() async {
+    if (_isScreenSharing) {
+      await stopScreenShare();
+      return false;
+    } else {
+      return await startScreenShare();
     }
   }
 }
