@@ -28,6 +28,14 @@ class SocketService {
   Function(Map<String, dynamic>)? onColorReset;
   Function(Map<String, dynamic>)? onAllMessagesDeleted;
   Function(Map<String, dynamic>)? onFileReceived;
+  
+  // Call-related callbacks
+  Function(Map<String, dynamic>)? onIncomingCall;
+  Function(Map<String, dynamic>)? onCallInitiated;
+  Function(Map<String, dynamic>)? onCallAnswered;
+  Function(Map<String, dynamic>)? onCallDeclined;
+  Function(Map<String, dynamic>)? onCallEnded;
+  Function(Map<String, dynamic>)? onSignal;
 
   bool get isConnected => _socket?.connected ?? false;
   int? get currentUserId => _currentUserId;
@@ -222,6 +230,44 @@ class SocketService {
       debugPrint('📎 File received: $data');
       onFileReceived?.call(data as Map<String, dynamic>);
     });
+
+    // === Call-related events ===
+    
+    // Incoming call notification
+    _socket!.on('incoming_call', (data) {
+      debugPrint('📲 Incoming call: $data');
+      onIncomingCall?.call(data as Map<String, dynamic>);
+    });
+
+    // Call initiated confirmation
+    _socket!.on('call_initiated', (data) {
+      debugPrint('📞 Call initiated: $data');
+      onCallInitiated?.call(data as Map<String, dynamic>);
+    });
+
+    // Call answered
+    _socket!.on('call_answered', (data) {
+      debugPrint('✅ Call answered: $data');
+      onCallAnswered?.call(data as Map<String, dynamic>);
+    });
+
+    // Call declined
+    _socket!.on('call_declined', (data) {
+      debugPrint('❌ Call declined: $data');
+      onCallDeclined?.call(data as Map<String, dynamic>);
+    });
+
+    // Call ended
+    _socket!.on('call_ended', (data) {
+      debugPrint('📴 Call ended: $data');
+      onCallEnded?.call(data as Map<String, dynamic>);
+    });
+
+    // WebRTC signaling (offer/answer/ICE candidates)
+    _socket!.on('signal', (data) {
+      debugPrint('📡 Signal received: $data');
+      onSignal?.call(data as Map<String, dynamic>);
+    });
   }
 
   /// Disconnect from Socket.IO server
@@ -318,5 +364,12 @@ class SocketService {
     onColorReset = null;
     onAllMessagesDeleted = null;
     onFileReceived = null;
+    // Call-related
+    onIncomingCall = null;
+    onCallInitiated = null;
+    onCallAnswered = null;
+    onCallDeclined = null;
+    onCallEnded = null;
+    onSignal = null;
   }
 }

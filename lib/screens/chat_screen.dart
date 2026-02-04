@@ -18,6 +18,8 @@ import '../services/socket_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/color_picker_modal.dart';
 import '../widgets/call_setup_modal.dart';
+import '../widgets/outgoing_call_modal.dart';
+import '../services/call_service.dart';
 import '../config/api_config.dart';
 
 /// Chat screen for messaging with a specific user
@@ -1049,17 +1051,67 @@ class _ChatScreenState extends State<ChatScreen> {
           callType: callType,
           onStartCall: (localStream, selectedMic, selectedSpeaker, selectedCamera, videoEnabled) {
             Navigator.pop(context); // Close modal
-            debugPrint('🎥 Starting ${callType.name} call with ${widget.otherUser.fullName}');
-            debugPrint('📱 Video enabled: $videoEnabled');
-            debugPrint('🎤 Mic: $selectedMic, Speaker: $selectedSpeaker, Camera: $selectedCamera');
-            // TODO: Implement actual call initiation via socket
-            ScaffoldMessenger.of(this.context).showSnackBar(
-              SnackBar(
-                content: Text('Starting ${callType.name} call with ${widget.otherUser.fullName}...'),
-                backgroundColor: const Color(0xFF8B5CF6),
-                duration: const Duration(seconds: 2),
-              ),
-            );
+            _initiateCall(localStream, callType, videoEnabled);
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Initiate call via CallService
+  Future<void> _initiateCall(dynamic localStream, CallType callType, bool videoEnabled) async {
+    final callService = CallService();
+    final callTypeStr = callType == CallType.video ? 'video' : 'audio';
+    
+    // Set up socket signal handler
+    _socketService.onSignal = (data) {
+      callService.handleSignal(data);
+    };
+    
+    _socketService.onCallInitiated = (data) {
+      callService.handleCallInitiated(data);
+    };
+    
+    _socketService.onCallEnded = (data) {
+      callService.handleCallEnded();
+    };
+    
+    // Set up error callback
+    callService.onCallError = (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Call error: $error'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    };
+    
+    // Initialize and start the call (await to ensure ICE servers are fetched)
+    await callService.initialize();
+    await callService.initiateCall(
+      calleeId: widget.otherUser.id,
+      callType: callTypeStr,
+      localStream: localStream,
+    );
+    
+    debugPrint('🎥 Initiated ${callType.name} call with ${widget.otherUser.fullName}');
+    
+    // Show outgoing call modal
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (context) => OutgoingCallModal(
+          recipientName: widget.otherUser.fullName,
+          callType: callTypeStr,
+          callService: callService,
+          onCancel: () {
+            debugPrint('📞 Call cancelled by user');
+          },
+          onConnected: () {
+            debugPrint('📞 Call connected!');
+            // TODO: Navigate to active call screen
           },
         ),
       ),

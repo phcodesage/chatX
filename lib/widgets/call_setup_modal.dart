@@ -147,6 +147,9 @@ class _CallSetupModalState extends State<CallSetupModal> {
     }
   }
 
+  // Track if disposed
+  bool _isDisposed = false;
+
   Future<void> _stopMediaStream() async {
     if (_localStream != null) {
       for (var track in _localStream!.getTracks()) {
@@ -155,7 +158,10 @@ class _CallSetupModalState extends State<CallSetupModal> {
       await _localStream!.dispose();
       _localStream = null;
     }
-    _localRenderer.srcObject = null;
+    // Only set srcObject if not disposed
+    if (!_isDisposed) {
+      _localRenderer.srcObject = null;
+    }
   }
 
   Future<void> _switchCamera() async {
@@ -185,6 +191,8 @@ class _CallSetupModalState extends State<CallSetupModal> {
 
   void _onStartCall() {
     if (_localStream != null) {
+      // Mark that we're handing off the stream - don't dispose it
+      _streamHandedOff = true;
       widget.onStartCall(
         _localStream!,
         _selectedMicId,
@@ -194,10 +202,17 @@ class _CallSetupModalState extends State<CallSetupModal> {
       );
     }
   }
+  
+  // Flag to track if stream was handed off to call service
+  bool _streamHandedOff = false;
 
   @override
   void dispose() {
-    _stopMediaStream();
+    _isDisposed = true;
+    // Only stop stream if it wasn't handed off to the call service
+    if (!_streamHandedOff) {
+      _stopMediaStream();
+    }
     _localRenderer.dispose();
     super.dispose();
   }
