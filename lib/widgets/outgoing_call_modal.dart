@@ -89,12 +89,11 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
     if (state == CallState.connected) {
       _noAnswerTimer?.cancel();
       widget.onConnected?.call();
-      // Auto-close after short delay
-      Future.delayed(const Duration(seconds: 1), () {
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
-      });
+      // Navigate to connected call screen (handled by parent)
+      // Pop this modal so the parent can show the connected call screen
+      if (mounted) {
+        Navigator.of(context).pop('connected');
+      }
     } else if (state == CallState.failed || state == CallState.ended) {
       _noAnswerTimer?.cancel();
       // Auto-close after showing status

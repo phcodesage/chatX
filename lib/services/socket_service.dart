@@ -31,6 +31,7 @@ class SocketService {
   
   // Call-related callbacks
   Function(Map<String, dynamic>)? onIncomingCall;
+  Function(Map<String, dynamic>)? onCrossRoomCallOffer; // For web client calls
   Function(Map<String, dynamic>)? onCallInitiated;
   Function(Map<String, dynamic>)? onCallAnswered;
   Function(Map<String, dynamic>)? onCallDeclined;
@@ -233,10 +234,16 @@ class SocketService {
 
     // === Call-related events ===
     
-    // Incoming call notification
+    // Incoming call notification (from initiate_call event)
     _socket!.on('incoming_call', (data) {
       debugPrint('📲 Incoming call: $data');
       onIncomingCall?.call(data as Map<String, dynamic>);
+    });
+    
+    // Cross-room call offer (from web client signaling)
+    _socket!.on('cross_room_call_offer', (data) {
+      debugPrint('📲 Cross-room call offer: $data');
+      onCrossRoomCallOffer?.call(data as Map<String, dynamic>);
     });
 
     // Call initiated confirmation

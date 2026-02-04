@@ -188,12 +188,47 @@ class CallService {
 
       debugPrint('📞 Initiating $callType call to user $calleeId');
 
+      // Create a completer to wait for call_initiated response
+      final callInitiatedCompleter = Completer<Map<String, dynamic>>();
+      
+      // Temporarily store the callback to listen for call_initiated
+      final previousCallback = _socketService.onCallInitiated;
+      _socketService.onCallInitiated = (data) {
+        debugPrint('✅ Received call_initiated response: $data');
+        if (!callInitiatedCompleter.isCompleted) {
+          _callId = data['id'] as int?;
+          _callRoomId = data['call_room_id'] as String?;
+          callInitiatedCompleter.complete(data);
+        }
+        // Call the previous callback if it exists
+        previousCallback?.call(data);
+      };
+
       // Emit initiate_call event
       _socketService.emit('initiate_call', {
         'callee_id': calleeId,
         'call_type': callType,
       });
 
+      // Wait for the call_initiated response (with timeout)
+      try {
+        await callInitiatedCompleter.future.timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            throw TimeoutException('Server did not respond to call initiation');
+          },
+        );
+      } on TimeoutException catch (e) {
+        debugPrint('❌ Call initiation timed out: $e');
+        _callState = CallState.failed;
+        onCallStateChanged?.call(_callState);
+        onCallError?.call('Call initiation timed out');
+        return;
+      }
+
+      // Now we have the call room, proceed with WebRTC
+      debugPrint('📞 Call room assigned: $_callRoomId');
+      
       // Set up peer connection
       await _createPeerConnection();
 
@@ -206,8 +241,9 @@ class CallService {
       final offer = await _peerConnection!.createOffer();
       await _peerConnection!.setLocalDescription(offer);
 
-      debugPrint('📤 Sending WebRTC offer');
+      debugPrint('📤 Sending WebRTC offer to room: $_callRoomId');
       _socketService.emit('signal', {
+        'room': _callRoomId,
         'signal': {
           'type': 'offer',
           'sdp': offer.sdp,
@@ -243,8 +279,9 @@ class CallService {
     // Handle ICE candidates
     _peerConnection!.onIceCandidate = (candidate) {
       if (candidate.candidate != null) {
-        debugPrint('🧊 Sending ICE candidate');
+        debugPrint('🧊 Sending ICE candidate to room: $_callRoomId');
         _socketService.emit('signal', {
+          'room': _callRoomId,
           'signal': {
             'type': 'ice-candidate',
             'candidate': candidate.candidate,
@@ -342,8 +379,9 @@ class CallService {
     final answer = await _peerConnection!.createAnswer();
     await _peerConnection!.setLocalDescription(answer);
 
-    debugPrint('📤 Sending WebRTC answer');
+    debugPrint('📤 Sending WebRTC answer to room: $_callRoomId');
     _socketService.emit('signal', {
+      'room': _callRoomId,
       'signal': {
         'type': 'answer',
         'sdp': answer.sdp,
@@ -473,19 +511,36 @@ class CallService {
 
   /// End the current call
   void endCall() {
+    debugPrint('📴 Ending call - callId: $_callId, callRoomId: $_callRoomId');
+    
+    // Emit end_call event with call_id
     if (_callId != null) {
       _socketService.emit('end_call', {
         'call_id': _callId,
       });
     }
+    
+    // Also emit to the call room directly for cross-room calls (web client compatibility)
+    // Use 'call-ended' with hyphen to match backend signal handler
+    if (_callRoomId != null) {
+      _socketService.emit('signal', {
+        'room': _callRoomId,
+        'signal': {
+          'type': 'call-ended',
+        },
+      });
+    }
 
-    _cleanup();
+    // Use fullCleanup to properly stop camera/mic tracks
+    fullCleanup();
   }
 
-  /// Handle call ended event
+  /// Handle call ended event (remote user or timeout)
   void handleCallEnded() {
-    debugPrint('📴 Call ended');
-    _cleanup();
+    debugPrint('📴 Call ended by remote user');
+    _callState = CallState.ended;
+    onCallStateChanged?.call(_callState);
+    fullCleanup();
   }
 
   /// Handle incoming call event
@@ -510,12 +565,16 @@ class CallService {
     _callRoomId = data['call_room_id'] as String?;
   }
 
-  /// Clean up resources
+  /// Clean up resources - properly close peer connection and stop tracks
   void _cleanup() {
+    debugPrint('🧹 Cleaning up call resources');
+    
+    // Close peer connection first
     _peerConnection?.close();
     _peerConnection = null;
     
-    // Don't dispose local stream - let the caller manage it
+    // Note: We don't dispose _localStream here since it's managed by the caller
+    // The caller should dispose it when appropriate
     _localStream = null;
     _remoteStream = null;
     
@@ -533,6 +592,54 @@ class CallService {
     
     onCallStateChanged?.call(_callState);
   }
+  
+  /// Full cleanup including stopping and disposing local stream
+  /// Call this when the call UI is being completely closed
+  void fullCleanup() {
+    debugPrint('🧹 Full cleanup - stopping all tracks and disposing streams');
+    
+    // Stop all local tracks (camera, microphone)
+    if (_localStream != null) {
+      for (var track in _localStream!.getTracks()) {
+        track.stop();
+      }
+      _localStream!.dispose();
+    }
+    
+    // Dispose remote stream
+    if (_remoteStream != null) {
+      _remoteStream!.dispose();
+    }
+    
+    // Close peer connection
+    _peerConnection?.close();
+    _peerConnection = null;
+    
+    _localStream = null;
+    _remoteStream = null;
+    _callState = CallState.idle;
+    _callDirection = null;
+    _callId = null;
+    _remoteUserId = null;
+    _callRoomId = null;
+    _callType = null;
+    
+    // Reset ICE candidate queuing state
+    _remoteDescriptionSet = false;
+    _earlyIceCandidates.clear();
+    _candidateQueue.clear();
+    
+    onCallStateChanged?.call(_callState);
+  }
+  
+  /// Handle call declined event (remote user declined)
+  void handleCallDeclined() {
+    debugPrint('❌ Call was declined by remote user');
+    _callState = CallState.ended;
+    onCallStateChanged?.call(_callState);
+    fullCleanup();
+  }
+
 
   /// Toggle local video
   void toggleVideo(bool enabled) {

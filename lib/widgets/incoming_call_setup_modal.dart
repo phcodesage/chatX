@@ -1,67 +1,90 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../services/call_service.dart';
 
-/// Call type enum
-enum CallType { video, audio }
+/// Incoming call setup modal with device selection
+/// Shows camera/mic/speaker selection before answering a call
+class IncomingCallSetupModal extends StatefulWidget {
+  final String callerName;
+  final int callerId;
+  final String callType;
+  final CallService callService;
+  final VoidCallback? onDecline;
 
-/// Call setup modal for device selection before initiating a call
-class CallSetupModal extends StatefulWidget {
-  final String recipientName;
-  final CallType callType;
-  final Function(MediaStream localStream, String? selectedMic, String? selectedSpeaker, String? selectedCamera, bool videoEnabled) onStartCall;
-  
-  const CallSetupModal({
+  const IncomingCallSetupModal({
     super.key,
-    required this.recipientName,
+    required this.callerName,
+    required this.callerId,
     required this.callType,
-    required this.onStartCall,
+    required this.callService,
+    this.onDecline,
   });
 
   @override
-  State<CallSetupModal> createState() => _CallSetupModalState();
+  State<IncomingCallSetupModal> createState() => _IncomingCallSetupModalState();
 }
 
-class _CallSetupModalState extends State<CallSetupModal> {
+class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
+    with SingleTickerProviderStateMixin {
   // Device lists
   List<MediaDeviceInfo> _microphones = [];
   List<MediaDeviceInfo> _speakers = [];
   List<MediaDeviceInfo> _cameras = [];
-  
+
   // Selected devices
   String? _selectedMicId;
   String? _selectedSpeakerId;
   String? _selectedCameraId;
-  
+
   // Video toggle state
   bool _videoEnabled = true;
-  
+
   // Local media stream
   MediaStream? _localStream;
-  
+
   // Video renderer for preview
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
-  
-  // Audio level
-  double _audioLevel = 0.0;
-  
+
   // Loading state
   bool _isLoading = true;
   bool _hasPermissions = false;
   String? _errorMessage;
+  bool _isAnswering = false;
+  bool _isDisposed = false;
+  bool _streamHandedOff = false;
+
+  // Pulse animation for caller avatar
+  late AnimationController _pulseController;
 
   @override
   void initState() {
     super.initState();
-    _videoEnabled = widget.callType == CallType.video;
+    _videoEnabled = widget.callType == 'video';
+    
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    
     _initializeDevices();
+    
+    // Listen for call state changes (caller might cancel)
+    widget.callService.onCallStateChanged = _handleCallStateChanged;
+  }
+
+  void _handleCallStateChanged(CallState state) {
+    if (!mounted) return;
+    
+    if (state == CallState.ended || state == CallState.failed) {
+      Navigator.of(context).pop('ended');
+    }
   }
 
   Future<void> _initializeDevices() async {
     try {
-      // Request permissions first
       await _requestPermissions();
-      
+
       if (!_hasPermissions) {
         setState(() {
           _isLoading = false;
@@ -69,19 +92,16 @@ class _CallSetupModalState extends State<CallSetupModal> {
         });
         return;
       }
-      
-      // Initialize renderer
+
       await _localRenderer.initialize();
-      
-      // Get available devices
+
       final devices = await navigator.mediaDevices.enumerateDevices();
-      
+
       setState(() {
         _microphones = devices.where((d) => d.kind == 'audioinput').toList();
         _speakers = devices.where((d) => d.kind == 'audiooutput').toList();
         _cameras = devices.where((d) => d.kind == 'videoinput').toList();
-        
-        // Set defaults
+
         if (_microphones.isNotEmpty) {
           _selectedMicId = _microphones.first.deviceId;
         }
@@ -92,10 +112,9 @@ class _CallSetupModalState extends State<CallSetupModal> {
           _selectedCameraId = _cameras.first.deviceId;
         }
       });
-      
-      // Get initial media stream
+
       await _getMediaStream();
-      
+
       setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('Error initializing devices: $e');
@@ -107,10 +126,9 @@ class _CallSetupModalState extends State<CallSetupModal> {
   }
 
   Future<void> _requestPermissions() async {
-    // Request camera and microphone permissions
     final cameraStatus = await Permission.camera.request();
     final micStatus = await Permission.microphone.request();
-    
+
     setState(() {
       _hasPermissions = cameraStatus.isGranted && micStatus.isGranted;
     });
@@ -118,37 +136,33 @@ class _CallSetupModalState extends State<CallSetupModal> {
 
   Future<void> _getMediaStream() async {
     try {
-      // Stop existing stream
       await _stopMediaStream();
-      
+
       final Map<String, dynamic> constraints = {
-        'audio': _selectedMicId != null 
-          ? {'deviceId': _selectedMicId}
-          : true,
+        'audio': _selectedMicId != null
+            ? {'deviceId': _selectedMicId}
+            : true,
         'video': _videoEnabled && _selectedCameraId != null
-          ? {
-              'deviceId': _selectedCameraId,
-              'width': {'ideal': 640},
-              'height': {'ideal': 480},
-              'facingMode': 'user',
-            }
-          : _videoEnabled,
+            ? {
+                'deviceId': _selectedCameraId,
+                'width': {'ideal': 640},
+                'height': {'ideal': 480},
+                'facingMode': 'user',
+              }
+            : _videoEnabled,
       };
-      
+
       _localStream = await navigator.mediaDevices.getUserMedia(constraints);
-      
+
       if (_videoEnabled && _localStream != null) {
         _localRenderer.srcObject = _localStream;
       }
-      
+
       setState(() {});
     } catch (e) {
       debugPrint('Error getting media stream: $e');
     }
   }
-
-  // Track if disposed
-  bool _isDisposed = false;
 
   Future<void> _stopMediaStream() async {
     if (_localStream != null) {
@@ -158,18 +172,8 @@ class _CallSetupModalState extends State<CallSetupModal> {
       await _localStream!.dispose();
       _localStream = null;
     }
-    // Only set srcObject if not disposed
     if (!_isDisposed) {
       _localRenderer.srcObject = null;
-    }
-  }
-
-  Future<void> _switchCamera() async {
-    if (_localStream != null && _cameras.length > 1) {
-      final currentIndex = _cameras.indexWhere((c) => c.deviceId == _selectedCameraId);
-      final nextIndex = (currentIndex + 1) % _cameras.length;
-      _selectedCameraId = _cameras[nextIndex].deviceId;
-      await _getMediaStream();
     }
   }
 
@@ -177,39 +181,65 @@ class _CallSetupModalState extends State<CallSetupModal> {
     setState(() {
       _videoEnabled = !_videoEnabled;
     });
-    
+
     if (_localStream != null) {
       final videoTracks = _localStream!.getVideoTracks();
       for (var track in videoTracks) {
         track.enabled = _videoEnabled;
       }
     }
-    
-    // Get new stream with/without video
+
     _getMediaStream();
   }
 
-  void _onStartCall() {
-    if (_localStream != null) {
-      // Mark that we're handing off the stream - don't dispose it
+  Future<void> _handleAnswer() async {
+    if (_isAnswering || _localStream == null) return;
+
+    setState(() {
+      _isAnswering = true;
+    });
+
+    try {
       _streamHandedOff = true;
-      widget.onStartCall(
-        _localStream!,
-        _selectedMicId,
-        _selectedSpeakerId,
-        _selectedCameraId,
-        _videoEnabled,
-      );
+      await widget.callService.answerCall(localStream: _localStream!);
+
+      if (mounted) {
+        Navigator.of(context).pop({
+          'result': 'accepted',
+          'localStream': _localStream,
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Error answering call: $e');
+      _streamHandedOff = false;
+      setState(() {
+        _isAnswering = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to answer call: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
-  
-  // Flag to track if stream was handed off to call service
-  bool _streamHandedOff = false;
+
+  void _handleDecline() {
+    widget.callService.declineCall();
+    widget.onDecline?.call();
+
+    if (mounted) {
+      Navigator.of(context).pop({'result': 'declined'});
+    }
+  }
 
   @override
   void dispose() {
     _isDisposed = true;
-    // Only stop stream if it wasn't handed off to the call service
+    _pulseController.dispose();
     if (!_streamHandedOff) {
       _stopMediaStream();
     }
@@ -219,23 +249,118 @@ class _CallSetupModalState extends State<CallSetupModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF1E293B), // Dark blue-gray background
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          _handleDecline();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF1E293B),
+        body: SafeArea(
+          child: _isLoading
+              ? _buildLoadingView()
+              : _errorMessage != null
+                  ? _buildErrorView()
+                  : _buildSetupView(),
+        ),
       ),
-      child: SafeArea(
-        child: _isLoading
-            ? const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(48.0),
-                  child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+    );
+  }
+
+  Widget _buildLoadingView() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _buildCallerInfo(),
+          const SizedBox(height: 32),
+          const CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+          const SizedBox(height: 16),
+          const Text(
+            'Preparing call...',
+            style: TextStyle(color: Colors.white70, fontSize: 16),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCallerInfo() {
+    return Column(
+      children: [
+        // Pulsing avatar
+        AnimatedBuilder(
+          animation: _pulseController,
+          builder: (context, child) {
+            return Container(
+              width: 100 + (_pulseController.value * 15),
+              height: 100 + (_pulseController.value * 15),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color.fromRGBO(
+                  76,
+                  175,
+                  80,
+                  0.3 - (_pulseController.value * 0.2),
                 ),
-              )
-            : _errorMessage != null
-                ? _buildErrorView()
-                : _buildSetupView(),
-      ),
+              ),
+              child: Center(
+                child: Container(
+                  width: 80,
+                  height: 80,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      widget.callerName.isNotEmpty
+                          ? widget.callerName[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 16),
+        Text(
+          widget.callerName,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              widget.callType == 'video' ? Icons.videocam : Icons.phone,
+              color: Colors.green,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Incoming ${widget.callType == 'video' ? 'Video' : 'Audio'} Call',
+              style: const TextStyle(color: Colors.green, fontSize: 16),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -243,8 +368,10 @@ class _CallSetupModalState extends State<CallSetupModal> {
     return Padding(
       padding: const EdgeInsets.all(24.0),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          _buildCallerInfo(),
+          const SizedBox(height: 32),
           const Icon(Icons.error_outline, color: Colors.red, size: 48),
           const SizedBox(height: 16),
           Text(
@@ -254,12 +381,12 @@ class _CallSetupModalState extends State<CallSetupModal> {
           ),
           const SizedBox(height: 24),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: _handleDecline,
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.grey[700],
+              backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Close'),
+            child: const Text('Decline'),
           ),
         ],
       ),
@@ -272,34 +399,11 @@ class _CallSetupModalState extends State<CallSetupModal> {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            // Handle bar
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[600],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
+            // Caller info at top
+            _buildCallerInfo(),
             const SizedBox(height: 24),
-            
-            // Title
-            const Center(
-              child: Text(
-                'Call Setup',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            
+
             // Microphone selector
             _buildSectionLabel('Microphone'),
             const SizedBox(height: 8),
@@ -311,11 +415,8 @@ class _CallSetupModalState extends State<CallSetupModal> {
                 _getMediaStream();
               },
             ),
-            // Audio level indicator
-            const SizedBox(height: 8),
-            _buildAudioLevelIndicator(),
-            const SizedBox(height: 20),
-            
+            const SizedBox(height: 16),
+
             // Speaker selector
             _buildSectionLabel('Speaker'),
             const SizedBox(height: 8),
@@ -324,13 +425,10 @@ class _CallSetupModalState extends State<CallSetupModal> {
               selectedId: _selectedSpeakerId,
               onChanged: (id) => setState(() => _selectedSpeakerId = id),
             ),
-            // Volume slider (visual representation)
-            const SizedBox(height: 8),
-            _buildVolumeSlider(),
-            const SizedBox(height: 20),
-            
+            const SizedBox(height: 16),
+
             // Camera section - only show for video calls
-            if (widget.callType == CallType.video) ...[
+            if (widget.callType == 'video') ...[
               // Camera toggle and selector
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -352,8 +450,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
                 ],
               ),
               const SizedBox(height: 8),
-              
-              // Camera dropdown (only if video enabled)
+
               if (_videoEnabled) ...[
                 _buildDeviceDropdown(
                   devices: _cameras,
@@ -365,11 +462,11 @@ class _CallSetupModalState extends State<CallSetupModal> {
                 ),
                 const SizedBox(height: 16),
               ],
-              
+
               // Video preview
               Container(
                 width: double.infinity,
-                height: 280,
+                height: 200,
                 decoration: BoxDecoration(
                   color: Colors.black,
                   borderRadius: BorderRadius.circular(12),
@@ -380,17 +477,20 @@ class _CallSetupModalState extends State<CallSetupModal> {
                       ? RTCVideoView(
                           _localRenderer,
                           mirror: true,
-                          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                          objectFit:
+                              RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                         )
                       : const Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.videocam_off, color: Colors.grey, size: 48),
+                              Icon(Icons.videocam_off,
+                                  color: Colors.grey, size: 48),
                               SizedBox(height: 8),
                               Text(
                                 'Video is off',
-                                style: TextStyle(color: Colors.grey, fontSize: 14),
+                                style:
+                                    TextStyle(color: Colors.grey, fontSize: 14),
                               ),
                             ],
                           ),
@@ -402,40 +502,51 @@ class _CallSetupModalState extends State<CallSetupModal> {
               // Add spacing for audio-only calls
               const SizedBox(height: 24),
             ],
-            
+
             // Action buttons
             Row(
               children: [
-                // Cancel button
+                // Decline button
                 Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
+                  child: ElevatedButton.icon(
+                    onPressed: _handleDecline,
+                    icon: const Icon(Icons.call_end),
+                    label: const Text('Decline'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey[700],
+                      backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    child: const Text('Cancel', style: TextStyle(fontSize: 16)),
                   ),
                 ),
                 const SizedBox(width: 16),
-                // Start Call button
+                // Answer button
                 Expanded(
                   flex: 2,
-                  child: ElevatedButton(
-                    onPressed: _onStartCall,
+                  child: ElevatedButton.icon(
+                    onPressed: _isAnswering ? null : _handleAnswer,
+                    icon: _isAnswering
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.call),
+                    label: Text(_isAnswering ? 'Connecting...' : 'Answer'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF8B5CF6),
+                      backgroundColor: Colors.green,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    child: const Text('Start Call', style: TextStyle(fontSize: 16)),
                   ),
                 ),
               ],
@@ -475,13 +586,16 @@ class _CallSetupModalState extends State<CallSetupModal> {
           isExpanded: true,
           dropdownColor: const Color(0xFF334155),
           style: const TextStyle(color: Colors.white, fontSize: 14),
-          hint: const Text('Select device', style: TextStyle(color: Colors.grey)),
+          hint: const Text('Select device',
+              style: TextStyle(color: Colors.grey)),
           icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
           items: devices.map((device) {
             return DropdownMenuItem<String>(
               value: device.deviceId,
               child: Text(
-                device.label.isNotEmpty ? device.label : 'Device ${device.deviceId.substring(0, 8)}',
+                device.label.isNotEmpty
+                    ? device.label
+                    : 'Device ${device.deviceId.substring(0, 8)}',
                 overflow: TextOverflow.ellipsis,
               ),
             );
@@ -489,61 +603,6 @@ class _CallSetupModalState extends State<CallSetupModal> {
           onChanged: onChanged,
         ),
       ),
-    );
-  }
-
-  Widget _buildAudioLevelIndicator() {
-    return Container(
-      height: 4,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(2),
-        color: const Color(0xFF334155),
-      ),
-      child: FractionallySizedBox(
-        alignment: Alignment.centerLeft,
-        widthFactor: 0.6, // Simulated audio level
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(2),
-            color: const Color(0xFF8B5CF6),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildVolumeSlider() {
-    return Row(
-      children: [
-        Expanded(
-          flex: 6,
-          child: Container(
-            height: 4,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(2),
-              color: const Color(0xFF8B5CF6),
-            ),
-          ),
-        ),
-        Container(
-          width: 16,
-          height: 16,
-          decoration: const BoxDecoration(
-            color: Color(0xFF8B5CF6),
-            shape: BoxShape.circle,
-          ),
-        ),
-        Expanded(
-          flex: 4,
-          child: Container(
-            height: 4,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(2),
-              color: Colors.grey[600],
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

@@ -19,8 +19,10 @@ import '../services/storage_service.dart';
 import '../widgets/color_picker_modal.dart';
 import '../widgets/call_setup_modal.dart';
 import '../widgets/outgoing_call_modal.dart';
+import '../widgets/incoming_call_setup_modal.dart';
 import '../services/call_service.dart';
 import '../config/api_config.dart';
+import 'connected_call_screen.dart';
 
 /// Chat screen for messaging with a specific user
 class ChatScreen extends StatefulWidget {
@@ -317,6 +319,180 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollToBottom();
       }
     };
+
+    // Listen for incoming calls (while in chat)
+    _socketService.onIncomingCall = (data) {
+      _handleIncomingCallInChat(data);
+    };
+    
+    // Listen for cross-room call offers (from web client)
+    _socketService.onCrossRoomCallOffer = (data) {
+      _handleCrossRoomCallOfferInChat(data);
+    };
+  }
+  
+  /// Handle cross-room call offer from web client while in chat
+  Future<void> _handleCrossRoomCallOfferInChat(Map<String, dynamic> data) async {
+    if (!mounted) return;
+    
+    debugPrint('📲 Cross-room call offer received in chat: $data');
+    
+    final callerId = data['caller_id'] as int?;
+    final callerUsername = data['caller_username'] as String? ?? widget.otherUser.fullName;
+    final callType = data['call_type'] as String? ?? 'video';
+    final room = data['room'] as String?;
+    
+    if (callerId == null || room == null) {
+      debugPrint('⚠️ Invalid cross-room call offer data');
+      return;
+    }
+    
+    // Initialize call service
+    final callService = CallService();
+    await callService.initialize();
+    
+    // Create synthetic incoming call data for the call service
+    final syntheticCallData = {
+      'id': DateTime.now().millisecondsSinceEpoch,
+      'call_room_id': room,
+      'call_type': callType,
+      'caller_id': callerId,
+      'caller': {
+        'id': callerId,
+        'username': callerUsername,
+        'full_name': callerUsername,
+      },
+    };
+    callService.handleIncomingCall(syntheticCallData);
+    
+    // Set up signal handler for WebRTC
+    _socketService.onSignal = (signalData) {
+      debugPrint('📡 Signal received for cross-room call: $signalData');
+      callService.handleSignal(signalData);
+    };
+    
+    // Set up call ended/declined handlers
+    _socketService.onCallEnded = (endData) {
+      debugPrint('📴 Call ended by remote user');
+      callService.handleCallEnded();
+    };
+    
+    _socketService.onCallDeclined = (declineData) {
+      debugPrint('❌ Call declined');
+      callService.handleCallDeclined();
+    };
+    
+    // Show incoming call setup modal with device selection
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (context) => IncomingCallSetupModal(
+          callerName: callerUsername,
+          callerId: callerId,
+          callType: callType,
+          callService: callService,
+          onDecline: () {
+            debugPrint('📞 Call declined by user');
+          },
+        ),
+      ),
+    ).then((result) {
+      if (result is Map && (result['result'] == 'accepted' || result['result'] == 'connected')) {
+        final localStream = result['localStream'];
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (context) => ConnectedCallScreen(
+              remoteName: callerUsername,
+              callType: callType,
+              callService: callService,
+              localStream: localStream ?? callService.localStream,
+              onChatPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  /// Handle incoming call while in chat screen
+  Future<void> _handleIncomingCallInChat(Map<String, dynamic> data) async {
+    if (!mounted) return;
+    
+    debugPrint('📲 Incoming call received in chat: $data');
+    
+    final callId = data['id'] as int?;
+    final callRoomId = data['call_room_id'] as String?;
+    final callType = data['call_type'] as String? ?? 'video';
+    final callerData = data['caller'] as Map<String, dynamic>?;
+    final callerId = callerData?['id'] as int? ?? data['caller_id'] as int?;
+    final callerName = callerData?['full_name'] as String? ?? 
+                       callerData?['username'] as String? ?? 
+                       widget.otherUser.fullName;
+    
+    if (callId == null || callRoomId == null || callerId == null) {
+      debugPrint('⚠️ Invalid incoming call data');
+      return;
+    }
+    
+    // Initialize call service (fetches ICE servers) and set up the call state
+    final callService = CallService();
+    await callService.initialize();
+    callService.handleIncomingCall(data);
+    
+    // Set up signal handler for WebRTC
+    _socketService.onSignal = (signalData) {
+      debugPrint('📡 Signal received for incoming call: $signalData');
+      callService.handleSignal(signalData);
+    };
+    
+    // Set up call ended/declined handlers
+    _socketService.onCallEnded = (endData) {
+      debugPrint('📴 Call ended by remote user');
+      callService.handleCallEnded();
+    };
+    
+    _socketService.onCallDeclined = (declineData) {
+      debugPrint('❌ Call declined');
+      callService.handleCallDeclined();
+    };
+    
+    // Show incoming call setup modal with device selection
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (context) => IncomingCallSetupModal(
+          callerName: callerName,
+          callerId: callerId,
+          callType: callType,
+          callService: callService,
+          onDecline: () {
+            debugPrint('📞 Call declined by user');
+          },
+        ),
+      ),
+    ).then((result) {
+      if (result is Map && (result['result'] == 'accepted' || result['result'] == 'connected')) {
+        // Navigate to connected call screen with the local stream from setup
+        final localStream = result['localStream'];
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (context) => ConnectedCallScreen(
+              remoteName: callerName,
+              callType: callType,
+              callService: callService,
+              localStream: localStream ?? callService.localStream,
+              onChatPressed: () {
+                Navigator.of(context).pop(); // Return to chat
+              },
+            ),
+          ),
+        );
+      }
+    });
   }
 
   void _handleColorChange(Map<String, dynamic> data) {
@@ -1073,7 +1249,13 @@ class _ChatScreenState extends State<ChatScreen> {
     };
     
     _socketService.onCallEnded = (data) {
+      debugPrint('📴 Call ended - cleaning up');
       callService.handleCallEnded();
+    };
+    
+    _socketService.onCallDeclined = (data) {
+      debugPrint('❌ Call declined by remote user');
+      callService.handleCallDeclined();
     };
     
     // Set up error callback
@@ -1099,7 +1281,7 @@ class _ChatScreenState extends State<ChatScreen> {
     debugPrint('🎥 Initiated ${callType.name} call with ${widget.otherUser.fullName}');
     
     // Show outgoing call modal
-    Navigator.of(context).push(
+    final result = await Navigator.of(context).push(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (context) => OutgoingCallModal(
@@ -1111,11 +1293,28 @@ class _ChatScreenState extends State<ChatScreen> {
           },
           onConnected: () {
             debugPrint('📞 Call connected!');
-            // TODO: Navigate to active call screen
           },
         ),
       ),
     );
+    
+    // Navigate to connected call screen if call connected
+    if (result == 'connected' && mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (context) => ConnectedCallScreen(
+            remoteName: widget.otherUser.fullName,
+            callType: callTypeStr,
+            callService: callService,
+            localStream: localStream,
+            onChatPressed: () {
+              Navigator.of(context).pop(); // Return to chat
+            },
+          ),
+        ),
+      );
+    }
   }
 
   /// Handle incoming file message from web
