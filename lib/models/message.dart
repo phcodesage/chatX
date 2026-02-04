@@ -22,6 +22,14 @@ class Message {
   final int? fileSize;
   final String? fileType;
   final bool isDeleted;
+  final bool isTask;
+  final String? taskCreatedAt;
+  final String? taskCompletedAt;
+  final bool isExcalidrawLink;
+  final String? excalidrawPinnedAt;
+  final bool isPinned;
+  final String? pinnedAt;
+  final int? pinnedByUserId;
 
   Message({
     required this.id,
@@ -46,6 +54,14 @@ class Message {
     this.fileSize,
     this.fileType,
     required this.isDeleted,
+    this.isTask = false,
+    this.taskCreatedAt,
+    this.taskCompletedAt,
+    this.isExcalidrawLink = false,
+    this.excalidrawPinnedAt,
+    this.isPinned = false,
+    this.pinnedAt,
+    this.pinnedByUserId,
   });
 
   /// Parse reply_preview which can be String or Map from backend
@@ -110,6 +126,14 @@ class Message {
       fileSize: json['file_size'] as int?,
       fileType: json['file_type'] as String?,
       isDeleted: json['is_deleted'] as bool? ?? false,
+      isTask: json['is_task'] as bool? ?? false,
+      taskCreatedAt: json['task_created_at'] as String?,
+      taskCompletedAt: json['task_completed_at'] as String? ?? json['completed_at'] as String?,
+      isExcalidrawLink: json['is_excalidraw_link'] as bool? ?? false,
+      excalidrawPinnedAt: json['excalidraw_pinned_at'] as String?,
+      isPinned: json['is_pinned'] as bool? ?? false,
+      pinnedAt: json['pinned_at'] as String?,
+      pinnedByUserId: json['pinned_by_user_id'] as int?,
     );
   }
 
@@ -137,6 +161,14 @@ class Message {
       'file_size': fileSize,
       'file_type': fileType,
       'is_deleted': isDeleted,
+      'is_task': isTask,
+      'task_created_at': taskCreatedAt,
+      'task_completed_at': taskCompletedAt,
+      'is_excalidraw_link': isExcalidrawLink,
+      'excalidraw_pinned_at': excalidrawPinnedAt,
+      'is_pinned': isPinned,
+      'pinned_at': pinnedAt,
+      'pinned_by_user_id': pinnedByUserId,
     };
   }
 

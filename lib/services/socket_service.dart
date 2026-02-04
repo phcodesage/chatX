@@ -30,6 +30,11 @@ class SocketService {
   Function(Map<String, dynamic>)? onFileReceived;
   Function(Map<String, dynamic>)? onMessageDeleted;
   Function(Map<String, dynamic>)? onMessageEdited;
+  Function(Map<String, dynamic>)? onTaskAdded;
+  Function(Map<String, dynamic>)? onTaskCompleted;
+  Function(Map<String, dynamic>)? onTaskUncompleted;
+  Function(Map<String, dynamic>)? onExcalidrawPinned;
+  Function(Map<String, dynamic>)? onExcalidrawUnpinned;
   
   // Call-related callbacks
   Function(Map<String, dynamic>)? onIncomingCall;
@@ -278,6 +283,36 @@ class SocketService {
       onMessageEdited?.call(data as Map<String, dynamic>);
     });
 
+    // Task added event
+    _socket!.on('task_added', (data) {
+      debugPrint('📋 Task added: $data');
+      onTaskAdded?.call(data as Map<String, dynamic>);
+    });
+
+    // Task completed event
+    _socket!.on('task_completed', (data) {
+      debugPrint('✅ Task completed: $data');
+      onTaskCompleted?.call(data as Map<String, dynamic>);
+    });
+
+    // Task uncompleted event
+    _socket!.on('task_uncompleted', (data) {
+      debugPrint('⬜ Task uncompleted: $data');
+      onTaskUncompleted?.call(data as Map<String, dynamic>);
+    });
+
+    // Excalidraw pinned event
+    _socket!.on('excalidraw_pinned', (data) {
+      debugPrint('📌 Excalidraw pinned: $data');
+      onExcalidrawPinned?.call(data as Map<String, dynamic>);
+    });
+
+    // Excalidraw unpinned event
+    _socket!.on('excalidraw_unpinned', (data) {
+      debugPrint('📌 Excalidraw unpinned: $data');
+      onExcalidrawUnpinned?.call(data as Map<String, dynamic>);
+    });
+
     // === Call-related events ===
     
     // Incoming call notification (from initiate_call event)
@@ -424,6 +459,31 @@ class SocketService {
     });
   }
 
+  /// Add message as task
+  void addTask(int messageId) {
+    emit('add_task', {'message_id': messageId});
+  }
+
+  /// Complete a task
+  void completeTask(int messageId) {
+    emit('complete_task', {'message_id': messageId});
+  }
+
+  /// Uncomplete a task
+  void uncompleteTask(int messageId) {
+    emit('uncomplete_task', {'message_id': messageId});
+  }
+
+  /// Pin excalidraw link
+  void pinExcalidraw(int messageId) {
+    emit('pin_excalidraw', {'message_id': messageId});
+  }
+
+  /// Unpin excalidraw link
+  void unpinExcalidraw(int messageId) {
+    emit('unpin_excalidraw', {'message_id': messageId});
+  }
+
   /// Clear all callbacks
   void clearCallbacks() {
     onMessageReceived = null;
@@ -441,6 +501,11 @@ class SocketService {
     onFileReceived = null;
     onMessageDeleted = null;
     onMessageEdited = null;
+    onTaskAdded = null;
+    onTaskCompleted = null;
+    onTaskUncompleted = null;
+    onExcalidrawPinned = null;
+    onExcalidrawUnpinned = null;
     // Call-related
     onIncomingCall = null;
     onCallInitiated = null;

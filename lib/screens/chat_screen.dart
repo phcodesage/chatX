@@ -288,6 +288,31 @@ class _ChatScreenState extends State<ChatScreen> {
       _handleMessageEdited(data);
     };
 
+    // Listen for task added event
+    _socketService.onTaskAdded = (data) {
+      _handleTaskAdded(data);
+    };
+
+    // Listen for task completed event
+    _socketService.onTaskCompleted = (data) {
+      _handleTaskCompleted(data);
+    };
+
+    // Listen for task uncompleted event
+    _socketService.onTaskUncompleted = (data) {
+      _handleTaskUncompleted(data);
+    };
+
+    // Listen for excalidraw pinned event
+    _socketService.onExcalidrawPinned = (data) {
+      _handleExcalidrawPinned(data);
+    };
+
+    // Listen for excalidraw unpinned event
+    _socketService.onExcalidrawUnpinned = (data) {
+      _handleExcalidrawUnpinned(data);
+    };
+
     // Listen for file messages from web
     _socketService.onFileReceived = (data) {
       debugPrint('📎 File message received in chat: $data');
@@ -1978,6 +2003,11 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.onColorChanged = null;
     _socketService.onMessageDeleted = null;
     _socketService.onMessageEdited = null;
+    _socketService.onTaskAdded = null;
+    _socketService.onTaskCompleted = null;
+    _socketService.onTaskUncompleted = null;
+    _socketService.onExcalidrawPinned = null;
+    _socketService.onExcalidrawUnpinned = null;
     
     super.dispose();
   }
@@ -2052,6 +2082,40 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: const Icon(Icons.call, color: Colors.white),
             onPressed: () => _showCallSetupModal(CallType.audio),
             tooltip: 'Audio Call',
+          ),
+          // More options menu (Tasks & Excalidraw)
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            color: const Color(0xFF1E1E2E),
+            onSelected: (value) {
+              if (value == 'tasks') {
+                _showTasksModal();
+              } else if (value == 'excalidraw') {
+                _showExcalidrawModal();
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'tasks',
+                child: Row(
+                  children: [
+                    Icon(Icons.check_circle_outline, color: Colors.white, size: 20),
+                    SizedBox(width: 12),
+                    Text('Tasks', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'excalidraw',
+                child: Row(
+                  children: [
+                    Icon(Icons.draw_outlined, color: Colors.white, size: 20),
+                    SizedBox(width: 12),
+                    Text('Excalidraw', style: TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -2606,9 +2670,133 @@ class _ChatScreenState extends State<ChatScreen> {
                     _showDeleteConfirmation(message);
                   },
                 ),
+              // Add to Tasks option (for text messages)
+              if (message.messageType == 'text' && !message.isDeleted && !message.isTask)
+                ListTile(
+                  leading: const Icon(Icons.add_task, color: Colors.orange),
+                  title: const Text('Add to Tasks', style: TextStyle(color: Colors.white)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _addMessageToTask(message);
+                  },
+                ),
+              // Pin Excalidraw option (for excalidraw links)
+              if ((message.content.contains('excalidraw.com') || message.isExcalidrawLink) && !message.isDeleted)
+                ListTile(
+                  leading: Icon(
+                    message.excalidrawPinnedAt != null ? Icons.push_pin : Icons.push_pin_outlined,
+                    color: message.excalidrawPinnedAt != null ? const Color(0xFF420796) : Colors.white,
+                  ),
+                  title: Text(
+                    message.excalidrawPinnedAt != null ? 'Unpin Excalidraw' : 'Pin Excalidraw',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _toggleExcalidrawPin(message);
+                  },
+                ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Add message to tasks
+  void _addMessageToTask(Message message) {
+    _socketService.addTask(message.id);
+    
+    // Optimistically update the message locally
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == message.id);
+      if (index != -1) {
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: message.content,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+          isTask: true,
+          taskCreatedAt: DateTime.now().toIso8601String(),
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Added to tasks'),
+        duration: Duration(seconds: 2),
+        backgroundColor: Color(0xFF4CAF50),
+      ),
+    );
+  }
+
+  /// Toggle excalidraw pin status
+  void _toggleExcalidrawPin(Message message) {
+    if (message.excalidrawPinnedAt != null) {
+      _socketService.unpinExcalidraw(message.id);
+    } else {
+      _socketService.pinExcalidraw(message.id);
+    }
+    
+    // Optimistically update the message locally
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == message.id);
+      if (index != -1) {
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: message.content,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+          isExcalidrawLink: true,
+          excalidrawPinnedAt: message.excalidrawPinnedAt != null ? null : DateTime.now().toIso8601String(),
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message.excalidrawPinnedAt != null ? 'Excalidraw unpinned' : 'Excalidraw pinned'),
+        duration: const Duration(seconds: 2),
+        backgroundColor: const Color(0xFF420796),
       ),
     );
   }
@@ -2874,6 +3062,536 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages[index] = updatedMessage;
       }
     });
+  }
+
+  /// Handle task added event from socket
+  void _handleTaskAdded(Map<String, dynamic> data) {
+    final messageId = data['message_id'] as int?;
+    if (messageId == null) return;
+    
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        final message = _messages[index];
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: message.content,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+          isTask: true,
+          taskCreatedAt: data['task_created_at'] as String? ?? DateTime.now().toIso8601String(),
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+  }
+
+  /// Handle task completed event from socket
+  void _handleTaskCompleted(Map<String, dynamic> data) {
+    final messageId = data['message_id'] as int?;
+    if (messageId == null) return;
+    
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        final message = _messages[index];
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: message.content,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+          isTask: true,
+          taskCreatedAt: message.taskCreatedAt,
+          taskCompletedAt: data['completed_at'] as String? ?? DateTime.now().toIso8601String(),
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+  }
+
+  /// Handle task uncompleted event from socket
+  void _handleTaskUncompleted(Map<String, dynamic> data) {
+    final messageId = data['message_id'] as int?;
+    if (messageId == null) return;
+    
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        final message = _messages[index];
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: message.content,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+          isTask: true,
+          taskCreatedAt: message.taskCreatedAt,
+          taskCompletedAt: null,
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+  }
+
+  /// Handle excalidraw pinned event from socket
+  void _handleExcalidrawPinned(Map<String, dynamic> data) {
+    final messageId = data['message_id'] as int?;
+    if (messageId == null) return;
+    
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        final message = _messages[index];
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: message.content,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+          isExcalidrawLink: true,
+          excalidrawPinnedAt: data['pinned_at'] as String? ?? DateTime.now().toIso8601String(),
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+  }
+
+  /// Handle excalidraw unpinned event from socket
+  void _handleExcalidrawUnpinned(Map<String, dynamic> data) {
+    final messageId = data['message_id'] as int?;
+    if (messageId == null) return;
+    
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        final message = _messages[index];
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: message.content,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+          isExcalidrawLink: true,
+          excalidrawPinnedAt: null,
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+  }
+
+  /// Show tasks modal
+  void _showTasksModal() {
+    // Get all task messages from the conversation
+    final tasks = _messages.where((m) => m.isTask).toList();
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.3,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            // Handle bar
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Title
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_outline, color: Colors.white, size: 24),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Tasks',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${tasks.where((t) => t.taskCompletedAt != null).length}/${tasks.length} completed',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(color: Colors.grey),
+            // Task list
+            Expanded(
+              child: tasks.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.task_alt, color: Colors.grey[600], size: 48),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No tasks yet',
+                            style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Long-press a message and select "Add to Tasks"',
+                            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: scrollController,
+                      itemCount: tasks.length,
+                      itemBuilder: (context, index) {
+                        final task = tasks[index];
+                        final isCompleted = task.taskCompletedAt != null;
+                        return ListTile(
+                          leading: IconButton(
+                            icon: Icon(
+                              isCompleted ? Icons.check_circle : Icons.circle_outlined,
+                              color: isCompleted ? const Color(0xFF4CAF50) : Colors.grey,
+                            ),
+                            onPressed: () {
+                              if (isCompleted) {
+                                _socketService.uncompleteTask(task.id);
+                              } else {
+                                _socketService.completeTask(task.id);
+                              }
+                              Navigator.pop(context);
+                              _refreshMessages();
+                            },
+                          ),
+                          title: Text(
+                            task.content.length > 50
+                                ? '${task.content.substring(0, 50)}...'
+                                : task.content,
+                            style: TextStyle(
+                              color: Colors.white,
+                              decoration: isCompleted ? TextDecoration.lineThrough : null,
+                              decorationColor: Colors.grey,
+                            ),
+                          ),
+                          subtitle: Text(
+                            task.formattedTime,
+                            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                            onPressed: () {
+                              _removeTask(task);
+                              Navigator.pop(context);
+                            },
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Remove task from message
+  void _removeTask(Message message) {
+    // This would need a socket event to remove task status
+    // For now, we'll just show a message
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Task removed'),
+        backgroundColor: Color(0xFF4CAF50),
+      ),
+    );
+    _refreshMessages();
+  }
+
+  /// Show excalidraw modal
+  void _showExcalidrawModal() {
+    // Get all excalidraw links from the conversation
+    final excalidrawLinks = _messages.where((m) => 
+      m.isExcalidrawLink || 
+      m.content.contains('excalidraw.com') ||
+      m.content.contains('excalidraw')
+    ).toList();
+    
+    // Get pinned excalidraw
+    final pinnedExcalidraw = excalidrawLinks.where((m) => m.excalidrawPinnedAt != null).toList();
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.3,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            // Handle bar
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Title
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.draw_outlined, color: Colors.white, size: 24),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Excalidraw',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (pinnedExcalidraw.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF420796),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${pinnedExcalidraw.length} pinned',
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(color: Colors.grey),
+            // Excalidraw list
+            Expanded(
+              child: excalidrawLinks.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.draw, color: Colors.grey[600], size: 48),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No Excalidraw links yet',
+                            style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Share an excalidraw.com link in the chat',
+                            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: scrollController,
+                      itemCount: excalidrawLinks.length,
+                      itemBuilder: (context, index) {
+                        final link = excalidrawLinks[index];
+                        final isPinned = link.excalidrawPinnedAt != null;
+                        return ListTile(
+                          leading: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: isPinned ? const Color(0xFF420796) : Colors.grey[800],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              isPinned ? Icons.push_pin : Icons.draw_outlined,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                          title: Text(
+                            link.content.length > 40
+                                ? '${link.content.substring(0, 40)}...'
+                                : link.content,
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                          subtitle: Text(
+                            link.formattedTime,
+                            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: Icon(
+                                  isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                                  color: isPinned ? const Color(0xFF420796) : Colors.grey,
+                                  size: 20,
+                                ),
+                                onPressed: () {
+                                  if (isPinned) {
+                                    _socketService.unpinExcalidraw(link.id);
+                                  } else {
+                                    _socketService.pinExcalidraw(link.id);
+                                  }
+                                  Navigator.pop(context);
+                                  _refreshMessages();
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.open_in_new, color: Colors.blue, size: 20),
+                                onPressed: () {
+                                  _openExcalidrawLink(link.content);
+                                },
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Open excalidraw link in browser
+  void _openExcalidrawLink(String content) {
+    // Extract URL from content if needed
+    final urlRegex = RegExp(r'https?://[^\s]+');
+    final match = urlRegex.firstMatch(content);
+    if (match != null) {
+      final url = match.group(0);
+      // For now just show a message - would need url_launcher package
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Opening: $url'),
+          backgroundColor: const Color(0xFF420796),
+        ),
+      );
+    }
+  }
+
+  /// Refresh messages from server
+  Future<void> _refreshMessages() async {
+    try {
+      final messages = await MessageService.getConversationMessages(
+        userId: widget.otherUser.id,
+        limit: 50,
+      );
+      setState(() {
+        _messages.clear();
+        _messages.addAll(messages);
+      });
+    } catch (e) {
+      debugPrint('Error refreshing messages: $e');
+    }
   }
 
   /// Build reply preview widget (shown above input)
