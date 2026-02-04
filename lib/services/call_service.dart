@@ -57,6 +57,9 @@ class CallService {
   final List<RTCIceCandidate> _candidateQueue = [];      // Before remote description is set
   bool _remoteDescriptionSet = false;
   
+  // Pending offer for incoming calls (wait for user to answer before creating WebRTC answer)
+  Map<String, dynamic>? _pendingOffer;
+  
   // Getters
   CallState get callState => _callState;
   int? get callId => _callId;
@@ -247,6 +250,7 @@ class CallService {
         'signal': {
           'type': 'offer',
           'sdp': offer.sdp,
+          'callType': callType,
         },
       });
 
@@ -344,6 +348,13 @@ class CallService {
       case 'ice-candidate':
         await _handleIceCandidate(signal);
         break;
+      case 'call-ended':
+      case 'call_ended':
+      case 'call-cancelled':
+      case 'call_cancelled':
+        debugPrint('📴 Received call termination signal: $type');
+        handleCallEnded();
+        break;
       default:
         debugPrint('⚠️ Unknown signal type: $type');
     }
@@ -351,8 +362,27 @@ class CallService {
 
   /// Handle incoming offer
   Future<void> _handleOffer(Map<String, dynamic> signal) async {
-    debugPrint('📥 Received WebRTC offer');
+    debugPrint('📥 Received WebRTC offer (callDirection: $_callDirection, callState: $_callState)');
     
+    // For incoming calls or when direction is not yet set (cross-room calls),
+    // store the offer and wait for user to answer.
+    // The answer will be created in answerCall() after user provides local stream
+    if (_callDirection == CallDirection.incoming || _callDirection == null) {
+      debugPrint('📥 Storing offer for incoming call - waiting for user to answer');
+      _pendingOffer = signal;
+      // If direction not set, this is likely a cross-room call - set it now
+      if (_callDirection == null) {
+        _callDirection = CallDirection.incoming;
+      }
+      return;
+    }
+    
+    // For outgoing calls that receive an offer (shouldn't happen normally)
+    await _processOffer(signal);
+  }
+  
+  /// Process the offer and create answer (called after user answers incoming call)
+  Future<void> _processOffer(Map<String, dynamic> signal) async {
     if (_peerConnection == null) {
       await _createPeerConnection();
     }
@@ -379,14 +409,22 @@ class CallService {
     final answer = await _peerConnection!.createAnswer();
     await _peerConnection!.setLocalDescription(answer);
 
-    debugPrint('📤 Sending WebRTC answer to room: $_callRoomId');
-    _socketService.emit('signal', {
+    debugPrint('📤 Sending WebRTC answer to room: $_callRoomId (callId: $_callId, direction: $_callDirection)');
+    
+    if (_callRoomId == null || _callRoomId!.isEmpty) {
+      debugPrint('❌ ERROR: _callRoomId is null or empty! Cannot send answer.');
+      return;
+    }
+    
+    final signalData = {
       'room': _callRoomId,
       'signal': {
         'type': 'answer',
         'sdp': answer.sdp,
       },
-    });
+    };
+    debugPrint('📤 Signal data: $signalData');
+    _socketService.emit('signal', signalData);
 
     _callState = CallState.connecting;
     onCallStateChanged?.call(_callState);
@@ -490,12 +528,22 @@ class CallService {
     _localStream = localStream;
     onLocalStream?.call(_localStream!);
 
+    // Emit answer_call to backend
     _socketService.emit('answer_call', {
       'call_id': _callId,
     });
 
     _callState = CallState.connecting;
     onCallStateChanged?.call(_callState);
+    
+    // Process the pending offer now that we have the local stream
+    if (_pendingOffer != null) {
+      debugPrint('📥 Processing pending offer after user answered');
+      await _processOffer(_pendingOffer!);
+      _pendingOffer = null;
+    } else {
+      debugPrint('⚠️ No pending offer to process');
+    }
   }
 
   /// Decline an incoming call
@@ -546,6 +594,7 @@ class CallService {
   /// Handle incoming call event
   void handleIncomingCall(Map<String, dynamic> data) {
     debugPrint('📲 Incoming call: $data');
+    debugPrint('📲 Setting _callRoomId to: ${data['call_room_id']}');
     
     _callId = data['id'] as int?;
     _callRoomId = data['call_room_id'] as String?;
@@ -553,6 +602,8 @@ class CallService {
     _remoteUserId = data['caller']?['id'] as int?;
     _callDirection = CallDirection.incoming;
     _callState = CallState.ringing;
+    
+    debugPrint('📲 After setting: _callRoomId=$_callRoomId, _callId=$_callId, _callDirection=$_callDirection');
     
     onCallStateChanged?.call(_callState);
     onIncomingCall?.call(data);

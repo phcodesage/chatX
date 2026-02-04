@@ -347,9 +347,16 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     
-    // Initialize call service
+    // Initialize call service FIRST
     final callService = CallService();
     await callService.initialize();
+    
+    // Set up signal handler IMMEDIATELY - before handleIncomingCall
+    // This ensures we capture any signals that arrive while setting up
+    _socketService.onSignal = (signalData) {
+      debugPrint('📡 Signal received for cross-room call: $signalData');
+      callService.handleSignal(signalData);
+    };
     
     // Create synthetic incoming call data for the call service
     final syntheticCallData = {
@@ -365,20 +372,16 @@ class _ChatScreenState extends State<ChatScreen> {
     };
     callService.handleIncomingCall(syntheticCallData);
     
-    // Set up signal handler for WebRTC
-    _socketService.onSignal = (signalData) {
-      debugPrint('📡 Signal received for cross-room call: $signalData');
-      callService.handleSignal(signalData);
-    };
-    
     // Set up call ended/declined handlers
     _socketService.onCallEnded = (endData) {
       debugPrint('📴 Call ended by remote user');
+      _socketService.stopSignalBuffering();
       callService.handleCallEnded();
     };
     
     _socketService.onCallDeclined = (declineData) {
       debugPrint('❌ Call declined');
+      _socketService.stopSignalBuffering();
       callService.handleCallDeclined();
     };
     
@@ -393,6 +396,7 @@ class _ChatScreenState extends State<ChatScreen> {
           callService: callService,
           onDecline: () {
             debugPrint('📞 Call declined by user');
+            _socketService.stopSignalBuffering();
           },
         ),
       ),

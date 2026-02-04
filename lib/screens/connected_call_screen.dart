@@ -45,6 +45,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
   Timer? _durationTimer;
   int _callDuration = 0;
   
+  // Prevent multiple pops
+  bool _isEnding = false;
+  
   // Device lists
   List<MediaDeviceInfo> _microphones = [];
   List<MediaDeviceInfo> _cameras = [];
@@ -203,6 +206,8 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
   }
 
   void _endCall() {
+    if (_isEnding) return; // Prevent multiple calls
+    _isEnding = true;
     debugPrint('📞 Ending call from connected screen');
     widget.callService.endCall();
     if (mounted) {

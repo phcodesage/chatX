@@ -36,7 +36,39 @@ class SocketService {
   Function(Map<String, dynamic>)? onCallAnswered;
   Function(Map<String, dynamic>)? onCallDeclined;
   Function(Map<String, dynamic>)? onCallEnded;
-  Function(Map<String, dynamic>)? onSignal;
+  Function(Map<String, dynamic>)? _onSignal;
+  
+  // Signal buffering for cross-room calls
+  final List<Map<String, dynamic>> _signalBuffer = [];
+  bool _bufferSignals = false;
+  
+  // Getter/setter for onSignal with buffer replay
+  Function(Map<String, dynamic>)? get onSignal => _onSignal;
+  set onSignal(Function(Map<String, dynamic>)? handler) {
+    _onSignal = handler;
+    // Replay buffered signals when handler is set
+    if (handler != null && _signalBuffer.isNotEmpty) {
+      debugPrint('📡 Replaying ${_signalBuffer.length} buffered signals');
+      for (final signal in _signalBuffer) {
+        handler(signal);
+      }
+      _signalBuffer.clear();
+    }
+  }
+  
+  /// Start buffering signals (call before expecting cross-room call)
+  void startSignalBuffering() {
+    _bufferSignals = true;
+    _signalBuffer.clear();
+    debugPrint('📡 Started signal buffering');
+  }
+  
+  /// Stop buffering signals
+  void stopSignalBuffering() {
+    _bufferSignals = false;
+    _signalBuffer.clear();
+    debugPrint('📡 Stopped signal buffering');
+  }
 
   bool get isConnected => _socket?.connected ?? false;
   int? get currentUserId => _currentUserId;
@@ -243,6 +275,8 @@ class SocketService {
     // Cross-room call offer (from web client signaling)
     _socket!.on('cross_room_call_offer', (data) {
       debugPrint('📲 Cross-room call offer: $data');
+      // Start buffering signals immediately - they may arrive before handler is set
+      startSignalBuffering();
       onCrossRoomCallOffer?.call(data as Map<String, dynamic>);
     });
 
@@ -273,7 +307,14 @@ class SocketService {
     // WebRTC signaling (offer/answer/ICE candidates)
     _socket!.on('signal', (data) {
       debugPrint('📡 Signal received: $data');
-      onSignal?.call(data as Map<String, dynamic>);
+      final signalData = data as Map<String, dynamic>;
+      if (_bufferSignals && _onSignal == null) {
+        // Buffer signal if we're expecting a call but handler not set yet
+        _signalBuffer.add(signalData);
+        debugPrint('📡 Buffered signal (total: ${_signalBuffer.length})');
+      } else {
+        _onSignal?.call(signalData);
+      }
     });
   }
 
