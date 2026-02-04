@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -275,6 +276,16 @@ class _ChatScreenState extends State<ChatScreen> {
     // Listen for all messages deleted event
     _socketService.onAllMessagesDeleted = (data) {
       _handleAllMessagesDeleted(data);
+    };
+
+    // Listen for single message deleted event
+    _socketService.onMessageDeleted = (data) {
+      _handleMessageDeleted(data);
+    };
+
+    // Listen for message edited event
+    _socketService.onMessageEdited = (data) {
+      _handleMessageEdited(data);
     };
 
     // Listen for file messages from web
@@ -1965,6 +1976,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.onJoinedChat = null;
     _socketService.onDoorbellRing = null;
     _socketService.onColorChanged = null;
+    _socketService.onMessageDeleted = null;
+    _socketService.onMessageEdited = null;
     
     super.dispose();
   }
@@ -2544,6 +2557,16 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[600],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
               // Reply option
               ListTile(
                 leading: const Icon(Icons.reply, color: Colors.white),
@@ -2560,11 +2583,17 @@ class _ChatScreenState extends State<ChatScreen> {
                   title: const Text('Copy', style: TextStyle(color: Colors.white)),
                   onTap: () {
                     Navigator.pop(context);
-                    // Copy to clipboard
-                    // Clipboard.setData(ClipboardData(text: message.content));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Message copied')),
-                    );
+                    _copyMessageToClipboard(message);
+                  },
+                ),
+              // Edit option (for own text messages only)
+              if (isSentByMe && message.messageType == 'text' && !message.isDeleted)
+                ListTile(
+                  leading: const Icon(Icons.edit, color: Colors.white),
+                  title: const Text('Edit', style: TextStyle(color: Colors.white)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showEditMessageDialog(message);
                   },
                 ),
               // Delete option (for own messages)
@@ -2574,10 +2603,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   title: const Text('Delete', style: TextStyle(color: Colors.red)),
                   onTap: () {
                     Navigator.pop(context);
-                    // TODO: Implement delete
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Delete coming soon')),
-                    );
+                    _showDeleteConfirmation(message);
                   },
                 ),
             ],
@@ -2585,6 +2611,269 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+  }
+
+  /// Copy message content to clipboard
+  void _copyMessageToClipboard(Message message) {
+    Clipboard.setData(ClipboardData(text: message.content));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Message copied to clipboard'),
+        duration: Duration(seconds: 2),
+        backgroundColor: Color(0xFF4CAF50),
+      ),
+    );
+  }
+
+  /// Show edit message dialog
+  void _showEditMessageDialog(Message message) {
+    final editController = TextEditingController(text: message.content);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Edit Message', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: editController,
+          style: const TextStyle(color: Colors.white),
+          maxLines: 5,
+          minLines: 1,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: 'Edit your message...',
+            hintStyle: TextStyle(color: Colors.grey[500]),
+            filled: true,
+            fillColor: const Color(0xFF252542),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newContent = editController.text.trim();
+              if (newContent.isNotEmpty && newContent != message.content) {
+                Navigator.pop(context);
+                _editMessage(message, newContent);
+              } else {
+                Navigator.pop(context);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF420796),
+            ),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    
+    editController.dispose;
+  }
+
+  /// Edit message via socket
+  void _editMessage(Message message, String newContent) {
+    _socketService.editMessage(message.id, newContent);
+    
+    // Optimistically update the message locally
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == message.id);
+      if (index != -1) {
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: newContent,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Message edited'),
+        duration: Duration(seconds: 2),
+        backgroundColor: Color(0xFF4CAF50),
+      ),
+    );
+  }
+
+  /// Show delete confirmation dialog
+  void _showDeleteConfirmation(Message message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text('Delete Message', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Are you sure you want to delete this message? This action cannot be undone.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteMessage(message);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Delete message via socket
+  void _deleteMessage(Message message) {
+    _socketService.deleteMessage(message.id);
+    
+    // Optimistically update the message locally (mark as deleted)
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == message.id);
+      if (index != -1) {
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: 'This message was deleted',
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: true,
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Message deleted'),
+        duration: Duration(seconds: 2),
+        backgroundColor: Color(0xFF4CAF50),
+      ),
+    );
+  }
+
+  /// Handle message deleted event from socket (when other user deletes)
+  void _handleMessageDeleted(Map<String, dynamic> data) {
+    final messageId = data['message_id'] as int?;
+    if (messageId == null) return;
+    
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        final message = _messages[index];
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: 'This message was deleted',
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: null,
+          fileName: null,
+          fileSize: null,
+          fileType: null,
+          isDeleted: true,
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+  }
+
+  /// Handle message edited event from socket (when other user edits)
+  void _handleMessageEdited(Map<String, dynamic> data) {
+    final messageId = data['message_id'] as int?;
+    final newContent = data['content'] as String?;
+    if (messageId == null || newContent == null) return;
+    
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        final message = _messages[index];
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: newContent,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: message.isRead,
+          readAt: message.readAt,
+          readAtMs: message.readAtMs,
+          deliveredAt: message.deliveredAt,
+          deliveredAtMs: message.deliveredAtMs,
+          status: message.status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
   }
 
   /// Build reply preview widget (shown above input)

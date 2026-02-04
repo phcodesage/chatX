@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import '../services/storage_service.dart';
 import '../services/socket_service.dart';
 import '../services/presence_service.dart';
+import '../services/fcm_service.dart';
+import '../services/firebase_messaging_service.dart';
+import '../utils/notification_handler.dart';
 import 'sign_in_page.dart';
 import 'home_page.dart';
 
@@ -43,11 +46,22 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         // Set status to online
         await PresenceService.updateStatus('online');
 
+        // Send FCM token to backend for push notifications (on app restart)
+        final fcmToken = await FirebaseMessagingService.instance.getSavedFCMToken();
+        if (fcmToken != null) {
+          await FCMService.updateFCMToken(fcmToken);
+        }
+
         // Navigate to home page
         if (mounted) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const HomePage()),
           );
+          
+          // Process any pending notification after navigation is complete
+          Future.delayed(const Duration(milliseconds: 300), () {
+            NotificationHandler.processPendingNotification();
+          });
         }
       } else {
         // Token or userId is missing, go to sign in

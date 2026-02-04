@@ -28,6 +28,8 @@ class SocketService {
   Function(Map<String, dynamic>)? onColorReset;
   Function(Map<String, dynamic>)? onAllMessagesDeleted;
   Function(Map<String, dynamic>)? onFileReceived;
+  Function(Map<String, dynamic>)? onMessageDeleted;
+  Function(Map<String, dynamic>)? onMessageEdited;
   
   // Call-related callbacks
   Function(Map<String, dynamic>)? onIncomingCall;
@@ -264,6 +266,18 @@ class SocketService {
       onFileReceived?.call(data as Map<String, dynamic>);
     });
 
+    // Message deleted event
+    _socket!.on('message_deleted', (data) {
+      debugPrint('🗑️ Message deleted: $data');
+      onMessageDeleted?.call(data as Map<String, dynamic>);
+    });
+
+    // Message edited event
+    _socket!.on('message_edited', (data) {
+      debugPrint('✏️ Message edited: $data');
+      onMessageEdited?.call(data as Map<String, dynamic>);
+    });
+
     // === Call-related events ===
     
     // Incoming call notification (from initiate_call event)
@@ -397,6 +411,19 @@ class SocketService {
     emit('confirm_read', {'message_id': messageId});
   }
 
+  /// Delete a message
+  void deleteMessage(int messageId) {
+    emit('delete_message', {'message_id': messageId});
+  }
+
+  /// Edit a message
+  void editMessage(int messageId, String newContent) {
+    emit('edit_message', {
+      'message_id': messageId,
+      'content': newContent,
+    });
+  }
+
   /// Clear all callbacks
   void clearCallbacks() {
     onMessageReceived = null;
@@ -412,6 +439,8 @@ class SocketService {
     onColorReset = null;
     onAllMessagesDeleted = null;
     onFileReceived = null;
+    onMessageDeleted = null;
+    onMessageEdited = null;
     // Call-related
     onIncomingCall = null;
     onCallInitiated = null;

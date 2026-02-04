@@ -4,9 +4,12 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/auth_response.dart';
 import '../models/user.dart';
+import '../utils/notification_handler.dart';
 import 'storage_service.dart';
 import 'socket_service.dart';
 import 'presence_service.dart';
+import 'fcm_service.dart';
+import 'firebase_messaging_service.dart';
 
 /// Service for handling authentication API calls
 class AuthService {
@@ -47,6 +50,12 @@ class AuthService {
         
         // Set status to online
         await PresenceService.updateStatus('online');
+        
+        // Send FCM token to backend for push notifications
+        final fcmToken = await FirebaseMessagingService.instance.getSavedFCMToken();
+        if (fcmToken != null) {
+          await FCMService.updateFCMToken(fcmToken);
+        }
         
         return authResponse;
       } else {
@@ -91,6 +100,17 @@ class AuthService {
         // Set status to online
         await PresenceService.updateStatus('online');
         
+        // Send FCM token to backend for push notifications
+        final fcmToken = await FirebaseMessagingService.instance.getSavedFCMToken();
+        if (fcmToken != null) {
+          await FCMService.updateFCMToken(fcmToken);
+        }
+        
+        // Process any pending notification after login
+        Future.delayed(const Duration(milliseconds: 500), () {
+          NotificationHandler.processPendingNotification();
+        });
+        
         return authResponse;
       } else {
         final error = jsonDecode(response.body);
@@ -113,6 +133,9 @@ class AuthService {
       
       // Disconnect Socket.IO
       SocketService().disconnect();
+      
+      // Remove FCM token from backend to stop receiving push notifications
+      await FCMService.removeFCMToken();
       
       final token = await StorageService.getToken();
       

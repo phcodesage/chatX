@@ -17,6 +17,9 @@ class LobbyUser {
   final int unreadCount;
   final bool isContact;
   final bool isAdminUser;
+  final String? lastMessage;
+  final String? lastMessageTime;
+  final bool? lastMessageIsFromMe;
 
   LobbyUser({
     required this.id,
@@ -36,6 +39,9 @@ class LobbyUser {
     this.unreadCount = 0,
     this.isContact = false,
     this.isAdminUser = false,
+    this.lastMessage,
+    this.lastMessageTime,
+    this.lastMessageIsFromMe,
   });
 
   factory LobbyUser.fromJson(Map<String, dynamic> json) {
@@ -57,6 +63,9 @@ class LobbyUser {
       unreadCount: json['unread_count'] as int? ?? 0,
       isContact: json['is_contact'] as bool? ?? false,
       isAdminUser: json['is_admin_user'] as bool? ?? false,
+      lastMessage: json['last_message'] as String?,
+      lastMessageTime: json['last_message_time'] as String?,
+      lastMessageIsFromMe: json['last_message_is_from_me'] as bool?,
     );
   }
 
@@ -79,6 +88,9 @@ class LobbyUser {
       'unread_count': unreadCount,
       'is_contact': isContact,
       'is_admin_user': isAdminUser,
+      'last_message': lastMessage,
+      'last_message_time': lastMessageTime,
+      'last_message_is_from_me': lastMessageIsFromMe,
     };
   }
 

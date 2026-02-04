@@ -3,15 +3,82 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
+import 'fcm_service.dart';
 
 /// Top-level function for background message handling
+/// This runs in a separate isolate when app is terminated/background
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   debugPrint('📱 Background message received: ${message.messageId}');
   debugPrint('Data: ${message.data}');
   
-  // Show notification even when app is terminated
-  await FirebaseMessagingService.instance.showNotification(message);
+  // Initialize local notifications for background/terminated state
+  final FlutterLocalNotificationsPlugin localNotifications = FlutterLocalNotificationsPlugin();
+  
+  const AndroidInitializationSettings androidSettings = 
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  
+  const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
+    requestAlertPermission: false,
+    requestBadgePermission: false,
+    requestSoundPermission: false,
+  );
+
+  const InitializationSettings settings = InitializationSettings(
+    android: androidSettings,
+    iOS: iosSettings,
+  );
+
+  await localNotifications.initialize(settings);
+  
+  // Show the notification from data payload (data-only FCM messages)
+  final data = message.data;
+  final String? title = data['title'];
+  final String? body = data['body'];
+  
+  if (title != null && body != null) {
+    String channelId = 'chat_messages';
+    String channelName = 'Chat Messages';
+    
+    if (data['type'] == 'doorbell') {
+      channelId = 'doorbell';
+      channelName = 'Doorbell Notifications';
+    } else if (data['type'] == 'call') {
+      channelId = 'calls';
+      channelName = 'Incoming Calls';
+    }
+
+    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      channelId,
+      channelName,
+      channelDescription: body,
+      importance: Importance.max,
+      priority: Priority.high,
+      showWhen: true,
+      enableVibration: true,
+      playSound: true,
+      icon: '@mipmap/ic_launcher',
+    );
+
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    final NotificationDetails details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await localNotifications.show(
+      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      title,
+      body,
+      details,
+      payload: jsonEncode(data),
+    );
+  }
 }
 
 /// Service for handling Firebase Cloud Messaging (FCM) push notifications
@@ -59,16 +126,20 @@ class FirebaseMessagingService {
       _fcmToken = await _firebaseMessaging.getToken();
       debugPrint('📱 FCM Token: $_fcmToken');
       
-      // Save token locally
+      // Save token locally and send to backend
       if (_fcmToken != null) {
         await _saveFCMToken(_fcmToken!);
+        // Send FCM token to backend so server can send push notifications
+        await _updateBackendToken(_fcmToken!);
       }
 
-      // Listen for token refresh
-      _firebaseMessaging.onTokenRefresh.listen((newToken) {
+      // Listen for token refresh and update backend
+      _firebaseMessaging.onTokenRefresh.listen((newToken) async {
         debugPrint('📱 FCM Token refreshed: $newToken');
         _fcmToken = newToken;
-        _saveFCMToken(newToken);
+        await _saveFCMToken(newToken);
+        // Also update backend with new token
+        await _updateBackendToken(newToken);
       });
 
       // Set up background message handler
@@ -144,6 +215,15 @@ class FirebaseMessagingService {
       enableVibration: true,
     );
 
+    const AndroidNotificationChannel callsChannel = AndroidNotificationChannel(
+      'calls',
+      'Incoming Calls',
+      description: 'Notifications for incoming calls',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+    );
+
     await _localNotifications
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(messagesChannel);
@@ -151,14 +231,21 @@ class FirebaseMessagingService {
     await _localNotifications
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(doorbellChannel);
+    
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(callsChannel);
   }
 
   /// Show notification using local notifications plugin
   Future<void> showNotification(RemoteMessage message) async {
-    RemoteNotification? notification = message.notification;
     Map<String, dynamic> data = message.data;
+    
+    // Get title/body from data payload (data-only FCM messages)
+    final String? title = data['title'];
+    final String? body = data['body'];
 
-    if (notification != null) {
+    if (title != null && body != null) {
       // Determine notification channel based on type
       String channelId = 'chat_messages';
       String channelName = 'Chat Messages';
@@ -166,12 +253,15 @@ class FirebaseMessagingService {
       if (data['type'] == 'doorbell') {
         channelId = 'doorbell';
         channelName = 'Doorbell Notifications';
+      } else if (data['type'] == 'call') {
+        channelId = 'calls';
+        channelName = 'Incoming Calls';
       }
 
       final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
         channelId,
         channelName,
-        channelDescription: notification.body,
+        channelDescription: body,
         importance: Importance.high,
         priority: Priority.high,
         showWhen: true,
@@ -192,9 +282,9 @@ class FirebaseMessagingService {
       );
 
       await _localNotifications.show(
-        notification.hashCode,
-        notification.title,
-        notification.body,
+        DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        title,
+        body,
         details,
         payload: jsonEncode(data),
       );
@@ -227,6 +317,16 @@ class FirebaseMessagingService {
       debugPrint('✅ FCM token saved locally');
     } catch (e) {
       debugPrint('❌ Error saving FCM token: $e');
+    }
+  }
+
+  /// Update FCM token on backend (called when token refreshes)
+  Future<void> _updateBackendToken(String token) async {
+    try {
+      await FCMService.updateFCMToken(token);
+      debugPrint('✅ FCM token updated on backend after refresh');
+    } catch (e) {
+      debugPrint('❌ Error updating FCM token on backend: $e');
     }
   }
 

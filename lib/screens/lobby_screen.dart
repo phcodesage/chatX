@@ -471,26 +471,30 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Separate online and offline users
+    final onlineUsers = _filteredUsers.where((u) => u.isOnline).toList();
+    final offlineUsers = _filteredUsers.where((u) => !u.isOnline).toList();
+    
     return Scaffold(
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: const Color(0xFF1A1A2E),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1A1A1A),
+        backgroundColor: const Color(0xFF1A1A2E),
         elevation: 0,
         title: const Text(
           'Chats',
           style: TextStyle(
-            color: Colors.white,
-            fontSize: 28,
+            color: Color(0xFF00D9FF),
+            fontSize: 24,
             fontWeight: FontWeight.bold,
           ),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
+            icon: const Icon(Icons.refresh, color: Colors.white70),
             onPressed: _loadLobby,
           ),
           IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white),
+            icon: const Icon(Icons.logout, color: Colors.white70),
             onPressed: _handleLogout,
           ),
         ],
@@ -499,18 +503,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
         children: [
           // Search bar
           Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: TextField(
               controller: _searchController,
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
                 hintText: 'Search conversations...',
-                hintStyle: TextStyle(color: Colors.grey[600]),
-                prefixIcon: Icon(Icons.search, color: Colors.grey[600]),
+                hintStyle: TextStyle(color: Colors.grey[500]),
+                prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
                 filled: true,
-                fillColor: const Color(0xFF2D2D2D),
+                fillColor: const Color(0xFF252542),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(8),
                   borderSide: BorderSide.none,
                 ),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -520,22 +524,38 @@ class _LobbyScreenState extends State<LobbyScreen> {
           // User list
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF00D9FF)))
                 : _filteredUsers.isEmpty
                     ? Center(
                         child: Text(
                           _searchController.text.isEmpty
                               ? 'No conversations yet'
                               : 'No results found',
-                          style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                          style: TextStyle(color: Colors.grey[500], fontSize: 16),
                         ),
                       )
-                    : ListView.builder(
-                        itemCount: _filteredUsers.length,
-                        itemBuilder: (context, index) {
-                          final user = _filteredUsers[index];
-                          return _buildUserTile(user);
-                        },
+                    : ListView(
+                        children: [
+                          // Online users
+                          ...onlineUsers.map((user) => _buildUserTile(user, isOnlineSection: true)),
+                          // Offline section header
+                          if (offlineUsers.isNotEmpty) ...[
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              child: Text(
+                                'OFFLINE',
+                                style: TextStyle(
+                                  color: Colors.grey[500],
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                            ),
+                            // Offline users
+                            ...offlineUsers.map((user) => _buildUserTile(user, isOnlineSection: false)),
+                          ],
+                        ],
                       ),
           ),
         ],
@@ -543,174 +563,223 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
-  Widget _buildUserTile(LobbyUser user) {
+  Widget _buildUserTile(LobbyUser user, {bool isOnlineSection = false}) {
     final avatarColor = _getAvatarColor(user.avatarColorIndex);
     
+    // Format last seen date for offline users
+    String _formatLastSeenDate(String? lastSeen) {
+      if (lastSeen == null) return '';
+      try {
+        final dateTime = DateTime.parse(lastSeen);
+        return 'Last seen: ${dateTime.month}/${dateTime.day}/${dateTime.year}';
+      } catch (e) {
+        return '';
+      }
+    }
+    
+    // Get last message preview
+    String _getLastMessagePreview() {
+      if (user.lastMessage != null && user.lastMessage!.isNotEmpty) {
+        final prefix = user.lastMessageIsFromMe == true ? 'You: ' : '';
+        final message = user.lastMessage!.length > 25 
+            ? '${user.lastMessage!.substring(0, 25)}...' 
+            : user.lastMessage!;
+        final checkmark = user.lastMessageIsFromMe == true ? ' ✓' : '';
+        return '$prefix$message$checkmark';
+      }
+      return 'No messages yet';
+    }
+    
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF2D2D2D),
+        color: const Color(0xFF252542),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: Stack(
-          children: [
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: avatarColor,
-              child: user.avatarUrl != null
-                  ? ClipOval(
-                      child: Image.network(
-                        user.avatarUrl!,
-                        width: 56,
-                        height: 56,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Text(
-                            user.initials,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            // Clear unread count locally before navigating
+            setState(() {
+              final userIndex = _lobbyUsers.indexWhere((u) => u.id == user.id);
+              if (userIndex != -1) {
+                final updatedUser = LobbyUser(
+                  id: user.id,
+                  username: user.username,
+                  email: user.email,
+                  firstName: user.firstName,
+                  lastName: user.lastName,
+                  fullName: user.fullName,
+                  avatarUrl: user.avatarUrl,
+                  bio: user.bio,
+                  status: user.status,
+                  statusMessage: user.statusMessage,
+                  lastSeen: user.lastSeen,
+                  isOnline: user.isOnline,
+                  isAdmin: user.isAdmin,
+                  timezone: user.timezone,
+                  unreadCount: 0,
+                  isContact: user.isContact,
+                  isAdminUser: user.isAdminUser,
+                  lastMessage: user.lastMessage,
+                  lastMessageTime: user.lastMessageTime,
+                  lastMessageIsFromMe: user.lastMessageIsFromMe,
+                );
+                _lobbyUsers[userIndex] = updatedUser;
+                _filterUsers();
+              }
+            });
+            
+            // Navigate to chat screen
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ChatScreen(otherUser: user),
+              ),
+            ).then((_) {
+              // Reload lobby when returning from chat to update unread counts
+              _loadLobby();
+            });
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                // Avatar with online indicator
+                Stack(
+                  children: [
+                    CircleAvatar(
+                      radius: 26,
+                      backgroundColor: avatarColor,
+                      child: user.avatarUrl != null
+                          ? ClipOval(
+                              child: Image.network(
+                                user.avatarUrl!,
+                                width: 52,
+                                height: 52,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Text(
+                                    user.initials,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  );
+                                },
+                              ),
+                            )
+                          : Text(
+                              user.initials,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          );
-                        },
+                    ),
+                    // Online indicator (small green dot)
+                    if (user.isOnline)
+                      Positioned(
+                        right: 2,
+                        bottom: 2,
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4CAF50),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF252542),
+                              width: 2,
+                            ),
+                          ),
+                        ),
                       ),
-                    )
-                  : Text(
-                      user.initials,
+                    // Offline indicator (small grey dot)
+                    if (!user.isOnline)
+                      Positioned(
+                        right: 2,
+                        bottom: 2,
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[600],
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF252542),
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                // User info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Name
+                      Text(
+                        user.fullName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      // Online/Offline status
+                      Text(
+                        user.isOnline ? 'Online' : 'Offline',
+                        style: TextStyle(
+                          color: user.isOnline ? const Color(0xFF4CAF50) : Colors.grey[500],
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      // Last message or last seen
+                      Text(
+                        user.isOnline 
+                            ? _getLastMessagePreview()
+                            : (user.lastMessage != null ? _getLastMessagePreview() : _formatLastSeenDate(user.lastSeen)),
+                        style: TextStyle(
+                          color: Colors.grey[400],
+                          fontSize: 12,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                // Unread badge
+                if (user.unreadCount > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE91E63),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      user.unreadCount > 99 ? '99+' : '${user.unreadCount}',
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 20,
+                        fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-            ),
-            // Online indicator
-            if (user.isOnline)
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  width: 16,
-                  height: 16,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4CAF50),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: const Color(0xFF2D2D2D),
-                      width: 2,
-                    ),
                   ),
-                ),
-              ),
-            // Offline/away indicator
-            if (!user.isOnline && user.status == 'away')
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  width: 16,
-                  height: 16,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFA726),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: const Color(0xFF2D2D2D),
-                      width: 2,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                user.fullName,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
+              ],
             ),
-            if (user.isAdminUser)
-              Container(
-                margin: const EdgeInsets.only(left: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2196F3),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text(
-                  'ADMIN',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            user.statusMessage ?? (user.isOnline ? 'Online' : 'Offline'),
-            style: TextStyle(
-              color: user.isOnline ? const Color(0xFF4CAF50) : Colors.grey[600],
-              fontSize: 14,
-            ),
-            overflow: TextOverflow.ellipsis,
           ),
         ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            if (user.lastSeen != null)
-              Text(
-                _formatTime(user.lastSeen),
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                ),
-              ),
-            if (user.unreadCount > 0)
-              Container(
-                margin: const EdgeInsets.only(top: 4),
-                padding: const EdgeInsets.all(6),
-                decoration: const BoxDecoration(
-                  color: Color(0xFFE91E63),
-                  shape: BoxShape.circle,
-                ),
-                child: Text(
-                  user.unreadCount > 99 ? '99+' : '${user.unreadCount}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        onTap: () {
-          // Navigate to chat screen
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ChatScreen(otherUser: user),
-            ),
-          ).then((_) {
-            // Reload lobby when returning from chat to update unread counts
-            _loadLobby();
-          });
-        },
       ),
     );
   }

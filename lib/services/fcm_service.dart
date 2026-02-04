@@ -2,10 +2,11 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'storage_service.dart';
 import 'package:flutter/foundation.dart';
+import '../config/api_config.dart';
 
 /// Service for managing FCM token with backend
 class FCMService {
-  static const String baseUrl = 'https://dev.flask-meet.site';
+  static String get baseUrl => ApiConfig.baseUrl;
 
   /// Send FCM token to backend
   static Future<bool> updateFCMToken(String fcmToken) async {
@@ -17,10 +18,10 @@ class FCMService {
       }
 
       debugPrint('🔑 Auth token retrieved: ${token.substring(0, 20)}...');
-      debugPrint('📱 Sending FCM token to: $baseUrl/api/user/fcm-token');
+      debugPrint('📱 Sending FCM token to: $baseUrl/api/mobile/user/fcm-token');
 
       final response = await http.post(
-        Uri.parse('$baseUrl/api/user/fcm-token'),
+        Uri.parse('$baseUrl/api/mobile/user/fcm-token'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -52,7 +53,7 @@ class FCMService {
       }
 
       final response = await http.delete(
-        Uri.parse('$baseUrl/api/user/fcm-token'),
+        Uri.parse('$baseUrl/api/mobile/user/fcm-token'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
