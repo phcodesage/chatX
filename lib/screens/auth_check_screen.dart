@@ -52,6 +52,19 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
           await FCMService.updateFCMToken(fcmToken);
         }
 
+        // Re-check credentials before navigating (in case auth error cleared them)
+        final stillLoggedIn = await StorageService.isLoggedIn();
+        if (!stillLoggedIn) {
+          debugPrint('🔐 Credentials were cleared during startup, skipping HomePage navigation');
+          // Auth error handler already navigated to sign-in
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const SignInPage()),
+            );
+          }
+          return;
+        }
+
         // Navigate to home page
         if (mounted) {
           Navigator.of(context).pushReplacement(

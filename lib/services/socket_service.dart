@@ -36,6 +36,10 @@ class SocketService {
   Function(Map<String, dynamic>)? onExcalidrawPinned;
   Function(Map<String, dynamic>)? onExcalidrawUnpinned;
   
+  // Reaction callbacks
+  Function(Map<String, dynamic>)? onReactionUpdated;
+  Function(Map<String, dynamic>)? onReactionCleared;
+  
   // Call-related callbacks
   Function(Map<String, dynamic>)? onIncomingCall;
   Function(Map<String, dynamic>)? onCrossRoomCallOffer; // For web client calls
@@ -277,6 +281,17 @@ class SocketService {
       onMessageDeleted?.call(data as Map<String, dynamic>);
     });
 
+    // Reaction events
+    _socket!.on('reaction_updated', (data) {
+      debugPrint('👍 Reaction updated: $data');
+      onReactionUpdated?.call(data as Map<String, dynamic>);
+    });
+
+    _socket!.on('reaction_cleared', (data) {
+      debugPrint('❌ Reaction cleared: $data');
+      onReactionCleared?.call(data as Map<String, dynamic>);
+    });
+
     // Message edited event
     _socket!.on('message_edited', (data) {
       debugPrint('✏️ Message edited: $data');
@@ -462,6 +477,21 @@ class SocketService {
   /// Add message as task
   void addTask(int messageId) {
     emit('add_task', {'message_id': messageId});
+  }
+
+  /// Set a reaction on a message
+  void setReaction(int messageId, String emoji) {
+    emit('set_reaction', {
+      'message_id': messageId,
+      'reaction': emoji,
+    });
+    debugPrint('👍 Sending reaction: emoji=$emoji, messageId=$messageId');
+  }
+
+  /// Clear reaction from a message
+  void clearReaction(int messageId) {
+    emit('clear_reaction', {'message_id': messageId});
+    debugPrint('❌ Clearing reaction for messageId=$messageId');
   }
 
   /// Complete a task
