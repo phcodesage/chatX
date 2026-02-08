@@ -7,6 +7,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:mime/mime.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
@@ -347,13 +349,6 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     };
 
-    // Listen for file messages (received from web)
-    _socketService.onFileReceived = (data) {
-      debugPrint('📎 Received file_message in chat: $data');
-      if (data['sender_id'] == widget.otherUser.id) {
-        _handleIncomingFileMessage(data);
-      }
-    };
     // Listen for all messages deleted event
     _socketService.onAllMessagesDeleted = (data) {
       _handleAllMessagesDeleted(data);
@@ -401,13 +396,26 @@ class _ChatScreenState extends State<ChatScreen> {
       if (data['sender_id'] == widget.otherUser.id) {
         final now = DateTime.now();
         final timestampMs = data['timestamp_ms'] ?? now.millisecondsSinceEpoch;
+        // Detect audio files as voice messages
+        final fileType = (data['file_type'] as String?) ?? '';
+        final msgType = (data['message_type'] as String?) ?? '';
+        String messageType;
+        if (fileType.startsWith('audio/') || msgType == 'voice' || msgType == 'audio') {
+          messageType = 'voice';
+        } else if (fileType.startsWith('image/')) {
+          messageType = 'image';
+        } else if (fileType.startsWith('video/')) {
+          messageType = 'video';
+        } else {
+          messageType = 'file';
+        }
         // Create a message from the file data
         final message = Message(
           id: data['message_id'] ?? timestampMs,
           senderId: data['sender_id'],
           recipientId: _currentUserId ?? 0,
           content: data['file_name'] ?? 'File',
-          messageType: (data['file_type'] as String?)?.startsWith('image/') == true ? 'image' : 'file',
+          messageType: messageType,
           timestamp: now.toIso8601String(),
           timestampMs: timestampMs,
           isRead: false,
@@ -419,6 +427,56 @@ class _ChatScreenState extends State<ChatScreen> {
           fileName: data['file_name'],
           fileType: data['file_type'],
           fileSize: data['file_size'],
+        );
+        
+        setState(() {
+          _messages.insert(0, message);
+        });
+        
+        // Play message sound
+        try {
+          _audioPlayer.play(AssetSource('sounds/splat2.m4a'));
+        } catch (e) {
+          debugPrint('Error playing message sound: $e');
+        }
+        
+        // Scroll to bottom
+        _scrollToBottom();
+      }
+    };
+
+    // Listen for voice messages from web
+    _socketService.onVoiceMessageReceived = (data) {
+      debugPrint('🎤 Voice message received in chat: $data');
+      // Only process if it's from the current conversation partner
+      if (data['sender_id'] == widget.otherUser.id) {
+        final now = DateTime.now();
+        final timestampMs = data['timestamp_ms'] ?? now.millisecondsSinceEpoch;
+        final audioUrl = data['audio_url'] as String?;
+        if (audioUrl == null || audioUrl.isEmpty) {
+          debugPrint('🎤 Voice message has no audio_url, ignoring');
+          return;
+        }
+        // Build full URL if it's a relative path
+        final fullAudioUrl = audioUrl.startsWith('http')
+            ? audioUrl
+            : '${ApiConfig.baseUrl}$audioUrl';
+        final message = Message(
+          id: data['message_id'] ?? timestampMs,
+          senderId: data['sender_id'],
+          recipientId: _currentUserId ?? 0,
+          content: 'Voice message',
+          messageType: 'voice',
+          timestamp: now.toIso8601String(),
+          timestampMs: timestampMs,
+          isRead: false,
+          status: 'delivered',
+          threadId: '',
+          reactions: {},
+          isDeleted: false,
+          fileUrl: fullAudioUrl,
+          fileName: 'voice_message.wav',
+          fileType: 'audio/wav',
         );
         
         setState(() {
@@ -2095,11 +2153,37 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       final file = File(path);
-      final fileName = 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final ext = path.split('.').last.toLowerCase();
+      final fileName = 'voice_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      
+      // Determine correct MIME type for voice files
+      // MultipartFile.fromPath doesn't detect .aac/.m4a properly (sends application/octet-stream)
+      String mimeType = lookupMimeType(path) ?? 'application/octet-stream';
+      if (mimeType == 'application/octet-stream') {
+        // Fallback based on extension
+        const audioMimeMap = {
+          'aac': 'audio/aac',
+          'm4a': 'audio/mp4',
+          'mp3': 'audio/mpeg',
+          'wav': 'audio/wav',
+          'ogg': 'audio/ogg',
+          'opus': 'audio/opus',
+          'flac': 'audio/flac',
+        };
+        mimeType = audioMimeMap[ext] ?? mimeType;
+      }
+      
+      // Create MultipartFile with explicit content type
+      final multipartFile = await http.MultipartFile.fromPath(
+        'file',
+        path,
+        filename: fileName,
+        contentType: MediaType.parse(mimeType),
+      );
       
       // Upload file using MessageService
       final result = await MessageService.uploadFile(
-        file: file,
+        file: multipartFile,
         recipientId: widget.otherUser.id,
       );
 
@@ -2109,20 +2193,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (result != null && result['success'] == true) {
         final fileData = result['file'] ?? result;
         
-        // Emit file message via socket
-        _socketService.emit('send_file', {
-          'recipient_id': widget.otherUser.id,
-          'file_id': fileData['file_id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
-          'file_name': fileName,
-          'file_type': 'audio/m4a',
-          'file_size': file.lengthSync(),
-          'file_url': fileData['file_url'] ?? fileData['url'],
-        });
+        // NOTE: The REST API upload already emits file_message to the recipient,
+        // so we do NOT emit send_file here to avoid duplicate messages on the web.
 
         // Create local message to show in chat
         final now = DateTime.now();
         final message = Message(
-          id: DateTime.now().millisecondsSinceEpoch,
+          id: fileData['message_id'] ?? DateTime.now().millisecondsSinceEpoch,
           senderId: _currentUserId!,
           recipientId: widget.otherUser.id,
           content: fileName,
@@ -2136,7 +2213,7 @@ class _ChatScreenState extends State<ChatScreen> {
           isDeleted: false,
           fileUrl: fileData['file_url'] ?? fileData['url'],
           fileName: fileName,
-          fileType: 'audio/m4a',
+          fileType: 'audio/mp4',
           fileSize: file.lengthSync(),
         );
 
@@ -4625,7 +4702,7 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
     
     try {
       final directory = await getTemporaryDirectory();
-      final path = '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.aac';
+      final path = '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
       
       _recorderSubscription = _recorder.onProgress?.listen((e) {
         if (mounted && _isRecording && !_isPaused) {
@@ -4644,7 +4721,7 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
       
       await _recorder.startRecorder(
         toFile: path,
-        codec: Codec.aacADTS,
+        codec: Codec.aacMP4,
       );
       
       setState(() {

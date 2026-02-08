@@ -29,6 +29,7 @@ class SocketService {
   Function(Map<String, dynamic>)? onColorReset;
   Function(Map<String, dynamic>)? onAllMessagesDeleted;
   Function(Map<String, dynamic>)? onFileReceived;
+  Function(Map<String, dynamic>)? onVoiceMessageReceived;
   Function(Map<String, dynamic>)? onMessageDeleted;
   Function(Map<String, dynamic>)? onMessageEdited;
   Function(Map<String, dynamic>)? onTaskAdded;
@@ -291,6 +292,12 @@ class SocketService {
       onFileReceived?.call(data as Map<String, dynamic>);
     });
 
+    // Voice message event (receiving voice messages from web)
+    _socket!.on('voice_message', (data) {
+      debugPrint('🎤 Voice message received: $data');
+      onVoiceMessageReceived?.call(data as Map<String, dynamic>);
+    });
+
     // Message deleted event
     _socket!.on('message_deleted', (data) {
       debugPrint('🗑️ Message deleted: $data');
@@ -546,6 +553,7 @@ class SocketService {
     onColorReset = null;
     onAllMessagesDeleted = null;
     onFileReceived = null;
+    onVoiceMessageReceived = null;
     onMessageDeleted = null;
     onMessageEdited = null;
     onTaskAdded = null;
