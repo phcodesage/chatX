@@ -20,6 +20,7 @@ class SocketService {
   Function(Map<String, dynamic>)? onUserTyping;
   Function(Map<String, dynamic>)? onTypingUpdate;
   Function(Map<String, dynamic>)? onPresenceUpdate;
+  Function(List<dynamic>)? onPresenceSnapshot;
   Function(Map<String, dynamic>)? onJoinedChat;
   Function(Map<String, dynamic>)? onLeftChat;
   Function(Map<String, dynamic>)? onMessageDelivered;
@@ -161,6 +162,12 @@ class SocketService {
         debugPrint('Joining personal room: user_$_currentUserId');
         _socket!.emit('join_room', {'room': 'user_$_currentUserId'});
       }
+      // Join global users room for presence broadcasts
+      debugPrint('Joining global room: users_all');
+      _socket!.emit('join_room', {'room': 'users_all'});
+      // Request initial presence snapshot (like web client does)
+      debugPrint('📡 Requesting presence snapshot');
+      _socket!.emit('request_presence_snapshot');
     });
 
     _socket!.on('disconnect', (reason) {
@@ -237,6 +244,15 @@ class SocketService {
     _socket!.on('user_status_change', (data) {
       debugPrint('👤 Presence update: $data');
       onPresenceUpdate?.call(data as Map<String, dynamic>);
+    });
+
+    // Presence snapshot (initial state on connect)
+    _socket!.on('presence_snapshot', (data) {
+      debugPrint('👥 Presence snapshot received');
+      final contacts = data['contacts'] as List<dynamic>?;
+      if (contacts != null) {
+        onPresenceSnapshot?.call(contacts);
+      }
     });
 
     // Color change event
@@ -521,6 +537,7 @@ class SocketService {
     onUserTyping = null;
     onTypingUpdate = null;
     onPresenceUpdate = null;
+    onPresenceSnapshot = null;
     onJoinedChat = null;
     onLeftChat = null;
     onMessageDelivered = null;

@@ -31,8 +31,23 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   await localNotifications.initialize(settings);
   
-  // Show the notification from data payload (data-only FCM messages)
+  // Persist color change to SharedPreferences so ChatScreen picks it up on open
   final data = message.data;
+  if (data['type'] == 'color_change') {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final senderId = data['sender_id']?.toString();
+      final color = data['color'] as String?;
+      if (senderId != null && color != null) {
+        await prefs.setString('chat_color_$senderId', color);
+        debugPrint('🎨 Background: persisted chat color $color for user $senderId');
+      }
+    } catch (e) {
+      debugPrint('Error persisting background color change: $e');
+    }
+  }
+  
+  // Show the notification from data payload (data-only FCM messages)
   final String? title = data['title'];
   final String? body = data['body'];
   
@@ -92,6 +107,10 @@ class FirebaseMessagingService {
   
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
+  
+  // Track the currently active chat user ID to suppress notifications
+  // Set this when entering a chat, clear when leaving
+  int? activeChatUserId;
   
   // Callback for when notification is tapped
   Function(Map<String, dynamic>)? onNotificationTapped;
@@ -240,6 +259,28 @@ class FirebaseMessagingService {
   /// Show notification using local notifications plugin
   Future<void> showNotification(RemoteMessage message) async {
     Map<String, dynamic> data = message.data;
+    
+    // Suppress notification if the user is currently viewing the chat with this sender
+    final senderId = int.tryParse(data['sender_id']?.toString() ?? '');
+    if (senderId != null && activeChatUserId == senderId) {
+      debugPrint('🔕 Suppressing notification — user is in chat with sender $senderId');
+      return;
+    }
+    
+    // Persist color change to SharedPreferences so ChatScreen picks it up
+    if (data['type'] == 'color_change') {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final senderIdStr = data['sender_id']?.toString();
+        final color = data['color'] as String?;
+        if (senderIdStr != null && color != null) {
+          await prefs.setString('chat_color_$senderIdStr', color);
+          debugPrint('🎨 Foreground: persisted chat color $color for user $senderIdStr');
+        }
+      } catch (e) {
+        debugPrint('Error persisting foreground color change: $e');
+      }
+    }
     
     // Get title/body from data payload (data-only FCM messages)
     final String? title = data['title'];

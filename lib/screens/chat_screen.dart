@@ -18,6 +18,7 @@ import '../services/message_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/color_picker_modal.dart';
+import '../services/firebase_messaging_service.dart';
 import '../widgets/call_setup_modal.dart';
 import '../widgets/outgoing_call_modal.dart';
 import '../widgets/incoming_call_setup_modal.dart';
@@ -92,6 +93,8 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _inputFocusNode.addListener(_onFocusChange);
     _scrollController.addListener(_onScroll);
+    // Suppress FCM notifications for this chat partner while screen is active
+    FirebaseMessagingService.instance.activeChatUserId = widget.otherUser.id;
     _initialize();
   }
   
@@ -128,10 +131,38 @@ class _ChatScreenState extends State<ChatScreen> {
     _partnerStatus = widget.otherUser.status;
     _partnerLastSeen = widget.otherUser.lastSeen;
     
+    // Load saved chat color for this conversation partner
+    await _loadSavedChatColor();
+    
     await _loadTimestampPreference();
     await _loadMessages();
     _joinChatRoom();
     _setupRealtimeListeners();
+  }
+
+  /// Load persisted chat color from SharedPreferences
+  Future<void> _loadSavedChatColor() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedColorHex = prefs.getString('chat_color_${widget.otherUser.id}');
+    if (savedColorHex != null && mounted) {
+      try {
+        final hexColor = savedColorHex.replaceAll('#', '');
+        final color = Color(int.parse('FF$hexColor', radix: 16));
+        final defaultColor = const Color(0xFF4C1D95);
+        setState(() {
+          _headerColor = color;
+          _showResetButton = color.value != defaultColor.value;
+        });
+      } catch (e) {
+        debugPrint('Error loading saved chat color: $e');
+      }
+    }
+  }
+
+  /// Persist chat color to SharedPreferences
+  Future<void> _saveChatColor(String colorHex) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('chat_color_${widget.otherUser.id}', colorHex);
   }
 
   /// Load timestamp visibility preference from SharedPreferences
@@ -674,6 +705,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _showResetButton = true;
         });
         
+        // Persist the color so it survives app restarts / background
+        _saveChatColor(colorHex);
+        
         // Create incoming system message about color change
         final colorMessage = Message(
           id: DateTime.now().millisecondsSinceEpoch,
@@ -716,6 +750,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _headerColor = defaultColor;
       _showResetButton = false;
     });
+    
+    // Persist the reset color
+    _saveChatColor('#1E1E1E');
     
     // Create incoming system message about color reset
     final resetMessage = Message(
@@ -1309,6 +1346,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _headerColor = defaultColor;
       _showResetButton = false;
     });
+    
+    // Persist the reset color
+    _saveChatColor('#1E1E1E');
     
     // Emit reset color event
     _socketService.emit('change_color', {
@@ -2251,6 +2291,9 @@ class _ChatScreenState extends State<ChatScreen> {
     // Leave chat room
     _socketService.leaveChat(widget.otherUser.id);
     
+    // Clear active chat so FCM notifications resume for this user
+    FirebaseMessagingService.instance.activeChatUserId = null;
+    
     // Clear callbacks
     _socketService.onMessageReceived = null;
     _socketService.onUserTyping = null;
@@ -2522,9 +2565,9 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: (_otherUserTyping && _typingPreview.isNotEmpty)
                 ? const EdgeInsets.symmetric(horizontal: 16, vertical: 8)
                 : EdgeInsets.zero,
-            decoration: const BoxDecoration(
-              color: Color(0xFF2C2C2C),
-              border: Border(
+            decoration: BoxDecoration(
+              color: _headerColor,
+              border: const Border(
                 top: BorderSide(color: Color(0xFF3D3D3D), width: 1),
               ),
             ),
@@ -2541,9 +2584,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 top: 12,
                 bottom: 12 + MediaQuery.of(context).viewInsets.bottom,
               ),
-              decoration: const BoxDecoration(
-                color: Color(0xFF2D2D2D),
-                border: Border(
+              decoration: BoxDecoration(
+                color: _headerColor,
+                border: const Border(
                   top: BorderSide(color: Color(0xFF3D3D3D), width: 1),
                 ),
               ),

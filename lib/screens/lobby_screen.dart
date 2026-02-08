@@ -63,6 +63,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
       _updateUserPresence(data);
     };
 
+    // Listen for presence snapshot (initial state on connect)
+    _socketService.onPresenceSnapshot = (contacts) {
+      _handlePresenceSnapshot(contacts);
+    };
+
     // Listen for incoming calls (global handler)
     _socketService.onIncomingCall = (data) {
       _handleIncomingCall(data);
@@ -340,6 +345,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final userId = data['user_id'] as int;
     final status = data['status'] as String;
     final isOnline = data['is_online'] as bool? ?? (status == 'online');
+    final timestamp = data['timestamp'] as String?;
     
     setState(() {
       final userIndex = _lobbyUsers.indexWhere((u) => u.id == userId);
@@ -356,7 +362,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           bio: user.bio,
           status: status,
           statusMessage: user.statusMessage,
-          lastSeen: user.lastSeen,
+          lastSeen: timestamp ?? user.lastSeen,
           isOnline: isOnline,
           isAdmin: user.isAdmin,
           timezone: user.timezone,
@@ -371,6 +377,47 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
   }
 
+  /// Handle presence snapshot from socket (initial state on connect)
+  void _handlePresenceSnapshot(List<dynamic> contacts) {
+    setState(() {
+      for (final contact in contacts) {
+        if (contact is Map<String, dynamic>) {
+          final userId = contact['user_id'] as int?;
+          final status = contact['status'] as String?;
+          final timestamp = contact['timestamp'] as String?;
+          
+          if (userId != null && status != null) {
+            final userIndex = _lobbyUsers.indexWhere((u) => u.id == userId);
+            if (userIndex != -1) {
+              final user = _lobbyUsers[userIndex];
+              final isOnline = status == 'online';
+              _lobbyUsers[userIndex] = LobbyUser(
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                fullName: user.fullName,
+                avatarUrl: user.avatarUrl,
+                bio: user.bio,
+                status: status,
+                statusMessage: user.statusMessage,
+                lastSeen: timestamp ?? user.lastSeen,
+                isOnline: isOnline,
+                isAdmin: user.isAdmin,
+                timezone: user.timezone,
+                unreadCount: user.unreadCount,
+                isContact: user.isContact,
+                isAdminUser: user.isAdminUser,
+              );
+            }
+          }
+        }
+      }
+      _filterUsers();
+    });
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -378,6 +425,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _socketService.onDoorbellRing = null;
     _socketService.onMessageReceived = null;
     _socketService.onPresenceUpdate = null;
+    _socketService.onPresenceSnapshot = null;
     super.dispose();
   }
 
@@ -466,6 +514,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
       return '${dateTime.month}/${dateTime.day}';
     } catch (e) {
       return '';
+    }
+  }
+
+  /// Format last seen as relative time for status display (e.g., "Last seen 5m ago")
+  String _formatRelativeTime(String? lastSeen) {
+    if (lastSeen == null) return 'Offline';
+    try {
+      final dateTime = DateTime.parse(lastSeen);
+      final now = DateTime.now();
+      final difference = now.difference(dateTime);
+
+      if (difference.inMinutes < 1) return 'Last seen just now';
+      if (difference.inMinutes < 60) {
+        final mins = difference.inMinutes;
+        return 'Last seen ${mins}m ago';
+      }
+      if (difference.inHours < 24) {
+        final hours = difference.inHours;
+        return 'Last seen ${hours}h ago';
+      }
+      if (difference.inDays == 1) return 'Last seen yesterday';
+      if (difference.inDays < 7) return 'Last seen ${difference.inDays}d ago';
+      return 'Last seen ${dateTime.month}/${dateTime.day}';
+    } catch (e) {
+      return 'Offline';
     }
   }
 
@@ -736,9 +809,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
-                      // Online/Offline status
+                      // Online/Offline status with relative time
                       Text(
-                        user.isOnline ? 'Online' : 'Offline',
+                        user.isOnline ? 'Online' : _formatRelativeTime(user.lastSeen),
                         style: TextStyle(
                           color: user.isOnline ? const Color(0xFF4CAF50) : Colors.grey[500],
                           fontSize: 13,
