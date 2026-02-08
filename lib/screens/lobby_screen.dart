@@ -59,9 +59,24 @@ class _LobbyScreenState extends State<LobbyScreen> {
       _handleDoorbellRing(data);
     };
 
-    // Listen for new messages
+    // Listen for new messages (incoming)
     _socketService.onMessageReceived = (data) {
       _handleNewMessage(data);
+    };
+
+    // Listen for sent messages (outgoing from current user)
+    _socketService.onMessageSent = (data) {
+      _handleSentMessage(data);
+    };
+
+    // Listen for file messages (incoming files from web)
+    _socketService.onFileReceived = (data) {
+      _handleFileMessage(data);
+    };
+
+    // Listen for voice messages (incoming voice from web)
+    _socketService.onVoiceMessageReceived = (data) {
+      _handleVoiceMessage(data);
     };
 
     // Listen for presence updates
@@ -314,12 +329,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   void _handleNewMessage(Map<String, dynamic> data) {
     final senderId = data['sender_id'] as int;
+    final content = data['content'] as String?;
+    final createdAt = data['created_at'] as String?;
     
-    // Update unread count for sender
+    // Update unread count and last message info for sender
     setState(() {
       final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
       if (userIndex != -1) {
-        // Create updated user with incremented unread count
+        // Create updated user with incremented unread count and new last message
         final user = _lobbyUsers[userIndex];
         final updatedUser = LobbyUser(
           id: user.id,
@@ -339,15 +356,156 @@ class _LobbyScreenState extends State<LobbyScreen> {
           unreadCount: user.unreadCount + 1,
           isContact: user.isContact,
           isAdminUser: user.isAdminUser,
+          // 🆕 NEW: Update last message info
+          lastMessage: content ?? user.lastMessage,
+          lastMessageTime: createdAt ?? user.lastMessageTime,
+          lastMessageIsFromMe: false, // Message is from the sender, not from current user
         );
         
         _lobbyUsers[userIndex] = updatedUser;
         
-        // Move to top of list
+        // Move to top of list (most recent message first)
         _lobbyUsers.removeAt(userIndex);
         _lobbyUsers.insert(0, updatedUser);
         
         // Update filtered list
+        _filterUsers();
+      }
+    });
+  }
+
+  void _handleSentMessage(Map<String, dynamic> data) {
+    final recipientId = data['recipient_id'] as int;
+    final content = data['content'] as String?;
+    final createdAt = data['created_at'] as String?;
+    
+    // Update last message info for recipient (showing our sent message)
+    setState(() {
+      final userIndex = _lobbyUsers.indexWhere((u) => u.id == recipientId);
+      if (userIndex != -1) {
+        // Create updated user with new last message from current user
+        final user = _lobbyUsers[userIndex];
+        final updatedUser = LobbyUser(
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          fullName: user.fullName,
+          avatarUrl: user.avatarUrl,
+          bio: user.bio,
+          status: user.status,
+          statusMessage: user.statusMessage,
+          lastSeen: user.lastSeen,
+          isOnline: user.isOnline,
+          isAdmin: user.isAdmin,
+          timezone: user.timezone,
+          unreadCount: 0, // Reset unread count since we're in the conversation context
+          isContact: user.isContact,
+          isAdminUser: user.isAdminUser,
+          // 🆕 NEW: Update last message info (sent by current user)
+          lastMessage: content ?? user.lastMessage,
+          lastMessageTime: createdAt ?? user.lastMessageTime,
+          lastMessageIsFromMe: true, // Message is from current user
+        );
+        
+        _lobbyUsers[userIndex] = updatedUser;
+        
+        // Move to top of list (most recent message first)
+        _lobbyUsers.removeAt(userIndex);
+        _lobbyUsers.insert(0, updatedUser);
+        
+        // Update filtered list
+        _filterUsers();
+      }
+    });
+  }
+
+  void _handleFileMessage(Map<String, dynamic> data) {
+    final senderId = data['sender_id'] as int;
+    final fileName = data['file_name'] as String?;
+    final createdAt = data['timestamp_ms'] != null 
+        ? DateTime.fromMillisecondsSinceEpoch(data['timestamp_ms'] as int).toIso8601String()
+        : null;
+    
+    // Show file name as last message preview
+    final filePreview = fileName != null ? "📎 $fileName" : "📎 File";
+    
+    setState(() {
+      final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
+      if (userIndex != -1) {
+        final user = _lobbyUsers[userIndex];
+        final updatedUser = LobbyUser(
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          fullName: user.fullName,
+          avatarUrl: user.avatarUrl,
+          bio: user.bio,
+          status: user.status,
+          statusMessage: user.statusMessage,
+          lastSeen: user.lastSeen,
+          isOnline: user.isOnline,
+          isAdmin: user.isAdmin,
+          timezone: user.timezone,
+          unreadCount: user.unreadCount + 1,
+          isContact: user.isContact,
+          isAdminUser: user.isAdminUser,
+          lastMessage: filePreview,
+          lastMessageTime: createdAt ?? user.lastMessageTime,
+          lastMessageIsFromMe: false,
+        );
+        
+        _lobbyUsers[userIndex] = updatedUser;
+        _lobbyUsers.removeAt(userIndex);
+        _lobbyUsers.insert(0, updatedUser);
+        _filterUsers();
+      }
+    });
+  }
+
+  void _handleVoiceMessage(Map<String, dynamic> data) {
+    final senderId = data['sender_id'] as int;
+    final duration = data['duration'] as int?;
+    final createdAt = data['timestamp_ms'] != null 
+        ? DateTime.fromMillisecondsSinceEpoch(data['timestamp_ms'] as int).toIso8601String()
+        : null;
+    
+    // Show voice message with duration as last message preview
+    final voicePreview = duration != null ? "🎤 Voice ${duration}s" : "🎤 Voice message";
+    
+    setState(() {
+      final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
+      if (userIndex != -1) {
+        final user = _lobbyUsers[userIndex];
+        final updatedUser = LobbyUser(
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          fullName: user.fullName,
+          avatarUrl: user.avatarUrl,
+          bio: user.bio,
+          status: user.status,
+          statusMessage: user.statusMessage,
+          lastSeen: user.lastSeen,
+          isOnline: user.isOnline,
+          isAdmin: user.isAdmin,
+          timezone: user.timezone,
+          unreadCount: user.unreadCount + 1,
+          isContact: user.isContact,
+          isAdminUser: user.isAdminUser,
+          lastMessage: voicePreview,
+          lastMessageTime: createdAt ?? user.lastMessageTime,
+          lastMessageIsFromMe: false,
+        );
+        
+        _lobbyUsers[userIndex] = updatedUser;
+        _lobbyUsers.removeAt(userIndex);
+        _lobbyUsers.insert(0, updatedUser);
         _filterUsers();
       }
     });
@@ -437,6 +595,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // Clear socket callbacks to prevent memory leaks
     _socketService.onDoorbellRing = null;
     _socketService.onMessageReceived = null;
+    _socketService.onMessageSent = null;
+    _socketService.onFileReceived = null;
+    _socketService.onVoiceMessageReceived = null;
     _socketService.onPresenceUpdate = null;
     _socketService.onPresenceSnapshot = null;
     super.dispose();

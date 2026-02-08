@@ -116,8 +116,28 @@ class _ChatScreenState extends State<ChatScreen> {
         // Reset unread count when at bottom
         if (isAtBottom) {
           _unreadCount = 0;
+          // Mark visible messages as read when scrolling to bottom
+          _markVisibleMessagesAsRead();
         }
       });
+    }
+  }
+
+  /// Mark visible messages as read
+  void _markVisibleMessagesAsRead() {
+    final unreadMessageIds = <int>[];
+    
+    // Find unread messages from the other user
+    for (final message in _messages) {
+      if (message.senderId == widget.otherUser.id && !message.isRead) {
+        unreadMessageIds.add(message.id);
+      }
+    }
+    
+    if (unreadMessageIds.isNotEmpty) {
+      // Mark messages as viewed via socket - this will notify web clients
+      _socketService.markMessagesViewed(widget.otherUser.id);
+      debugPrint('📧 Sent read confirmations for ${unreadMessageIds.length} messages to update web clients');
     }
   }
 
@@ -274,23 +294,18 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         }
         
-        // If at bottom, auto-scroll and mark as read
-        if (_isAtBottom) {
-          // Confirm delivery and read
-          _socketService.confirmDelivery(message.id);
-          _socketService.confirmRead(message.id);
+        // If at bottom, auto-scroll and mark messages as read immediately
+        if (_isAtBottom && message.senderId == widget.otherUser.id) {
+          // Mark messages from sender as read immediately - this will show "seen" on web
+          _socketService.markMessagesRead(widget.otherUser.id);
           
-          // Mark as read via API
-          MessageService.markAsRead(
-            senderId: widget.otherUser.id,
-            lastMessageId: message.id,
-          );
+          // Also mark specific messages as viewed for real-time status updates
+          _socketService.markMessagesViewed(widget.otherUser.id);
+          
+          debugPrint('📧 Immediately marked message ${message.id} as seen - web will show "seen" status');
           
           // Scroll to bottom
           _scrollToBottom();
-        } else {
-          // Just confirm delivery, not read yet
-          _socketService.confirmDelivery(message.id);
         }
       }
     };
@@ -392,6 +407,16 @@ class _ChatScreenState extends State<ChatScreen> {
     // Listen for excalidraw unpinned event
     _socketService.onExcalidrawUnpinned = (data) {
       _handleExcalidrawUnpinned(data);
+    };
+
+    // Listen for message status updates (delivered/seen)
+    _socketService.onMessageStatusUpdated = (data) {
+      _handleMessageStatusUpdate(data);
+    };
+
+    // Listen for messages read notifications
+    _socketService.onMessagesRead = (data) {
+      _handleMessagesRead(data);
     };
 
     // Listen for file messages from web
@@ -3704,6 +3729,110 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Handle message status updates (delivered/seen)
+  void _handleMessageStatusUpdate(Map<String, dynamic> data) {
+    final messageId = data['message_id'] as int?;
+    final status = data['status'] as String?;
+    final deliveredAt = data['delivered_at'] as String?;
+    final readAt = data['read_at'] as String?;
+    
+    if (messageId == null || status == null) return;
+    
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == messageId);
+      if (index != -1) {
+        final message = _messages[index];
+        final updatedMessage = Message(
+          id: message.id,
+          senderId: message.senderId,
+          recipientId: message.recipientId,
+          content: message.content,
+          messageType: message.messageType,
+          timestamp: message.timestamp,
+          timestampMs: message.timestampMs,
+          isRead: status == 'seen',
+          readAt: readAt,
+          readAtMs: readAt != null ? DateTime.parse(readAt).millisecondsSinceEpoch : null,
+          deliveredAt: deliveredAt ?? message.deliveredAt,
+          deliveredAtMs: deliveredAt != null ? DateTime.parse(deliveredAt).millisecondsSinceEpoch : message.deliveredAtMs,
+          status: status,
+          threadId: message.threadId,
+          replyToId: message.replyToId,
+          replyPreview: message.replyPreview,
+          reactions: message.reactions,
+          fileUrl: message.fileUrl,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          fileType: message.fileType,
+          isDeleted: message.isDeleted,
+          isTask: message.isTask,
+          taskCreatedAt: message.taskCreatedAt,
+          taskCompletedAt: message.taskCompletedAt,
+          isExcalidrawLink: message.isExcalidrawLink,
+          excalidrawPinnedAt: message.excalidrawPinnedAt,
+          isPinned: message.isPinned,
+          pinnedAt: message.pinnedAt,
+          pinnedByUserId: message.pinnedByUserId,
+        );
+        _messages[index] = updatedMessage;
+      }
+    });
+    
+    debugPrint('📊 Message $messageId status updated to: $status');
+  }
+
+  /// Handle messages read notifications
+  void _handleMessagesRead(Map<String, dynamic> data) {
+    final readerId = data['reader_id'] as int?;
+    final messageCount = data['message_count'] as int?;
+    
+    if (readerId == widget.otherUser.id && messageCount != null && messageCount > 0) {
+      debugPrint('✓✓ ${widget.otherUser.fullName} read $messageCount messages');
+      
+      // Update status of sent messages to 'seen'
+      setState(() {
+        for (int i = 0; i < _messages.length; i++) {
+          final message = _messages[i];
+          if (message.senderId == _currentUserId && message.recipientId == widget.otherUser.id && message.status != 'seen') {
+            final updatedMessage = Message(
+              id: message.id,
+              senderId: message.senderId,
+              recipientId: message.recipientId,
+              content: message.content,
+              messageType: message.messageType,
+              timestamp: message.timestamp,
+              timestampMs: message.timestampMs,
+              isRead: true,
+              readAt: DateTime.now().toIso8601String(),
+              readAtMs: DateTime.now().millisecondsSinceEpoch,
+              deliveredAt: message.deliveredAt,
+              deliveredAtMs: message.deliveredAtMs,
+              status: 'seen',
+              threadId: message.threadId,
+              replyToId: message.replyToId,
+              replyPreview: message.replyPreview,
+              reactions: message.reactions,
+              fileUrl: message.fileUrl,
+              fileName: message.fileName,
+              fileSize: message.fileSize,
+              fileType: message.fileType,
+              isDeleted: message.isDeleted,
+              isTask: message.isTask,
+              taskCreatedAt: message.taskCreatedAt,
+              taskCompletedAt: message.taskCompletedAt,
+              isExcalidrawLink: message.isExcalidrawLink,
+              excalidrawPinnedAt: message.excalidrawPinnedAt,
+              isPinned: message.isPinned,
+              pinnedAt: message.pinnedAt,
+              pinnedByUserId: message.pinnedByUserId,
+            );
+            _messages[i] = updatedMessage;
+          }
+        }
+      });
+    }
+  }
+
   /// Show tasks modal
   void _showTasksModal() {
     // Get all task messages from the conversation
@@ -4439,8 +4568,30 @@ class _ChatScreenState extends State<ChatScreen> {
               )
             else if (isMedia || isAudio)
               const SizedBox(height: 8),
-            // Timestamp and read status - only visible when _showTimestamps is true
-            if (_showTimestamps)
+            // Message status indicator and timestamp for sent messages
+            if (isSentByMe)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    // Timestamp (always shown for sent messages)
+                    Text(
+                      message.formattedTime,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    // Status indicator
+                    _buildStatusIndicator(message.status),
+                  ],
+                ),
+              ),
+            // Full timestamp - only visible when _showTimestamps is true
+            if (_showTimestamps && !isSentByMe)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Text(
@@ -4530,6 +4681,36 @@ class _ChatScreenState extends State<ChatScreen> {
     // Check if it looks like a filename with extension
     final filenamePattern = RegExp(r'^[\w\-\.\s]+\.\w{2,5}$');
     return filenamePattern.hasMatch(content.trim());
+  }
+
+  /// Build message status indicator widget
+  Widget _buildStatusIndicator(String status) {
+    switch (status) {
+      case 'sent':
+        return const Icon(
+          Icons.check,
+          size: 16,
+          color: Colors.white70,
+        );
+      case 'delivered':
+        return const Icon(
+          Icons.done_all,
+          size: 16,
+          color: Colors.white70,
+        );
+      case 'seen':
+        return const Icon(
+          Icons.done_all,
+          size: 16,
+          color: Color(0xFF00BCD4), // Cyan color like WhatsApp
+        );
+      default:
+        return const Icon(
+          Icons.schedule,
+          size: 16,
+          color: Colors.white54,
+        );
+    }
   }
 
   /// Open full screen media viewer

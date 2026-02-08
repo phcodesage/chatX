@@ -16,6 +16,7 @@ class SocketService {
 
   // Callbacks for events
   Function(Map<String, dynamic>)? onMessageReceived;
+  Function(Map<String, dynamic>)? onMessageSent;
   Function(Map<String, dynamic>)? onDoorbellRing;
   Function(Map<String, dynamic>)? onUserTyping;
   Function(Map<String, dynamic>)? onTypingUpdate;
@@ -25,6 +26,8 @@ class SocketService {
   Function(Map<String, dynamic>)? onLeftChat;
   Function(Map<String, dynamic>)? onMessageDelivered;
   Function(Map<String, dynamic>)? onMessageRead;
+  Function(Map<String, dynamic>)? onMessageStatusUpdated;
+  Function(Map<String, dynamic>)? onMessagesRead;
   Function(Map<String, dynamic>)? onColorChanged;
   Function(Map<String, dynamic>)? onColorReset;
   Function(Map<String, dynamic>)? onAllMessagesDeleted;
@@ -222,6 +225,18 @@ class SocketService {
     _socket!.on('new_message', (data) {
       debugPrint('💬 New message: $data');
       onMessageReceived?.call(data as Map<String, dynamic>);
+      
+      // Auto-acknowledge delivery when we receive a message
+      final messageData = data as Map<String, dynamic>;
+      if (messageData['id'] != null) {
+        emit('message_delivered', {'message_id': messageData['id']});
+        debugPrint('📧 Auto-sent delivery confirmation for message ${messageData['id']}');
+      }
+    });
+
+    _socket!.on('message_sent', (data) {
+      debugPrint('📤 Message sent: $data');
+      onMessageSent?.call(data as Map<String, dynamic>);
     });
 
     // Doorbell event
@@ -278,6 +293,18 @@ class SocketService {
     _socket!.on('message_read', (data) {
       debugPrint('✓✓ Message read: $data');
       onMessageRead?.call(data as Map<String, dynamic>);
+    });
+
+    // Message status updated event
+    _socket!.on('message_status_updated', (data) {
+      debugPrint('✓ Status updated: $data');
+      onMessageStatusUpdated?.call(data as Map<String, dynamic>);
+    });
+
+    // Multiple messages read event
+    _socket!.on('messages_read', (data) {
+      debugPrint('✓✓ Messages read: $data');
+      onMessagesRead?.call(data as Map<String, dynamic>);
     });
 
     // All messages deleted event
@@ -484,6 +511,16 @@ class SocketService {
     emit('confirm_read', {'message_id': messageId});
   }
 
+  /// Mark messages as viewed
+  void markMessagesViewed(int recipientId) {
+    emit('messages_viewed', {'recipient_id': recipientId});
+  }
+
+  /// Mark messages as read
+  void markMessagesRead(int recipientId) {
+    emit('mark_messages_read', {'recipient_id': recipientId});
+  }
+
   /// Delete a message
   void deleteMessage(int messageId) {
     emit('delete_message', {'message_id': messageId});
@@ -540,6 +577,7 @@ class SocketService {
   /// Clear all callbacks
   void clearCallbacks() {
     onMessageReceived = null;
+    onMessageSent = null;
     onDoorbellRing = null;
     onUserTyping = null;
     onTypingUpdate = null;
@@ -549,6 +587,8 @@ class SocketService {
     onLeftChat = null;
     onMessageDelivered = null;
     onMessageRead = null;
+    onMessageStatusUpdated = null;
+    onMessagesRead = null;
     onColorChanged = null;
     onColorReset = null;
     onAllMessagesDeleted = null;
