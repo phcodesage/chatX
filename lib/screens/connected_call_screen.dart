@@ -4,6 +4,8 @@ import 'dart:async';
 import '../services/call_service.dart';
 import '../services/call_overlay_manager.dart';
 import '../services/socket_service.dart';
+import '../services/call_notification_service.dart';
+import '../services/pip_service.dart';
 
 /// Connected call screen that shows during an active call
 /// Displays: Remote video (fullscreen), Local video (PiP), Controls bar
@@ -27,7 +29,7 @@ class ConnectedCallScreen extends StatefulWidget {
   State<ConnectedCallScreen> createState() => _ConnectedCallScreenState();
 }
 
-class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
+class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsBindingObserver {
   // Video renderers
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
@@ -60,13 +62,60 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
   String? _selectedCameraId;
   String? _selectedSpeakerId;
 
+  // Services for ongoing call notification and PiP
+  final CallNotificationService _callNotificationService = CallNotificationService();
+  final PipService _pipService = PipService();
+  bool _isInPipMode = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeRenderers();
     _startCallDurationTimer();
     _loadDevices();
     _setupCallListeners();
+    _initCallServices();
+  }
+
+  /// Initialize ongoing call notification and PiP
+  Future<void> _initCallServices() async {
+    // Show ongoing call notification in status bar
+    await _callNotificationService.initialize();
+    await _callNotificationService.show(
+      remoteName: widget.remoteName,
+      callType: widget.callType,
+    );
+    _callNotificationService.onEndCallFromNotification = () {
+      _endCall();
+    };
+
+    // Initialize PiP and mark as in-call (await so native flag is set)
+    await _pipService.initialize();
+    await _pipService.setInCall(true);
+    _pipService.onPipModeChanged = (isInPip) {
+      if (mounted) {
+        setState(() {
+          _isInPipMode = isInPip;
+        });
+      }
+    };
+    // Handle PiP action buttons (mute/end call from PiP overlay)
+    _pipService.onToggleMic = () {
+      _toggleMic();
+      _pipService.updateMuteState(_isMicMuted);
+    };
+    _pipService.onEndCall = () {
+      _endCall();
+    };
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    debugPrint('📱 App lifecycle state: $state (isEnding: $_isEnding)');
+    // PiP is handled natively via onUserLeaveHint in MainActivity
+    // We just track the mode change here via the callback
   }
 
   Future<void> _initializeRenderers() async {
@@ -231,6 +280,11 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
     if (_isEnding) return; // Prevent multiple calls
     _isEnding = true;
     debugPrint('📞 Ending call from connected screen');
+    
+    // Show "Call Ended" notification and disable PiP
+    _callNotificationService.showCallEnded();
+    _pipService.setInCall(false); // fire-and-forget is fine on cleanup
+    
     widget.callService.endCall();
     if (mounted) {
       Navigator.of(context).pop();
@@ -365,9 +419,17 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _durationTimer?.cancel();
     _localRenderer.dispose();
     _remoteRenderer.dispose();
+    
+    // Clean up notification and PiP if not already ended
+    if (!_isEnding) {
+      _callNotificationService.showCallEnded();
+    }
+    _pipService.setInCall(false);
+    
     super.dispose();
   }
 
@@ -389,14 +451,14 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> {
               // Remote video (fullscreen background)
               _buildRemoteVideo(),
               
-              // Local video (PiP, draggable)
-              _buildLocalVideoPiP(),
+              // Local video (PiP, draggable) - hide in PiP mode
+              if (!_isInPipMode) _buildLocalVideoPiP(),
               
-              // Top bar with call info
-              if (_showControls) _buildTopBar(),
+              // Top bar with call info - hide in PiP mode
+              if (_showControls && !_isInPipMode) _buildTopBar(),
               
-              // Bottom controls
-              if (_showControls) _buildBottomControls(),
+              // Bottom controls - hide in PiP mode
+              if (_showControls && !_isInPipMode) _buildBottomControls(),
             ],
           ),
         ),
