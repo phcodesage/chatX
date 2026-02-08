@@ -2118,8 +2118,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 offset: cursorPos + emojis[index].length,
               );
               
-              // Trigger text changed to update UI
+              // Trigger text changed and rebuild UI
               _onTextChanged(newText);
+              setState(() {}); // Force rebuild to update button visibility
             },
             child: Center(
               child: Text(
@@ -2781,10 +2782,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                // Inline emoji picker OR Action buttons (emoji picker replaces action buttons when active)
+                // Inline emoji picker (shown when active)
                 if (_showEmojiPicker)
-                  _buildInlineEmojiPicker()
-                else if (_messageController.text.isEmpty)
+                  _buildInlineEmojiPicker(),
+                // Action buttons (shown when emoji picker is closed)
+                if (!_showEmojiPicker)
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
