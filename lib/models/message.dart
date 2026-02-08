@@ -172,10 +172,17 @@ class Message {
     };
   }
 
+  /// Parse a timestamp string, treating it as UTC if no timezone info is present
+  static DateTime _parseUtcTimestamp(String ts) {
+    final hasTimezone = RegExp(r'[zZ]|[+-]\d{2}:?\d{2}$').hasMatch(ts);
+    final parsed = DateTime.parse(hasTimezone ? ts : '${ts}Z');
+    return parsed.toLocal();
+  }
+
   /// Format timestamp for display (short format for message bubbles)
   String get formattedTime {
     try {
-      final dateTime = DateTime.parse(timestamp);
+      final dateTime = _parseUtcTimestamp(timestamp);
       final now = DateTime.now();
       final difference = now.difference(dateTime);
 
@@ -202,7 +209,7 @@ class Message {
   /// Format: [MM/DD/YYYY, HH:MM:SS GMT+offset]
   String get formattedTimestampFull {
     try {
-      final dateTime = DateTime.parse(timestamp).toLocal();
+      final dateTime = _parseUtcTimestamp(timestamp);
       
       // Format date parts
       final month = dateTime.month.toString().padLeft(2, '0');

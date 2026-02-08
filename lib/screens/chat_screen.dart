@@ -55,6 +55,7 @@ class _ChatScreenState extends State<ChatScreen> {
   int? _currentUserId;
   Timer? _typingTimer;
   Timer? _typingUpdateThrottle;
+  Timer? _lastSeenRefreshTimer;
   DateTime? _lastTypingUpdate;
   Color _headerColor = const Color(0xFF4C1D95); // Default purple color
   bool _showResetButton = false;
@@ -98,6 +99,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // Suppress FCM notifications for this chat partner while screen is active
     FirebaseMessagingService.instance.activeChatUserId = widget.otherUser.id;
     _initialize();
+    // Periodically refresh "last seen" relative label in header (like the web app does)
+    _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted && _partnerStatus != 'online') setState(() {});
+    });
   }
   
   /// Listen to scroll position to show/hide scroll-to-bottom button
@@ -1187,7 +1192,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Format date for export separator
   String _formatExportDate(String timestamp) {
     try {
-      final date = DateTime.parse(timestamp).toLocal();
+      final date = _parseUtcTimestamp(timestamp);
       final weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
       final months = ['January', 'February', 'March', 'April', 'May', 'June', 
                       'July', 'August', 'September', 'October', 'November', 'December'];
@@ -1200,7 +1205,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Format time for export message
   String _formatExportTime(String timestamp) {
     try {
-      final date = DateTime.parse(timestamp).toLocal();
+      final date = _parseUtcTimestamp(timestamp);
       final hour = date.hour.toString().padLeft(2, '0');
       final minute = date.minute.toString().padLeft(2, '0');
       return '$hour:$minute';
@@ -2361,6 +2366,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _inputFocusNode.dispose();
     _typingTimer?.cancel();
     _typingUpdateThrottle?.cancel();
+    _lastSeenRefreshTimer?.cancel();
     
     // Send typing stop without setState (widget is being disposed)
     _socketService.stopTyping(widget.otherUser.id);
@@ -2433,15 +2439,21 @@ class _ChatScreenState extends State<ChatScreen> {
                         ? 'typing...'
                         : (_partnerStatus == 'online' 
                             ? 'online' 
-                            : (_partnerLastSeen != null 
-                                ? 'Last seen ${_formatLastSeen(_partnerLastSeen!)}' 
-                                : 'offline')),
+                            : _partnerStatus == 'away'
+                                ? (_partnerLastSeen != null 
+                                    ? 'Last seen ${_formatLastSeen(_partnerLastSeen!)}' 
+                                    : 'away')
+                                : (_partnerLastSeen != null 
+                                    ? 'Last seen ${_formatLastSeen(_partnerLastSeen!)}' 
+                                    : 'offline')),
                     style: TextStyle(
                       color: _otherUserTyping
                           ? const Color(0xFF4CAF50)
                           : (_partnerStatus == 'online'
                               ? const Color(0xFF4CAF50)
-                              : Colors.grey[600]),
+                              : _partnerStatus == 'away'
+                                  ? const Color(0xFFFFC107)
+                                  : Colors.grey[600]),
                       fontSize: 12,
                       fontStyle: _otherUserTyping ? FontStyle.italic : FontStyle.normal,
                     ),
@@ -4101,8 +4113,8 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Check if two timestamps are on the same day
   bool _isSameDay(String timestamp1, String timestamp2) {
     try {
-      final date1 = DateTime.parse(timestamp1).toLocal();
-      final date2 = DateTime.parse(timestamp2).toLocal();
+      final date1 = _parseUtcTimestamp(timestamp1);
+      final date2 = _parseUtcTimestamp(timestamp2);
       return date1.year == date2.year && 
              date1.month == date2.month && 
              date1.day == date2.day;
@@ -4114,7 +4126,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Build date separator widget like Skype (Today, Yesterday, or full date)
   Widget _buildDateSeparator(String timestamp) {
     try {
-      final date = DateTime.parse(timestamp).toLocal();
+      final date = _parseUtcTimestamp(timestamp);
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final yesterday = today.subtract(const Duration(days: 1));
@@ -4595,10 +4607,18 @@ class _ChatScreenState extends State<ChatScreen> {
     return colors[widget.otherUser.avatarColorIndex % colors.length];
   }
   
+  /// Parse a timestamp string, treating it as UTC if no timezone info is present
+  /// (matches the web app's parseTs() behavior)
+  DateTime _parseUtcTimestamp(String timestamp) {
+    final hasTimezone = RegExp(r'[zZ]|[+-]\d{2}:?\d{2}$').hasMatch(timestamp);
+    final parsed = DateTime.parse(hasTimezone ? timestamp : '${timestamp}Z');
+    return parsed.toLocal();
+  }
+
   /// Format last seen timestamp as relative time
   String _formatLastSeen(String timestamp) {
     try {
-      final DateTime lastSeen = DateTime.parse(timestamp);
+      final DateTime lastSeen = _parseUtcTimestamp(timestamp);
       final DateTime now = DateTime.now();
       final Duration difference = now.difference(lastSeen);
       

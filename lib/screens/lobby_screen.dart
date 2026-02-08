@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/lobby_user.dart';
 import '../services/lobby_service.dart';
@@ -24,6 +25,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   bool _isLoading = true;
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
+  Timer? _lastSeenRefreshTimer;
 
   // Avatar colors palette
   static const List<Color> avatarColors = [
@@ -45,6 +47,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _loadLobby();
     _searchController.addListener(_filterUsers);
     _setupRealtimeListeners();
+    // Periodically refresh "last seen" relative labels (like the web app does)
+    _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _setupRealtimeListeners() {
@@ -161,8 +167,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
               localStream: localStream ?? callService.localStream,
             ),
           ),
-        );
+        ).then((_) {
+          _setupRealtimeListeners();
+        });
       }
+      _setupRealtimeListeners();
     });
   }
 
@@ -236,8 +245,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
               localStream: localStream ?? callService.localStream,
             ),
           ),
-        );
+        ).then((_) {
+          _setupRealtimeListeners();
+        });
       }
+      _setupRealtimeListeners();
     });
   }
 
@@ -421,6 +433,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _lastSeenRefreshTimer?.cancel();
     // Clear socket callbacks to prevent memory leaks
     _socketService.onDoorbellRing = null;
     _socketService.onMessageReceived = null;
@@ -494,10 +507,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return avatarColors[index % avatarColors.length];
   }
 
+  /// Parse a timestamp string, treating it as UTC if no timezone info is present
+  /// (matches the web app's parseTs() behavior)
+  DateTime _parseUtcTimestamp(String timestamp) {
+    final hasTimezone = RegExp(r'[zZ]|[+-]\d{2}:?\d{2}$').hasMatch(timestamp);
+    final parsed = DateTime.parse(hasTimezone ? timestamp : '${timestamp}Z');
+    return parsed.toLocal();
+  }
+
   String _formatTime(String? lastSeen) {
     if (lastSeen == null) return '';
     try {
-      final dateTime = DateTime.parse(lastSeen);
+      final dateTime = _parseUtcTimestamp(lastSeen);
       final now = DateTime.now();
       final difference = now.difference(dateTime);
 
@@ -521,7 +542,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   String _formatRelativeTime(String? lastSeen) {
     if (lastSeen == null) return 'Offline';
     try {
-      final dateTime = DateTime.parse(lastSeen);
+      final dateTime = _parseUtcTimestamp(lastSeen);
       final now = DateTime.now();
       final difference = now.difference(dateTime);
 
@@ -636,14 +657,44 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
+  /// Determine effective display status: online, away, or offline
+  /// Matches the web app's recently-seen logic (yellow dot for offline users
+  /// who were active within the last 24 hours)
+  String _getEffectiveStatus(LobbyUser user) {
+    if (user.isOnline || user.status == 'online') return 'online';
+    if (user.status == 'away') return 'away';
+    // Check if recently seen (within 24 hours) → show as away
+    if (user.lastSeen != null) {
+      try {
+        final lastSeenTime = _parseUtcTimestamp(user.lastSeen!);
+        final age = DateTime.now().difference(lastSeenTime);
+        if (age.inHours < 24) return 'away';
+      } catch (_) {}
+    }
+    return 'offline';
+  }
+
+  /// Get status dot color: green=online, yellow=away, grey=offline
+  Color _getStatusDotColor(String effectiveStatus) {
+    switch (effectiveStatus) {
+      case 'online':
+        return const Color(0xFF4CAF50); // green
+      case 'away':
+        return const Color(0xFFFFC107); // yellow/amber
+      default:
+        return Colors.grey[600]!; // grey
+    }
+  }
+
   Widget _buildUserTile(LobbyUser user, {bool isOnlineSection = false}) {
     final avatarColor = _getAvatarColor(user.avatarColorIndex);
+    final effectiveStatus = _getEffectiveStatus(user);
     
     // Format last seen date for offline users
     String _formatLastSeenDate(String? lastSeen) {
       if (lastSeen == null) return '';
       try {
-        final dateTime = DateTime.parse(lastSeen);
+        final dateTime = _parseUtcTimestamp(lastSeen);
         return 'Last seen: ${dateTime.month}/${dateTime.day}/${dateTime.year}';
       } catch (e) {
         return '';
@@ -712,8 +763,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 builder: (context) => ChatScreen(otherUser: user),
               ),
             ).then((_) {
-              // Reload lobby when returning from chat to update unread counts
+              // Reload lobby and restore socket listeners when returning from chat
               _loadLobby();
+              _setupRealtimeListeners();
             });
           },
           child: Padding(
@@ -754,42 +806,23 @@ class _LobbyScreenState extends State<LobbyScreen> {
                               ),
                             ),
                     ),
-                    // Online indicator (small green dot)
-                    if (user.isOnline)
-                      Positioned(
-                        right: 2,
-                        bottom: 2,
-                        child: Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF4CAF50),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: const Color(0xFF252542),
-                              width: 2,
-                            ),
+                    // Status indicator dot (green=online, yellow=away, grey=offline)
+                    Positioned(
+                      right: 2,
+                      bottom: 2,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: _getStatusDotColor(effectiveStatus),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: const Color(0xFF252542),
+                            width: 2,
                           ),
                         ),
                       ),
-                    // Offline indicator (small grey dot)
-                    if (!user.isOnline)
-                      Positioned(
-                        right: 2,
-                        bottom: 2,
-                        child: Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: Colors.grey[600],
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: const Color(0xFF252542),
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(width: 12),
@@ -809,11 +842,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
-                      // Online/Offline status with relative time
+                      // Online/Away/Offline status with relative time
                       Text(
-                        user.isOnline ? 'Online' : _formatRelativeTime(user.lastSeen),
+                        effectiveStatus == 'online'
+                            ? 'Online'
+                            : effectiveStatus == 'away'
+                                ? _formatRelativeTime(user.lastSeen)
+                                : _formatRelativeTime(user.lastSeen),
                         style: TextStyle(
-                          color: user.isOnline ? const Color(0xFF4CAF50) : Colors.grey[500],
+                          color: effectiveStatus == 'online'
+                              ? const Color(0xFF4CAF50)
+                              : effectiveStatus == 'away'
+                                  ? const Color(0xFFFFC107)
+                                  : Colors.grey[500],
                           fontSize: 13,
                         ),
                       ),

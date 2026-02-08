@@ -6,6 +6,7 @@ import '../services/call_overlay_manager.dart';
 import '../services/socket_service.dart';
 import '../services/call_notification_service.dart';
 import '../services/pip_service.dart';
+import '../services/presence_service.dart';
 
 /// Connected call screen that shows during an active call
 /// Displays: Remote video (fullscreen), Local video (PiP), Controls bar
@@ -71,6 +72,8 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Mark call in progress so PresenceService keeps status 'online' when backgrounded
+    PresenceService().isCallInProgress = true;
     _initializeRenderers();
     _startCallDurationTimer();
     _loadDevices();
@@ -281,6 +284,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
     _isEnding = true;
     debugPrint('📞 Ending call from connected screen');
     
+    // Clear call-in-progress flag so presence resumes normal behavior
+    PresenceService().isCallInProgress = false;
+    
     // Show "Call Ended" notification and disable PiP
     _callNotificationService.showCallEnded();
     _pipService.setInCall(false); // fire-and-forget is fine on cleanup
@@ -429,6 +435,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
       _callNotificationService.showCallEnded();
     }
     _pipService.setInCall(false);
+    
+    // Ensure call flag is cleared even if _endCall wasn't called
+    PresenceService().isCallInProgress = false;
     
     super.dispose();
   }
