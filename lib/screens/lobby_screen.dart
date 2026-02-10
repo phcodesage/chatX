@@ -9,6 +9,7 @@ import '../widgets/incoming_call_setup_modal.dart';
 import 'sign_in_page.dart';
 import 'chat_screen.dart';
 import 'connected_call_screen.dart';
+import '../services/app_update_service.dart';
 
 /// Lobby/Chat list screen
 class LobbyScreen extends StatefulWidget {
@@ -47,6 +48,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _loadLobby();
     _searchController.addListener(_filterUsers);
     _setupRealtimeListeners();
+    // Check for app updates after a short delay
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        AppUpdateService().checkForUpdate(context);
+      }
+    });
     // Periodically refresh "last seen" relative labels (like the web app does)
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted) setState(() {});
@@ -1020,11 +1027,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      // Last message or last seen
+                      // Last message preview
                       Text(
-                        user.isOnline 
-                            ? _getLastMessagePreview()
-                            : (user.lastMessage != null ? _getLastMessagePreview() : _formatLastSeenDate(user.lastSeen)),
+                        _getLastMessagePreview(),
                         style: TextStyle(
                           color: Colors.grey[400],
                           fontSize: 12,

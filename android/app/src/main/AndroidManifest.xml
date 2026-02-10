@@ -17,6 +17,9 @@
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     
+    <!-- APK installation permission for OTA updates -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    
     <!-- Screen sharing permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
@@ -88,6 +91,17 @@
             android:name="com.cloudwebrtc.webrtc.FlutterWebRTCForegroundService"
             android:foregroundServiceType="mediaProjection"
             android:exported="false" />
+        
+        <!-- FileProvider for APK installation on Android 7+ -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

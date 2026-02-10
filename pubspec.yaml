@@ -79,6 +79,8 @@ dependencies:
   
   # WebRTC for video/audio calling
   flutter_webrtc: ^0.12.1
+  package_info_plus: ^9.0.0
+  open_filex: ^4.7.0
 
 dev_dependencies:
   flutter_test:
