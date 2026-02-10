@@ -2538,7 +2538,10 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-      body: Stack(
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        behavior: HitTestBehavior.translucent,
+        child: Stack(
         children: [
           Column(
             children: [
@@ -2810,144 +2813,151 @@ class _ChatScreenState extends State<ChatScreen> {
                 // Inline emoji picker (shown when active)
                 if (_showEmojiPicker)
                   _buildInlineEmojiPicker(),
-                // Action buttons (shown when emoji picker is closed)
-                if (!_showEmojiPicker)
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                    // Ring Doorbell
-                    ElevatedButton(
-                      onPressed: _ringDoorbell,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF8B5CF6), // Violet
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                      child: const Text('Ring Doorbell'),
-                    ),
-                    // Change Color
-                    ElevatedButton(
-                      onPressed: _changeColor,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFA855F7), // Purple
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                      child: const Text('Change Color'),
-                    ),
-                    // Reset Color button (only show when color has been changed)
-                    if (_showResetButton)
-                      ElevatedButton(
-                        onPressed: _resetColor,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.black87,
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(6),
+                // Action buttons (shown when emoji picker is closed AND keyboard is not visible)
+                // Wrapped in AnimatedSize for smooth transition when keyboard opens/closes
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOut,
+                  alignment: Alignment.topCenter,
+                  child: (!_showEmojiPicker && MediaQuery.of(context).viewInsets.bottom == 0)
+                    ? Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                        // Ring Doorbell
+                        ElevatedButton(
+                          onPressed: _ringDoorbell,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF8B5CF6), // Violet
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                           ),
-                          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          child: const Text('Ring Doorbell'),
                         ),
-                        child: const Text('Reset Color'),
-                      ),
-                    // Send File
-                    ElevatedButton(
-                      onPressed: _pickFile,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10B981), // Green
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
+                        // Change Color
+                        ElevatedButton(
+                          onPressed: _changeColor,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFA855F7), // Purple
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          child: const Text('Change Color'),
                         ),
-                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                      child: const Text('Send File'),
-                    ),
-                    // Camera
-                    ElevatedButton(
-                      onPressed: _takePhoto,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF3B82F6), // Blue
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
+                        // Reset Color button (only show when color has been changed)
+                        if (_showResetButton)
+                          ElevatedButton(
+                            onPressed: _resetColor,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: Colors.black87,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                            ),
+                            child: const Text('Reset Color'),
+                          ),
+                        // Send File
+                        ElevatedButton(
+                          onPressed: _pickFile,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF10B981), // Green
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          child: const Text('Send File'),
                         ),
-                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                      child: const Text('Camera'),
-                    ),
-                    // Record Voice Message
-                    ElevatedButton(
-                      onPressed: _showVoiceRecordingModal,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEF4444), // Red
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
+                        // Camera
+                        ElevatedButton(
+                          onPressed: _takePhoto,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF3B82F6), // Blue
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          child: const Text('Camera'),
                         ),
-                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                      child: const Text('Voice Message'),
-                    ),
-                    // Auto-Translate
-                    ElevatedButton(
-                      onPressed: _toggleAutoTranslate,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _autoTranslate 
-                            ? const Color(0xFF059669)  // Green when ON
-                            : const Color(0xFF0891B2), // Cyan when OFF
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
+                        // Record Voice Message
+                        ElevatedButton(
+                          onPressed: _showVoiceRecordingModal,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFEF4444), // Red
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          child: const Text('Voice Message'),
                         ),
-                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                      child: Text(_autoTranslate ? 'Translate: ON' : 'Translate: OFF'),
-                    ),
-                    // Show Timestamps
-                    ElevatedButton(
-                      onPressed: _toggleTimestamps,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _showTimestamps 
-                            ? const Color(0xFF4F46E5)  // Indigo when ON
-                            : const Color(0xFF8B5CF6), // Purple when OFF
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
+                        // Auto-Translate
+                        ElevatedButton(
+                          onPressed: _toggleAutoTranslate,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _autoTranslate 
+                                ? const Color(0xFF059669)  // Green when ON
+                                : const Color(0xFF0891B2), // Cyan when OFF
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          child: Text(_autoTranslate ? 'Translate: ON' : 'Translate: OFF'),
                         ),
-                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                      child: Text(_showTimestamps ? 'Hide Timestamps' : 'Show Timestamps'),
-                    ),
-                    // Export Chat
-                    ElevatedButton(
-                      onPressed: _exportChat,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6B7280), // Gray
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
+                        // Show Timestamps
+                        ElevatedButton(
+                          onPressed: _toggleTimestamps,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _showTimestamps 
+                                ? const Color(0xFF4F46E5)  // Indigo when ON
+                                : const Color(0xFF8B5CF6), // Purple when OFF
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          child: Text(_showTimestamps ? 'Hide Timestamps' : 'Show Timestamps'),
                         ),
-                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                      child: const Text('Export Chat'),
-                    ),
-                  ],
+                        // Export Chat
+                        ElevatedButton(
+                          onPressed: _exportChat,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6B7280), // Gray
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                          child: const Text('Export Chat'),
+                        ),
+                      ],
+                    )
+                    : const SizedBox.shrink(),
                 ),
               ],
             ),
@@ -2956,6 +2966,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         ],
+      ),
       ),
     );
   }
@@ -4591,7 +4602,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
             // Full timestamp - only visible when _showTimestamps is true
-            if (_showTimestamps && !isSentByMe)
+            if (_showTimestamps)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Text(
