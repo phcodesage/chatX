@@ -4779,14 +4779,14 @@ class _ChatScreenState extends State<ChatScreen> {
           GestureDetector(
             onTap: () => _toggleReaction(messageId, emoji),
             child: Container(
-              margin: const EdgeInsets.only(right: 4, top: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              margin: const EdgeInsets.only(right: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
               decoration: BoxDecoration(
                 color: const Color(0xFF2C2C2E),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: Colors.white.withOpacity(0.2),
-                  width: 1,
+                  color: Colors.white.withOpacity(0.15),
+                  width: 0.5,
                 ),
               ),
               child: Row(
@@ -4794,13 +4794,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   Text(
                     emoji,
-                    style: const TextStyle(fontSize: 14),
+                    style: const TextStyle(fontSize: 12),
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 2),
                   Text(
                     '${users.length}',
                     style: const TextStyle(
-                      fontSize: 12,
+                      fontSize: 11,
                       color: Colors.white70,
                     ),
                   ),
@@ -4815,6 +4815,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (pills.isEmpty) return const SizedBox.shrink();
 
     return Wrap(
+      spacing: 2,
+      runSpacing: 2,
       children: pills,
     );
   }
@@ -4848,9 +4850,13 @@ class _ChatScreenState extends State<ChatScreen> {
         (message.fileType?.startsWith('audio/') ?? false);
     final bool isMedia = isImage || isVideo;
     
+    // Check if this message has reactions to adjust bottom margin
+    final hasReactions = _messageReactions[message.id] != null && 
+                         _messageReactions[message.id]!.isNotEmpty;
+    
     // Build the main bubble widget (without Align - alignment handled in return)
     final bubbleWidget = Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
       constraints: BoxConstraints(
         maxWidth: MediaQuery.of(context).size.width * 0.70,
       ),
@@ -5087,10 +5093,6 @@ class _ChatScreenState extends State<ChatScreen> {
       },
     );
 
-    // Check if this message has reactions to add extra bottom spacing
-    final hasReactions = _messageReactions[message.id] != null && 
-                         _messageReactions[message.id]!.isNotEmpty;
-    
     // Wrap bubble with Column for reactions below (Column keeps pills in hit-test bounds)
     return Align(
       alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -5110,14 +5112,14 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
           
-          // Reaction pills below bubble (now in Column, so taps work!)
+          // Reaction pills below bubble — tight against bubble bottom
           if (hasReactions)
             Padding(
               padding: EdgeInsets.only(
                 left: isSentByMe ? 0 : 8,
                 right: isSentByMe ? 8 : 0,
-                top: 4,
-                bottom: 8,
+                top: 0,
+                bottom: 6,
               ),
               child: _buildReactionPills(message.id),
             ),
