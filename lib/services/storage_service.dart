@@ -6,6 +6,7 @@ class StorageService {
   static const String _tokenKey = 'auth_token';
   static const String _userIdKey = 'user_id';
   static const String _usernameKey = 'username';
+  static const String _isAdminKey = 'is_admin';
   static const String _rememberMeKey = 'remember_me';
   static const String _rememberedUsernameKey = 'remembered_username';
   static const String _rememberedPasswordKey = 'remembered_password';
@@ -73,6 +74,27 @@ class StorageService {
     }
   }
 
+  /// Save admin status
+  static Future<void> saveIsAdmin(bool isAdmin) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_isAdminKey, isAdmin);
+    } catch (e) {
+      debugPrint('Error saving admin status: $e');
+    }
+  }
+
+  /// Get admin status
+  static Future<bool> getIsAdmin() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_isAdminKey) ?? false;
+    } catch (e) {
+      debugPrint('Error getting admin status: $e');
+      return false;
+    }
+  }
+
   /// Save remembered credentials
   static Future<void> saveRememberedCredentials(String username, String password) async {
     try {
@@ -122,6 +144,7 @@ class StorageService {
       await prefs.remove(_tokenKey);
       await prefs.remove(_userIdKey);
       await prefs.remove(_usernameKey);
+      await prefs.remove(_isAdminKey);
     } catch (e) {
       debugPrint('Error clearing storage: $e');
     }

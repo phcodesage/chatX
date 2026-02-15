@@ -41,6 +41,7 @@ class AuthService {
         await StorageService.saveToken(authResponse.token);
         await StorageService.saveUserId(authResponse.user.id);
         await StorageService.saveUsername(authResponse.user.username);
+        await StorageService.saveIsAdmin(authResponse.user.isAdmin);
         
         // Initialize Socket.IO connection
         SocketService().initialize(authResponse.token, authResponse.user.id);
@@ -90,6 +91,7 @@ class AuthService {
         await StorageService.saveToken(authResponse.token);
         await StorageService.saveUserId(authResponse.user.id);
         await StorageService.saveUsername(authResponse.user.username);
+        await StorageService.saveIsAdmin(authResponse.user.isAdmin);
         
         // Initialize Socket.IO connection
         SocketService().initialize(authResponse.token, authResponse.user.id);

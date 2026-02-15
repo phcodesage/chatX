@@ -6,18 +6,20 @@ class ReactionPicker extends StatelessWidget {
   final Function(String emoji) onReactionSelected;
   final VoidCallback onClose;
 
-  // Common reaction emojis (matching web app)
+  // Expanded reaction emojis - more choices for multi-reaction support
   static const List<String> emojis = [
     '👍',
     '❤️',
     '🤣',
-    '😨',
-    '🥺',
-    '🙏',
-    '😊',
-    '🔥',
+    '😮',
+    '�',
+    '😡',
+    '�',
     '🎉',
-    '👏',
+    '�',
+    '�',
+    '💯',
+    '�',
   ];
 
   const ReactionPicker({
@@ -52,15 +54,15 @@ class ReactionPicker extends StatelessWidget {
                 onClose();
               },
               child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                padding: const EdgeInsets.all(8),
+                margin: const EdgeInsets.symmetric(horizontal: 2),
+                padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   color: Colors.transparent,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
                   emoji,
-                  style: const TextStyle(fontSize: 28),
+                  style: const TextStyle(fontSize: 24),
                 ),
               ),
             );
@@ -91,7 +93,7 @@ class ReactionPicker extends StatelessWidget {
     // Calculate position to ensure picker stays on screen
     final screenSize = MediaQuery.of(context).size;
     const pickerHeight = 60.0;
-    const pickerWidth = 360.0; // Reduced to fit better on mobile
+    const pickerWidth = 400.0; // Fits 12 reaction emojis on mobile
 
     double left = position.dx - (pickerWidth / 2);
     double top = position.dy - pickerHeight - 8; // Position above by default

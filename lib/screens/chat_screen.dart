@@ -88,6 +88,12 @@ class _ChatScreenState extends State<ChatScreen> {
   // Emoji picker state for chat input
   bool _showEmojiPicker = false;
   
+  // Collapsible action buttons state (FB Messenger style)
+  bool _showActionButtons = false;
+  
+  // Backend connectivity state
+  bool _isBackendAvailable = true;
+  
   // Presence state for the chat partner
   String _partnerStatus = 'offline';
   String? _partnerLastSeen;
@@ -536,30 +542,17 @@ class _ChatScreenState extends State<ChatScreen> {
       _handleCrossRoomCallOfferInChat(data);
     };
     
-    // Listen for reaction updates
+    // Listen for reaction updates (multi-reaction: user can have multiple different emojis)
     _socketService.onReactionUpdated = (data) {
       debugPrint('👍 Reaction updated received: $data');
       final messageId = data['message_id'] as int?;
-      // Use user_id for consistent tracking (convert to string for Set storage)
       final reactorId = data['user_id']?.toString() ?? '';
       final reaction = data['reaction'] as String?;
       
       if (messageId != null && reaction != null && reaction.isNotEmpty && reactorId.isNotEmpty) {
         setState(() {
-          // Initialize reaction map for this message if it doesn't exist
           _messageReactions.putIfAbsent(messageId, () => {});
-          
-          // Remove this user from all other reactions on this message
-          _messageReactions[messageId]!.forEach((emoji, users) {
-            if (emoji != reaction) {
-              users.remove(reactorId);
-            }
-          });
-          
-          // Remove empty reaction sets
-          _messageReactions[messageId]!.removeWhere((key, value) => value.isEmpty);
-          
-          // Add user to the target reaction
+          // Simply add user to the target reaction (don't remove from others)
           _messageReactions[messageId]!.putIfAbsent(reaction, () => {});
           _messageReactions[messageId]![reaction]!.add(reactorId);
         });
@@ -569,21 +562,26 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.onReactionCleared = (data) {
       debugPrint('❌ Reaction cleared received: $data');
       final messageId = data['message_id'] as int?;
-      // Use user_id for consistent tracking
       final reactorId = data['user_id']?.toString() ?? '';
+      final reaction = data['reaction'] as String?;
       
       if (messageId != null && reactorId.isNotEmpty) {
         setState(() {
           if (_messageReactions.containsKey(messageId)) {
-            // Remove user from all reactions on this message
-            _messageReactions[messageId]!.forEach((emoji, users) {
-              users.remove(reactorId);
-            });
+            if (reaction != null && reaction.isNotEmpty) {
+              // Remove user from only the specific reaction emoji
+              _messageReactions[messageId]![reaction]?.remove(reactorId);
+              if (_messageReactions[messageId]![reaction]?.isEmpty ?? false) {
+                _messageReactions[messageId]!.remove(reaction);
+              }
+            } else {
+              // Legacy: no specific reaction provided, remove from all
+              _messageReactions[messageId]!.forEach((emoji, users) {
+                users.remove(reactorId);
+              });
+              _messageReactions[messageId]!.removeWhere((key, value) => value.isEmpty);
+            }
             
-            // Remove empty reaction sets
-            _messageReactions[messageId]!.removeWhere((key, value) => value.isEmpty);
-            
-            // Remove message entry if no reactions left
             if (_messageReactions[messageId]!.isEmpty) {
               _messageReactions.remove(messageId);
             }
@@ -609,6 +607,16 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     };
+
+    // Listen for backend connection state changes
+    _socketService.onConnectionChanged = (isConnected) {
+      if (mounted) {
+        setState(() => _isBackendAvailable = isConnected);
+      }
+    };
+
+    // Set initial state from current socket status
+    _isBackendAvailable = _socketService.isConnected;
   }
   
   /// Handle cross-room call offer from web client while in chat
@@ -1558,6 +1566,218 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Show user profile bottom sheet (Skype-style)
+  void _showUserProfile() {
+    final user = widget.otherUser;
+    final avatarColor = _getAvatarColor();
+    final statusText = _partnerStatus == 'online'
+        ? 'Online'
+        : _partnerStatus == 'away'
+            ? 'Away'
+            : 'Offline';
+    final statusColor = _partnerStatus == 'online'
+        ? const Color(0xFF4CAF50)
+        : _partnerStatus == 'away'
+            ? const Color(0xFFFFC107)
+            : Colors.grey;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF1E1E2E),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Drag handle
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Profile picture
+            CircleAvatar(
+              radius: 48,
+              backgroundColor: avatarColor,
+              child: user.avatarUrl != null
+                  ? ClipOval(
+                      child: Image.network(
+                        user.avatarUrl!,
+                        width: 96,
+                        height: 96,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) => Text(
+                          user.initials,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 36,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    )
+                  : Text(
+                      user.initials,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 16),
+            // Full name
+            Text(
+              user.fullName,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            // Username
+            Text(
+              '@${user.username}',
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Status badge
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    statusText,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            // Info rows
+            _buildProfileInfoRow(Icons.email_outlined, 'Email', user.email),
+            if (user.bio != null && user.bio!.isNotEmpty)
+              _buildProfileInfoRow(Icons.info_outline, 'Bio', user.bio!),
+            _buildProfileInfoRow(Icons.access_time, 'Timezone', user.timezone),
+            if (_partnerLastSeen != null && _partnerStatus != 'online')
+              _buildProfileInfoRow(
+                Icons.visibility_outlined,
+                'Last seen',
+                _formatLastSeen(_partnerLastSeen!),
+              ),
+            if (user.isAdmin || user.isAdminUser)
+              _buildProfileInfoRow(Icons.shield_outlined, 'Role', 'Admin'),
+            const SizedBox(height: 16),
+            // Action buttons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _showCallSetupModal(CallType.audio);
+                    },
+                    icon: const Icon(Icons.call, size: 18),
+                    label: const Text('Call'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF4CAF50),
+                      side: const BorderSide(color: Color(0xFF4CAF50)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _showCallSetupModal(CallType.video);
+                    },
+                    icon: const Icon(Icons.videocam, size: 18),
+                    label: const Text('Video'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF3B82F6),
+                      side: const BorderSide(color: Color(0xFF3B82F6)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: MediaQuery.of(context).viewPadding.bottom + 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfileInfoRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.grey[500], size: 20),
+          const SizedBox(width: 12),
+          Text(
+            '$label:',
+            style: TextStyle(
+              color: Colors.grey[500],
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Show call setup modal for video/audio calls
   void _showCallSetupModal(CallType callType) {
     showModalBottomSheet(
@@ -2086,76 +2306,234 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  /// Build inline emoji picker widget
+  // Emoji category tab index
+  int _emojiCategoryIndex = 0;
+
+  // Emoji categories with icons and data
+  static const List<Map<String, dynamic>> _emojiCategories = [
+    {
+      'icon': '😀',
+      'label': 'Smileys',
+      'emojis': [
+        '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '🥲', '😊',
+        '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙',
+        '😚', '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎',
+        '🥸', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁',
+        '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡',
+        '🤬', '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '😓',
+        '🤗', '🤔', '🫣', '🤭', '🫢', '🫡', '🤫', '🫠', '🤥', '😶',
+        '😐', '😑', '😬', '🫨', '🙄', '😯', '😦', '😧', '😮', '😲',
+        '🥱', '😴', '🤤', '😪', '😵', '😵‍💫', '🫥', '🤐', '🥴', '🤢',
+        '🤮', '🤧', '😷', '🤒', '🤕', '🤑', '🤠', '😈', '👿', '👹',
+        '👺', '🤡', '💩', '👻', '💀', '☠️', '👽', '👾', '🤖', '🎃',
+        '😺', '😸', '😹', '😻', '😼', '😽', '🙀', '😿', '😾',
+      ],
+    },
+    {
+      'icon': '👋',
+      'label': 'Gestures',
+      'emojis': [
+        '👋', '🤚', '🖐️', '✋', '🖖', '🫱', '🫲', '🫳', '🫴', '👌',
+        '🤌', '🤏', '✌️', '🤞', '🫰', '🤟', '🤘', '🤙', '👈', '👉',
+        '👆', '🖕', '👇', '☝️', '🫵', '👍', '👎', '✊', '👊', '🤛',
+        '🤜', '👏', '🙌', '🫶', '👐', '🤲', '🤝', '🙏', '✍️', '💅',
+        '🤳', '💪', '🦾', '🦿', '🦵', '🦶', '👂', '🦻', '👃', '🧠',
+        '🫀', '🫁', '🦷', '🦴', '👀', '👁️', '👅', '👄', '🫦', '💋',
+      ],
+    },
+    {
+      'icon': '❤️',
+      'label': 'Hearts',
+      'emojis': [
+        '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '❤️‍🔥',
+        '❤️‍🩹', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝',
+        '💟', '♥️', '🩷', '🩵', '🩶', '💌', '💐', '🌹', '🥀', '🌺',
+        '🌸', '🌷', '🌻', '💑', '👩‍❤️‍👨', '👨‍❤️‍👨', '👩‍❤️‍👩', '💏', '😍', '🥰',
+        '😘', '😻', '💒', '🏩',
+      ],
+    },
+    {
+      'icon': '🐱',
+      'label': 'Animals',
+      'emojis': [
+        '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐻‍❄️', '🐨',
+        '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🙈', '🙉', '🙊', '🐒',
+        '🐔', '🐧', '🐦', '🐤', '🐣', '🐥', '🦆', '🦅', '🦉', '🦇',
+        '🐺', '🐗', '🐴', '🦄', '🐝', '🪱', '🐛', '🦋', '🐌', '🐞',
+        '🐜', '🪰', '🪲', '🪳', '🦟', '🦗', '🕷️', '🦂', '🐢', '🐍',
+        '🦎', '🦖', '🦕', '🐙', '🦑', '🦐', '🦞', '🦀', '🐡', '🐠',
+        '🐟', '🐬', '🐳', '🐋', '🦈', '🦭', '🐊', '🐅', '🐆', '🦓',
+        '🦍', '🦧', '🐘', '🦛', '🦏', '🐪', '🐫', '🦒', '🦘', '🦬',
+      ],
+    },
+    {
+      'icon': '🍕',
+      'label': 'Food',
+      'emojis': [
+        '🍏', '🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐',
+        '🍈', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🍆', '🥑',
+        '🥦', '🥬', '🥒', '🌶️', '🫑', '🌽', '🥕', '🫒', '🧄', '🧅',
+        '🥔', '🍠', '🥐', '🥯', '🍞', '🥖', '🥨', '🧀', '🥚', '🍳',
+        '🧈', '🥞', '🧇', '🥓', '🥩', '🍗', '🍖', '🌭', '🍔', '🍟',
+        '🍕', '🫓', '🥪', '🥙', '🧆', '🌮', '🌯', '🫔', '🥗', '🥘',
+        '🫕', '🍝', '🍜', '🍲', '🍛', '🍣', '🍱', '🥟', '🦪', '🍤',
+        '🍙', '🍚', '🍘', '🍥', '🥠', '🥮', '🍢', '🍡', '🍧', '🍨',
+        '🍦', '🥧', '🧁', '🍰', '🎂', '🍮', '🍭', '🍬', '🍫', '🍩',
+        '🍪', '🌰', '🥜', '🍯', '🥛', '🍼', '☕', '🍵', '🧃', '🥤',
+        '🧋', '🍶', '🍺', '🍻', '🥂', '🍷', '🥃', '🍸', '🍹', '🧉',
+      ],
+    },
+    {
+      'icon': '⚽',
+      'label': 'Activities',
+      'emojis': [
+        '⚽', '🏀', '🏈', '⚾', '🥎', '🎾', '🏐', '🏉', '🥏', '🎱',
+        '🪀', '🏓', '🏸', '🏒', '🏑', '🥍', '🏏', '🪃', '🥅', '⛳',
+        '🪁', '🏹', '🎣', '🤿', '🥊', '🥋', '🎽', '🛹', '🛼', '🛷',
+        '⛸️', '🥌', '🎿', '⛷️', '🏂', '🪂', '🏋️', '🤼', '🤸', '🤺',
+        '⛹️', '🤾', '🏌️', '🏇', '🧘', '🏄', '🏊', '🤽', '🚣', '🧗',
+        '🚵', '🚴', '🏆', '🥇', '🥈', '🥉', '🏅', '🎖️', '🏵️', '🎗️',
+        '🎪', '🤹', '🎭', '🩰', '🎨', '🎬', '🎤', '🎧', '🎼', '🎹',
+        '🥁', '🪘', '🎷', '🎺', '🪗', '🎸', '🪕', '🎻', '🎲', '♟️',
+        '🎯', '🎳', '🎮', '🕹️', '🧩',
+      ],
+    },
+    {
+      'icon': '🚗',
+      'label': 'Travel',
+      'emojis': [
+        '🚗', '🚕', '🚙', '🚌', '🚎', '🏎️', '🚓', '🚑', '🚒', '🚐',
+        '🛻', '🚚', '🚛', '🚜', '🏍️', '🛵', '🚲', '🛴', '🛺', '🚔',
+        '🚍', '🚘', '🚖', '🛞', '🚡', '🚠', '🚟', '🚃', '🚋', '🚞',
+        '🚝', '🚄', '🚅', '🚈', '🚂', '🚆', '🚇', '🚊', '🚉', '✈️',
+        '🛫', '🛬', '🛩️', '💺', '🛰️', '🚀', '🛸', '🚁', '🛶', '⛵',
+        '🚤', '🛥️', '🛳️', '⛴️', '🚢', '🗼', '🏰', '🏯', '🏟️', '🎡',
+        '🎢', '🎠', '⛲', '⛱️', '🏖️', '🏝️', '🏜️', '🌋', '⛰️', '🏔️',
+        '🗻', '🏕️', '🛖', '🏠', '🏡', '🏢', '🏬', '🏣', '🏤', '🏥',
+      ],
+    },
+    {
+      'icon': '💡',
+      'label': 'Objects',
+      'emojis': [
+        '🔥', '💧', '🌟', '⭐', '✨', '💫', '🌈', '☀️', '🌤️', '⛅',
+        '🎉', '🎊', '🎈', '🎁', '🎀', '🎄', '🪅', '🎆', '🎇', '🧨',
+        '💡', '🔦', '🕯️', '🪔', '💎', '🔮', '🧿', '🪬', '💰', '💴',
+        '💵', '💶', '💷', '🪙', '💳', '💸', '🧲', '🔧', '🪛', '🔩',
+        '⚙️', '🧰', '🪜', '🧱', '🪨', '🪵', '🔗', '🧬', '🔬', '🔭',
+        '📡', '💉', '🩸', '💊', '🩹', '🩼', '🩺', '🩻', '🚪', '🛗',
+        '🪞', '🪟', '🛏️', '🛋️', '🪑', '🚽', '🪠', '🚿', '🛁', '🪤',
+        '📱', '💻', '⌨️', '🖥️', '🖨️', '🖱️', '💾', '💿', '📀', '📷',
+        '📸', '📹', '🎥', '📽️', '🎞️', '📞', '☎️', '📟', '📠', '📺',
+        '📻', '🎙️', '🎚️', '🎛️', '🧭', '⏱️', '⏲️', '⏰', '🕰️', '📡',
+      ],
+    },
+    {
+      'icon': '🏁',
+      'label': 'Symbols',
+      'emojis': [
+        '🏳️', '🏴', '🏁', '🚩', '🏳️‍🌈', '🏳️‍⚧️', '🏴‍☠️', '✅', '❌', '❓',
+        '❗', '‼️', '⁉️', '💯', '🔴', '🟠', '🟡', '🟢', '🔵', '🟣',
+        '⚫', '⚪', '🟤', '🔶', '🔷', '🔸', '🔹', '🔺', '🔻', '💠',
+        '🔘', '🔳', '🔲', '▪️', '▫️', '◾', '◽', '◼️', '◻️', '🟥',
+        '🟧', '🟨', '🟩', '🟦', '🟪', '⬛', '⬜', '🟫', '♈', '♉',
+        '♊', '♋', '♌', '♍', '♎', '♏', '♐', '♑', '♒', '♓',
+        '⛎', '🔀', '🔁', '🔂', '▶️', '⏩', '⏭️', '⏯️', '◀️', '⏪',
+        '⏮️', '🔼', '⏫', '🔽', '⏬', '⏸️', '⏹️', '⏺️', '⏏️', '🎦',
+        '♾️', '♻️', '⚜️', '🔱', '📛', '🔰', '⭕', '✅', '☑️', '✔️',
+        '❌', '❎', '➕', '➖', '➗', '✖️', '💲', '💱', '™️', '©️',
+        '®️', '〰️', '➰', '➿', '🔚', '🔙', '🔛', '🔝', '🔜', '🆕',
+      ],
+    },
+  ];
+
+  /// Build inline emoji picker widget with category tabs
   Widget _buildInlineEmojiPicker() {
-    // Common emojis organized by category
-    const List<String> emojis = [
-      // Smileys & People
-      '😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂',
-      '😉', '😍', '🥰', '😘', '😗', '😋', '😛', '😜', '🤪', '😝',
-      '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶',
-      '😏', '😒', '🙄', '😬', '😮', '😲', '🥱', '😴', '🤤', '😷',
-      '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '😵', '🤯', '🤠',
-      '🥳', '🥸', '😎', '🤓', '🧐', '😕', '😟', '🙁', '😮', '😯',
-      '😢', '😭', '😤', '😠', '😡', '🤬', '😈', '👿', '💀', '☠️',
-      '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖', '😺', '😸',
-      // Gestures
-      '👍', '👎', '👊', '✊', '🤛', '🤜', '👏', '🙌', '👐', '🤲',
-      '🤝', '🙏', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆',
-      '👇', '☝️', '👋', '🤚', '🖐️', '✋', '🖖', '💪', '🦾', '🙏',
-      // Hearts & Symbols
-      '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔',
-      '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '☮️',
-      // Objects
-      '🔥', '💧', '🌟', '⭐', '✨', '💫', '🌈', '☀️', '🌤️', '⛅',
-      '🎉', '🎊', '🎈', '🎁', '🎀', '🎄', '🎃', '🎗️', '🎟️', '🎫',
-    ];
+    final category = _emojiCategories[_emojiCategoryIndex];
+    final emojis = category['emojis'] as List<String>;
 
     return Container(
-      height: 200,
+      height: 260,
       margin: const EdgeInsets.only(top: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF3D3D3D),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: GridView.builder(
-        padding: const EdgeInsets.all(8),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 8,
-          childAspectRatio: 1,
-        ),
-        itemCount: emojis.length,
-        itemBuilder: (context, index) {
-          return GestureDetector(
-            onTap: () {
-              // Insert emoji at cursor position
-              final text = _messageController.text;
-              final selection = _messageController.selection;
-              final cursorPos = selection.baseOffset >= 0 
-                  ? selection.baseOffset 
-                  : text.length;
-              
-              final newText = text.substring(0, cursorPos) + 
-                              emojis[index] + 
-                              text.substring(cursorPos);
-              
-              _messageController.text = newText;
-              _messageController.selection = TextSelection.collapsed(
-                offset: cursorPos + emojis[index].length,
-              );
-              
-              // Trigger text changed and rebuild UI
-              _onTextChanged(newText);
-              setState(() {}); // Force rebuild to update button visibility
-            },
-            child: Center(
-              child: Text(
-                emojis[index],
-                style: const TextStyle(fontSize: 24),
-              ),
+      child: Column(
+        children: [
+          // Category tabs
+          SizedBox(
+            height: 44,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              itemCount: _emojiCategories.length,
+              itemBuilder: (context, index) {
+                final cat = _emojiCategories[index];
+                final isSelected = index == _emojiCategoryIndex;
+                return GestureDetector(
+                  onTap: () => setState(() => _emojiCategoryIndex = index),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    decoration: BoxDecoration(
+                      color: isSelected ? const Color(0xFF6D28D9) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Center(
+                      child: Text(
+                        cat['icon'] as String,
+                        style: const TextStyle(fontSize: 20),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
-          );
-        },
+          ),
+          // Emoji grid
+          Expanded(
+            child: GridView.builder(
+              padding: const EdgeInsets.all(8),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 8,
+                childAspectRatio: 1,
+              ),
+              itemCount: emojis.length,
+              itemBuilder: (context, index) {
+                return GestureDetector(
+                  onTap: () {
+                    // Insert emoji at cursor position
+                    final text = _messageController.text;
+                    final selection = _messageController.selection;
+                    final cursorPos = selection.baseOffset >= 0 
+                        ? selection.baseOffset 
+                        : text.length;
+                    
+                    final newText = text.substring(0, cursorPos) + 
+                                    emojis[index] + 
+                                    text.substring(cursorPos);
+                    
+                    _messageController.text = newText;
+                    _messageController.selection = TextSelection.collapsed(
+                      offset: cursorPos + emojis[index].length,
+                    );
+                    
+                    // Trigger text changed and rebuild UI
+                    _onTextChanged(newText);
+                    setState(() {}); // Force rebuild to update button visibility
+                  },
+                  child: Center(
+                    child: Text(
+                      emojis[index],
+                      style: const TextStyle(fontSize: 24),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2434,61 +2812,64 @@ class _ChatScreenState extends State<ChatScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Row(
-          children: [
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: _getAvatarColor(),
-              child: Text(
-                widget.otherUser.initials,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+        title: GestureDetector(
+          onTap: () => _showUserProfile(),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: _getAvatarColor(),
+                child: Text(
+                  widget.otherUser.initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.otherUser.fullName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.otherUser.fullName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                  Text(
-                    _otherUserTyping
-                        ? 'typing...'
-                        : (_partnerStatus == 'online' 
-                            ? 'online' 
-                            : _partnerStatus == 'away'
-                                ? (_partnerLastSeen != null 
-                                    ? 'Last seen ${_formatLastSeen(_partnerLastSeen!)}' 
-                                    : 'away')
-                                : (_partnerLastSeen != null 
-                                    ? 'Last seen ${_formatLastSeen(_partnerLastSeen!)}' 
-                                    : 'offline')),
-                    style: TextStyle(
-                      color: _otherUserTyping
-                          ? const Color(0xFF4CAF50)
-                          : (_partnerStatus == 'online'
-                              ? const Color(0xFF4CAF50)
+                    Text(
+                      _otherUserTyping
+                          ? 'typing...'
+                          : (_partnerStatus == 'online' 
+                              ? 'online' 
                               : _partnerStatus == 'away'
-                                  ? const Color(0xFFFFC107)
-                                  : Colors.grey[600]),
-                      fontSize: 12,
-                      fontStyle: _otherUserTyping ? FontStyle.italic : FontStyle.normal,
+                                  ? (_partnerLastSeen != null 
+                                      ? 'Last seen ${_formatLastSeen(_partnerLastSeen!)}' 
+                                      : 'away')
+                                  : (_partnerLastSeen != null 
+                                      ? 'Last seen ${_formatLastSeen(_partnerLastSeen!)}' 
+                                      : 'offline')),
+                      style: TextStyle(
+                        color: _otherUserTyping
+                            ? const Color(0xFF4CAF50)
+                            : (_partnerStatus == 'online'
+                                ? const Color(0xFF4CAF50)
+                                : _partnerStatus == 'away'
+                                    ? const Color(0xFFFFC107)
+                                    : Colors.grey[600]),
+                        fontSize: 12,
+                        fontStyle: _otherUserTyping ? FontStyle.italic : FontStyle.normal,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
         actions: [
           // Video call button
@@ -2546,6 +2927,34 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Column(
             children: [
+              // Backend connectivity banner
+              if (!_isBackendAvailable)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  color: const Color(0xFFD32F2F),
+                  child: const Row(
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      ),
+                      SizedBox(width: 10),
+                      Text(
+                        'Server unavailable. Reconnecting...',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               // Messages list
               Expanded(
             child: _isLoading
@@ -2774,10 +3183,37 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                // Primary buttons row - aligned to the right
+                // Primary buttons row - toggle on left, Clear/Send on right
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
+                    // Show/Hide Actions toggle (only when emoji picker closed & keyboard hidden)
+                    if (!_showEmojiPicker && MediaQuery.of(context).viewInsets.bottom == 0)
+                      GestureDetector(
+                        onTap: () => setState(() => _showActionButtons = !_showActionButtons),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3D3D3D),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _showActionButtons ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
+                                color: Colors.white70,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _showActionButtons ? 'Hide' : 'Actions',
+                                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    const Spacer(),
                     // Clear button
                     ElevatedButton(
                       onPressed: () {
@@ -2814,152 +3250,158 @@ class _ChatScreenState extends State<ChatScreen> {
                 // Inline emoji picker (shown when active)
                 if (_showEmojiPicker)
                   _buildInlineEmojiPicker(),
-                // Action buttons (shown when emoji picker is closed AND keyboard is not visible)
-                // Wrapped in AnimatedSize for smooth transition when keyboard opens/closes
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOut,
-                  alignment: Alignment.topCenter,
-                  child: (!_showEmojiPicker && MediaQuery.of(context).viewInsets.bottom == 0)
-                    ? Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                        // Ring Doorbell
-                        ElevatedButton(
-                          onPressed: _ringDoorbell,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF8B5CF6), // Violet
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
-                          child: const Text('Ring Doorbell'),
-                        ),
-                        // Change Color
-                        ElevatedButton(
-                          onPressed: _changeColor,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFA855F7), // Purple
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
-                          child: const Text('Change Color'),
-                        ),
-                        // Reset Color button (only show when color has been changed)
-                        if (_showResetButton)
-                          ElevatedButton(
-                            onPressed: _resetColor,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: Colors.black87,
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6),
+                // Collapsible action buttons panel
+                // Only show when emoji picker is closed AND keyboard is not visible
+                if (!_showEmojiPicker && MediaQuery.of(context).viewInsets.bottom == 0) ...[
+                  // All action buttons (shown/hidden by toggle)
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    alignment: Alignment.topCenter,
+                    child: _showActionButtons
+                      ? Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              // Ring Doorbell
+                              ElevatedButton(
+                                onPressed: _ringDoorbell,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF8B5CF6),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                ),
+                                child: const Text('Ring Doorbell'),
                               ),
-                              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                            ),
-                            child: const Text('Reset Color'),
+                              // Change Color
+                              ElevatedButton(
+                                onPressed: _changeColor,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFA855F7),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                ),
+                                child: const Text('Change Color'),
+                              ),
+                              // Reset Color button (only show when color has been changed)
+                              if (_showResetButton)
+                                ElevatedButton(
+                                  onPressed: _resetColor,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: Colors.black87,
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  ),
+                                  child: const Text('Reset Color'),
+                                ),
+                              // Send File
+                              ElevatedButton(
+                                onPressed: _pickFile,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF10B981),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                ),
+                                child: const Text('Send File'),
+                              ),
+                              // Camera
+                              ElevatedButton(
+                                onPressed: _takePhoto,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF3B82F6),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                ),
+                                child: const Text('Camera'),
+                              ),
+                              // Voice Message
+                              ElevatedButton(
+                                onPressed: _showVoiceRecordingModal,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFEF4444),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                ),
+                                child: const Text('Voice Message'),
+                              ),
+                              // Auto-Translate
+                              ElevatedButton(
+                                onPressed: _toggleAutoTranslate,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _autoTranslate 
+                                      ? const Color(0xFF059669)
+                                      : const Color(0xFF0891B2),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                ),
+                                child: Text(_autoTranslate ? 'Translate: ON' : 'Translate: OFF'),
+                              ),
+                              // Show Timestamps
+                              ElevatedButton(
+                                onPressed: _toggleTimestamps,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _showTimestamps 
+                                      ? const Color(0xFF4F46E5)
+                                      : const Color(0xFF8B5CF6),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                ),
+                                child: Text(_showTimestamps ? 'Hide Timestamps' : 'Show Timestamps'),
+                              ),
+                              // Export Chat
+                              ElevatedButton(
+                                onPressed: _exportChat,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF6B7280),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                ),
+                                child: const Text('Export Chat'),
+                              ),
+                            ],
                           ),
-                        // Send File
-                        ElevatedButton(
-                          onPressed: _pickFile,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF10B981), // Green
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
-                          child: const Text('Send File'),
-                        ),
-                        // Camera
-                        ElevatedButton(
-                          onPressed: _takePhoto,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF3B82F6), // Blue
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
-                          child: const Text('Camera'),
-                        ),
-                        // Record Voice Message
-                        ElevatedButton(
-                          onPressed: _showVoiceRecordingModal,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFEF4444), // Red
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
-                          child: const Text('Voice Message'),
-                        ),
-                        // Auto-Translate
-                        ElevatedButton(
-                          onPressed: _toggleAutoTranslate,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _autoTranslate 
-                                ? const Color(0xFF059669)  // Green when ON
-                                : const Color(0xFF0891B2), // Cyan when OFF
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
-                          child: Text(_autoTranslate ? 'Translate: ON' : 'Translate: OFF'),
-                        ),
-                        // Show Timestamps
-                        ElevatedButton(
-                          onPressed: _toggleTimestamps,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _showTimestamps 
-                                ? const Color(0xFF4F46E5)  // Indigo when ON
-                                : const Color(0xFF8B5CF6), // Purple when OFF
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
-                          child: Text(_showTimestamps ? 'Hide Timestamps' : 'Show Timestamps'),
-                        ),
-                        // Export Chat
-                        ElevatedButton(
-                          onPressed: _exportChat,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF6B7280), // Gray
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
-                          child: const Text('Export Chat'),
-                        ),
-                      ],
-                    )
-                    : const SizedBox.shrink(),
-                ),
+                        )
+                      : const SizedBox.shrink(),
+                  ),
+                ],
               ],
             ),
           ),
@@ -4377,23 +4819,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// Toggle reaction (clear if already reacted with same emoji)
+  /// Toggle reaction (add or remove specific emoji, supports multiple reactions per user)
   void _toggleReaction(int messageId, String emoji) {
-    final userId = _currentUserId?.toString() ?? '';
-    final reactions = _messageReactions[messageId];
-    
-    // Check if current user has this reaction
-    final hasThisReaction = reactions?[emoji]?.contains(userId) ?? false;
-    
-    if (hasThisReaction) {
-      // User has this reaction, clear it
-      _socketService.clearReaction(messageId);
-      debugPrint('👆 Tapped reaction $emoji on message $messageId - clearing (user has this reaction)');
-    } else {
-      // User doesn't have this reaction, set it
-      _socketService.setReaction(messageId, emoji);
-      debugPrint('👆 Tapped reaction $emoji on message $messageId - setting (user adding reaction)');
-    }
+    // Backend set_reaction now handles toggle: if user has this emoji it removes it,
+    // if not it adds it. User can have multiple different emojis on same message.
+    _socketService.setReaction(messageId, emoji);
+    debugPrint('👆 Toggling reaction $emoji on message $messageId');
   }
 
   /// Show reaction picker for a message

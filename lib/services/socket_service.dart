@@ -89,6 +89,10 @@ class SocketService {
   bool get isConnected => _socket?.connected ?? false;
   int? get currentUserId => _currentUserId;
   
+  // Connection state callbacks for UI banners
+  Function(bool isConnected)? onConnectionChanged;
+  Function()? onReconnected;
+  
   /// Test connection status
   void testConnection() {
     debugPrint('=== Socket Connection Test ===');
@@ -161,6 +165,9 @@ class SocketService {
     // Connection events
     _socket!.on('connect', (_) {
       debugPrint('✅ Socket connected - ID: ${_socket!.id}');
+      // Notify listeners that connection is restored
+      onConnectionChanged?.call(true);
+      onReconnected?.call();
       // Join user's personal room for direct notifications
       if (_currentUserId != null) {
         debugPrint('Joining personal room: user_$_currentUserId');
@@ -176,6 +183,8 @@ class SocketService {
 
     _socket!.on('disconnect', (reason) {
       debugPrint('❌ Socket disconnected - Reason: $reason');
+      // Notify listeners that connection is lost
+      onConnectionChanged?.call(false);
       // If the server explicitly disconnected us (e.g., due to expired token)
       // trigger the auth error handler
       if (reason == 'io server disconnect') {
@@ -188,6 +197,8 @@ class SocketService {
 
     _socket!.on('connect_error', (error) {
       debugPrint('⚠️ Connection error: $error');
+      // Notify listeners that connection failed
+      onConnectionChanged?.call(false);
     });
 
     _socket!.on('error', (error) {

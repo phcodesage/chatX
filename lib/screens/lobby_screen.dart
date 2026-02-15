@@ -11,6 +11,7 @@ import 'chat_screen.dart';
 import 'connected_call_screen.dart';
 import 'task_list_screen.dart';
 import '../services/app_update_service.dart';
+import '../services/storage_service.dart';
 
 /// Lobby/Chat list screen
 class LobbyScreen extends StatefulWidget {
@@ -27,6 +28,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   List<LobbyUser> _lobbyUsers = [];
   List<LobbyUser> _filteredUsers = [];
   bool _isLoading = true;
+  bool _isBackendAvailable = true;
+  bool _isCurrentUserAdmin = false;
   LobbySortMode _sortMode = LobbySortMode.recentChats;
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
@@ -50,6 +53,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void initState() {
     super.initState();
     _loadLobby();
+    _loadAdminStatus();
     _searchController.addListener(_filterUsers);
     _setupRealtimeListeners();
     // Check for app updates after a short delay
@@ -62,6 +66,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted) setState(() {});
     });
+  }
+
+  Future<void> _loadAdminStatus() async {
+    final isAdmin = await StorageService.getIsAdmin();
+    if (mounted) {
+      setState(() => _isCurrentUserAdmin = isAdmin);
+    }
   }
 
   void _setupRealtimeListeners() {
@@ -109,6 +120,24 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _socketService.onCrossRoomCallOffer = (data) {
       _handleCrossRoomCallOffer(data);
     };
+
+    // Listen for backend connection state changes
+    _socketService.onConnectionChanged = (isConnected) {
+      if (mounted) {
+        setState(() => _isBackendAvailable = isConnected);
+      }
+    };
+
+    // Auto-reload lobby when backend reconnects
+    _socketService.onReconnected = () {
+      if (mounted) {
+        debugPrint('🔄 Backend reconnected - reloading lobby');
+        _loadLobby();
+      }
+    };
+
+    // Set initial state from current socket status
+    _isBackendAvailable = _socketService.isConnected;
   }
   
   /// Handle cross-room call offer from web client
@@ -611,6 +640,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _socketService.onVoiceMessageReceived = null;
     _socketService.onPresenceUpdate = null;
     _socketService.onPresenceSnapshot = null;
+    _socketService.onConnectionChanged = null;
+    _socketService.onReconnected = null;
     super.dispose();
   }
 
@@ -621,15 +652,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
       setState(() {
         _lobbyUsers = users;
         _isLoading = false;
+        _isBackendAvailable = true;
       });
       _filterUsers();
     } catch (e) {
-      setState(() => _isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading lobby: $e'), backgroundColor: Colors.red),
-        );
-      }
+      setState(() {
+        _isLoading = false;
+        _isBackendAvailable = false;
+      });
+      debugPrint('Error loading lobby: $e');
     }
   }
 
@@ -981,6 +1012,48 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
       body: Column(
         children: [
+          // Backend connectivity banner
+          if (!_isBackendAvailable)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              color: const Color(0xFFD32F2F),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Server unavailable. Reconnecting...',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: _loadLobby,
+                    child: const Text(
+                      'Retry',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // Search bar + sort button row
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -1274,6 +1347,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
+                      // Email (admin-only view)
+                      if (_isCurrentUserAdmin && user.email.isNotEmpty)
+                        Text(
+                          user.email,
+                          style: TextStyle(
+                            color: Colors.grey[500],
+                            fontSize: 11,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       const SizedBox(height: 2),
                       // Online/Away/Offline status with relative time
                       Text(
