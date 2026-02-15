@@ -21,10 +21,13 @@ class LobbyScreen extends StatefulWidget {
   State<LobbyScreen> createState() => _LobbyScreenState();
 }
 
+enum LobbySortMode { recentChats, onlineFirst, allUsers }
+
 class _LobbyScreenState extends State<LobbyScreen> {
   List<LobbyUser> _lobbyUsers = [];
   List<LobbyUser> _filteredUsers = [];
   bool _isLoading = true;
+  LobbySortMode _sortMode = LobbySortMode.recentChats;
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
@@ -617,9 +620,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       final users = await LobbyService.getLobbyUsers();
       setState(() {
         _lobbyUsers = users;
-        _filteredUsers = users;
         _isLoading = false;
       });
+      _filterUsers();
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
@@ -630,17 +633,73 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
+  /// Get the effective status tier: 0=online, 1=away/lastSeen, 2=offline
+  int _getStatusTier(LobbyUser user) {
+    if (user.isOnline || user.status == 'online') return 0;
+    if (user.status == 'away') return 1;
+    // Recently seen (within 24h) counts as "last seen" tier
+    if (user.lastSeen != null) {
+      try {
+        final lastSeenTime = _parseUtcTimestamp(user.lastSeen!);
+        final age = DateTime.now().difference(lastSeenTime);
+        if (age.inHours < 24) return 1;
+      } catch (_) {}
+    }
+    return 2;
+  }
+
+  /// Parse lastMessageTime to DateTime for sorting (returns epoch 0 if null)
+  DateTime _parseMessageTime(LobbyUser user) {
+    if (user.lastMessageTime == null) return DateTime.fromMillisecondsSinceEpoch(0);
+    try {
+      return _parseUtcTimestamp(user.lastMessageTime!);
+    } catch (_) {
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
+  }
+
   void _filterUsers() {
     final query = _searchController.text.toLowerCase();
     setState(() {
+      List<LobbyUser> filtered;
       if (query.isEmpty) {
-        _filteredUsers = _lobbyUsers;
+        filtered = List.from(_lobbyUsers);
       } else {
-        _filteredUsers = _lobbyUsers.where((user) {
+        filtered = _lobbyUsers.where((user) {
           return user.fullName.toLowerCase().contains(query) ||
               user.username.toLowerCase().contains(query);
         }).toList();
       }
+
+      switch (_sortMode) {
+        case LobbySortMode.recentChats:
+          // Sort by status tier first, then by most recent message within each tier
+          filtered.sort((a, b) {
+            final tierA = _getStatusTier(a);
+            final tierB = _getStatusTier(b);
+            if (tierA != tierB) return tierA.compareTo(tierB);
+            // Within same tier, sort by last message time (most recent first)
+            final timeA = _parseMessageTime(a);
+            final timeB = _parseMessageTime(b);
+            return timeB.compareTo(timeA);
+          });
+          break;
+        case LobbySortMode.onlineFirst:
+          // Sort purely by status tier, then alphabetically
+          filtered.sort((a, b) {
+            final tierA = _getStatusTier(a);
+            final tierB = _getStatusTier(b);
+            if (tierA != tierB) return tierA.compareTo(tierB);
+            return a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase());
+          });
+          break;
+        case LobbySortMode.allUsers:
+          // Alphabetical only
+          filtered.sort((a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()));
+          break;
+      }
+
+      _filteredUsers = filtered;
     });
   }
 
@@ -732,11 +791,159 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
+  String _sortModeLabel(LobbySortMode mode) {
+    switch (mode) {
+      case LobbySortMode.recentChats:
+        return 'Recent Chats';
+      case LobbySortMode.onlineFirst:
+        return 'Online First';
+      case LobbySortMode.allUsers:
+        return 'A-Z';
+    }
+  }
+
+  IconData _sortModeIcon(LobbySortMode mode) {
+    switch (mode) {
+      case LobbySortMode.recentChats:
+        return Icons.access_time;
+      case LobbySortMode.onlineFirst:
+        return Icons.circle;
+      case LobbySortMode.allUsers:
+        return Icons.sort_by_alpha;
+    }
+  }
+
+  void _cycleSortMode() {
+    setState(() {
+      switch (_sortMode) {
+        case LobbySortMode.recentChats:
+          _sortMode = LobbySortMode.onlineFirst;
+          break;
+        case LobbySortMode.onlineFirst:
+          _sortMode = LobbySortMode.allUsers;
+          break;
+        case LobbySortMode.allUsers:
+          _sortMode = LobbySortMode.recentChats;
+          break;
+      }
+    });
+    _filterUsers();
+  }
+
+  Widget _buildSectionHeader(String title, int count, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 6),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: TextStyle(
+              color: Colors.grey[400],
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '($count)',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShimmerTile() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF252542),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          // Avatar placeholder
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: Colors.grey[800],
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 120,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[800],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: 80,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[850],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  width: 160,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[850],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingShimmer() {
+    return ListView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: 8,
+      itemBuilder: (context, index) {
+        return AnimatedOpacity(
+          opacity: 1.0 - (index * 0.08),
+          duration: const Duration(milliseconds: 300),
+          child: _buildShimmerTile(),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Separate online and offline users
-    final onlineUsers = _filteredUsers.where((u) => u.isOnline).toList();
-    final offlineUsers = _filteredUsers.where((u) => !u.isOnline).toList();
+    // Separate into 3 tiers
+    final onlineUsers = _filteredUsers.where((u) => _getStatusTier(u) == 0).toList();
+    final lastSeenUsers = _filteredUsers.where((u) => _getStatusTier(u) == 1).toList();
+    final offlineUsers = _filteredUsers.where((u) => _getStatusTier(u) == 2).toList();
     
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A2E),
@@ -774,30 +981,68 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
       body: Column(
         children: [
-          // Search bar
+          // Search bar + sort button row
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: TextField(
-              controller: _searchController,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Search conversations...',
-                hintStyle: TextStyle(color: Colors.grey[500]),
-                prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
-                filled: true,
-                fillColor: const Color(0xFF252542),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Search conversations...',
+                      hintStyle: TextStyle(color: Colors.grey[500]),
+                      prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
+                      filled: true,
+                      fillColor: const Color(0xFF252542),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                  ),
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              ),
+                const SizedBox(width: 8),
+                // Sort/filter button
+                Material(
+                  color: const Color(0xFF252542),
+                  borderRadius: BorderRadius.circular(8),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: _cycleSortMode,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _sortModeIcon(_sortMode),
+                            color: const Color(0xFF00D9FF),
+                            size: 16,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _sortModeLabel(_sortMode),
+                            style: const TextStyle(
+                              color: Color(0xFF00D9FF),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           // User list
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator(color: Color(0xFF00D9FF)))
+                ? _buildLoadingShimmer()
                 : _filteredUsers.isEmpty
                     ? Center(
                         child: Text(
@@ -807,28 +1052,37 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           style: TextStyle(color: Colors.grey[500], fontSize: 16),
                         ),
                       )
-                    : ListView(
-                        children: [
-                          // Online users
-                          ...onlineUsers.map((user) => _buildUserTile(user, isOnlineSection: true)),
-                          // Offline section header
-                          if (offlineUsers.isNotEmpty) ...[
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              child: Text(
-                                'OFFLINE',
-                                style: TextStyle(
-                                  color: Colors.grey[500],
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 1.2,
-                                ),
+                    : RefreshIndicator(
+                        onRefresh: _loadLobby,
+                        color: const Color(0xFF00D9FF),
+                        backgroundColor: const Color(0xFF252542),
+                        child: _sortMode == LobbySortMode.allUsers
+                            // A-Z mode: flat list, no section headers
+                            ? ListView(
+                                children: [
+                                  ..._filteredUsers.map((user) => _buildUserTile(user, isOnlineSection: _getStatusTier(user) == 0)),
+                                ],
+                              )
+                            // Grouped mode: 3-tier sections
+                            : ListView(
+                                children: [
+                                  // Online section
+                                  if (onlineUsers.isNotEmpty) ...[
+                                    _buildSectionHeader('ONLINE', onlineUsers.length, const Color(0xFF4CAF50)),
+                                    ...onlineUsers.map((user) => _buildUserTile(user, isOnlineSection: true)),
+                                  ],
+                                  // Last Seen section
+                                  if (lastSeenUsers.isNotEmpty) ...[
+                                    _buildSectionHeader('LAST SEEN', lastSeenUsers.length, const Color(0xFFFFC107)),
+                                    ...lastSeenUsers.map((user) => _buildUserTile(user, isOnlineSection: false)),
+                                  ],
+                                  // Offline section
+                                  if (offlineUsers.isNotEmpty) ...[
+                                    _buildSectionHeader('OFFLINE', offlineUsers.length, Colors.grey),
+                                    ...offlineUsers.map((user) => _buildUserTile(user, isOnlineSection: false)),
+                                  ],
+                                ],
                               ),
-                            ),
-                            // Offline users
-                            ...offlineUsers.map((user) => _buildUserTile(user, isOnlineSection: false)),
-                          ],
-                        ],
                       ),
           ),
         ],
@@ -1050,23 +1304,45 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     ],
                   ),
                 ),
-                // Unread badge
-                if (user.unreadCount > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE91E63),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      user.unreadCount > 99 ? '99+' : '${user.unreadCount}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+                // Time + Unread badge column (WhatsApp style)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Last message time
+                    if (user.lastMessageTime != null)
+                      Text(
+                        _formatTime(user.lastMessageTime),
+                        style: TextStyle(
+                          color: user.unreadCount > 0
+                              ? const Color(0xFF00D9FF)
+                              : Colors.grey[500],
+                          fontSize: 11,
+                          fontWeight: user.unreadCount > 0
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
                       ),
-                    ),
-                  ),
+                    if (user.unreadCount > 0) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE91E63),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          user.unreadCount > 99 ? '99+' : '${user.unreadCount}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ),
