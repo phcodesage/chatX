@@ -2,7 +2,7 @@
 /// Change the baseUrl here to point to your backend server
 class ApiConfig {
   // Base URL for the API - change this to switch backends
-  static const String baseUrl = 'https://unprod.flask-meet.site';
+  static const String baseUrl = 'https://unprod.flask-meet.site/';
   
   // API endpoints
   static const String authPrefix = '/api/auth';
@@ -32,4 +32,13 @@ class ApiConfig {
   // App update endpoints
   static String get appVersionUrl => '$baseUrl$mobilePrefix/app-version';
   static String get appDownloadUrl => '$baseUrl$mobilePrefix/app-download';
+  
+  // Task endpoints
+  static String get tasksUrl => '$baseUrl$mobilePrefix/tasks';
+  static String getTaskUrl(int taskId) => '$baseUrl$mobilePrefix/tasks/$taskId';
+  static String getTaskCompleteUrl(int taskId) => '$baseUrl$mobilePrefix/tasks/$taskId/complete';
+  
+  // Excalidraw endpoints
+  static String get excalidrawBoardsUrl => '$baseUrl$mobilePrefix/excalidraw/boards';
+  static String getExcalidrawBoardUrl(String boardId) => '$baseUrl$mobilePrefix/excalidraw/boards/$boardId';
 }

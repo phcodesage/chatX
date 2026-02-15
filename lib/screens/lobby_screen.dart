@@ -9,6 +9,7 @@ import '../widgets/incoming_call_setup_modal.dart';
 import 'sign_in_page.dart';
 import 'chat_screen.dart';
 import 'connected_call_screen.dart';
+import 'task_list_screen.dart';
 import '../services/app_update_service.dart';
 
 /// Lobby/Chat list screen
@@ -751,6 +752,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.check_circle_outline, color: Colors.white70),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const TaskListScreen()),
+              );
+            },
+            tooltip: 'Tasks',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.white70),
             onPressed: _loadLobby,

@@ -13,6 +13,7 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/lobby_user.dart';
 import '../models/message.dart';
@@ -4140,19 +4141,27 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Open excalidraw link in browser
-  void _openExcalidrawLink(String content) {
+  void _openExcalidrawLink(String content) async {
     // Extract URL from content if needed
     final urlRegex = RegExp(r'https?://[^\s]+');
     final match = urlRegex.firstMatch(content);
     if (match != null) {
       final url = match.group(0);
-      // For now just show a message - would need url_launcher package
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Opening: $url'),
-          backgroundColor: const Color(0xFF420796),
-        ),
-      );
+      if (url != null) {
+        final uri = Uri.parse(url);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not open: $url'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      }
     }
   }
 

@@ -178,4 +178,169 @@ class MessageService {
       return {'success': false, 'error': e.toString()};
     }
   }
+
+  /// Get all tasks for the current user
+  static Future<List<Map<String, dynamic>>> getAllTasks() async {
+    try {
+      final token = await StorageService.getToken();
+      
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await http.get(
+        Uri.parse(ApiConfig.tasksUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(ApiConfig.connectionTimeout);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final tasks = data['tasks'] as List?;
+        return tasks?.cast<Map<String, dynamic>>() ?? [];
+      } else if (response.statusCode == 401) {
+        debugPrint('🔐 Token expired - redirecting to sign in');
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        throw Exception('Session expired');
+      } else {
+        debugPrint('Get tasks error - Status: ${response.statusCode}');
+        return []; // Return empty list if endpoint doesn't exist yet
+      }
+    } catch (e) {
+      debugPrint('Get all tasks error: $e');
+      return []; // Return empty list on error
+    }
+  }
+
+  /// Create a new task
+  static Future<Map<String, dynamic>?> createTask({
+    required String title,
+    String? description,
+    int? assignedToUserId,
+  }) async {
+    try {
+      final token = await StorageService.getToken();
+      
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await http.post(
+        Uri.parse(ApiConfig.tasksUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'title': title,
+          if (description != null) 'description': description,
+          if (assignedToUserId != null) 'assigned_to_user_id': assignedToUserId,
+        }),
+      ).timeout(ApiConfig.connectionTimeout);
+
+      if (response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        return data['task'] as Map<String, dynamic>?;
+      } else if (response.statusCode == 401) {
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        throw Exception('Session expired');
+      } else {
+        debugPrint('Create task error - Status: ${response.statusCode}');
+        return null;
+      }
+    } catch (e) {
+      debugPrint('Create task error: $e');
+      return null;
+    }
+  }
+
+  /// Complete a task
+  static Future<bool> completeTask(int taskId) async {
+    try {
+      final token = await StorageService.getToken();
+      
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await http.post(
+        Uri.parse(ApiConfig.getTaskCompleteUrl(taskId)),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(ApiConfig.connectionTimeout);
+
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('Complete task error: $e');
+      return false;
+    }
+  }
+
+  /// Delete a task
+  static Future<bool> deleteTask(int taskId) async {
+    try {
+      final token = await StorageService.getToken();
+      
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await http.delete(
+        Uri.parse(ApiConfig.getTaskUrl(taskId)),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(ApiConfig.connectionTimeout);
+
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('Delete task error: $e');
+      return false;
+    }
+  }
+
+  /// Get all excalidraw boards
+  static Future<List<Map<String, dynamic>>> getAllExcalidrawBoards() async {
+    try {
+      final token = await StorageService.getToken();
+      
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await http.get(
+        Uri.parse(ApiConfig.excalidrawBoardsUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(ApiConfig.connectionTimeout);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final boards = data['boards'] as List?;
+        return boards?.cast<Map<String, dynamic>>() ?? [];
+      } else if (response.statusCode == 401) {
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        throw Exception('Session expired');
+      } else {
+        debugPrint('Get excalidraw boards error - Status: ${response.statusCode}');
+        return [];
+      }
+    } catch (e) {
+      debugPrint('Get all excalidraw boards error: $e');
+      return [];
+    }
+  }
 }
