@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/storage_service.dart';
 import '../services/firebase_messaging_service.dart';
 import '../services/fcm_service.dart';
 import '../widgets/auth_scaffold.dart';
@@ -26,6 +27,23 @@ class _SignInPageState extends State<SignInPage> {
   bool _isLoading = false;
 
   @override
+  void initState() {
+    super.initState();
+    _loadRememberedCredentials();
+  }
+
+  Future<void> _loadRememberedCredentials() async {
+    final creds = await StorageService.getRememberedCredentials();
+    if (creds != null && mounted) {
+      setState(() {
+        _username.text = creds['username'] ?? '';
+        _password.text = creds['password'] ?? '';
+        remember = true;
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _username.dispose();
     _password.dispose();
@@ -45,6 +63,13 @@ class _SignInPageState extends State<SignInPage> {
 
     try {
       await AuthService.login(username: username, password: password);
+      
+      // Save or clear remembered credentials based on checkbox
+      if (remember) {
+        await StorageService.saveRememberedCredentials(username, password);
+      } else {
+        await StorageService.clearRememberedCredentials();
+      }
       
       // Send FCM token to backend after successful login
       final fcmToken = FirebaseMessagingService.instance.fcmToken;

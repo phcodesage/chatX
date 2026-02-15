@@ -6,6 +6,9 @@ class StorageService {
   static const String _tokenKey = 'auth_token';
   static const String _userIdKey = 'user_id';
   static const String _usernameKey = 'username';
+  static const String _rememberMeKey = 'remember_me';
+  static const String _rememberedUsernameKey = 'remembered_username';
+  static const String _rememberedPasswordKey = 'remembered_password';
 
   /// Save authentication token
   static Future<void> saveToken(String token) async {
@@ -70,7 +73,49 @@ class StorageService {
     }
   }
 
-  /// Clear all stored data (logout)
+  /// Save remembered credentials
+  static Future<void> saveRememberedCredentials(String username, String password) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_rememberMeKey, true);
+      await prefs.setString(_rememberedUsernameKey, username);
+      await prefs.setString(_rememberedPasswordKey, password);
+    } catch (e) {
+      debugPrint('Error saving remembered credentials: $e');
+    }
+  }
+
+  /// Get remembered credentials (returns null if not set)
+  static Future<Map<String, String>?> getRememberedCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rememberMe = prefs.getBool(_rememberMeKey) ?? false;
+      if (!rememberMe) return null;
+      final username = prefs.getString(_rememberedUsernameKey);
+      final password = prefs.getString(_rememberedPasswordKey);
+      if (username != null && password != null) {
+        return {'username': username, 'password': password};
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error getting remembered credentials: $e');
+      return null;
+    }
+  }
+
+  /// Clear remembered credentials
+  static Future<void> clearRememberedCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_rememberMeKey);
+      await prefs.remove(_rememberedUsernameKey);
+      await prefs.remove(_rememberedPasswordKey);
+    } catch (e) {
+      debugPrint('Error clearing remembered credentials: $e');
+    }
+  }
+
+  /// Clear all stored data (logout) — preserves remembered credentials
   static Future<void> clearAll() async {
     try {
       final prefs = await SharedPreferences.getInstance();
