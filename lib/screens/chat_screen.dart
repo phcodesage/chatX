@@ -949,15 +949,14 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     
-    // Only reset our bg color if we are the RECIPIENT (not the sender)
-    if (!isFromSelf) {
-      const defaultColor = Color(0xFF1E1E1E);
-      setState(() {
-        _headerColor = defaultColor;
-        _showResetButton = false;
-      });
-      _saveChatColor('#1E1E1E');
-    }
+    // Always reset bg color — whether incoming (other user resets) or
+    // cross-device (we reset from another device), our bg should update
+    const defaultColor = Color(0xFF1E1E1E);
+    setState(() {
+      _headerColor = defaultColor;
+      _showResetButton = false;
+    });
+    _saveChatColor('#1E1E1E');
     
     // Create system message
     final resetMessage = Message(
@@ -1596,11 +1595,9 @@ class _ChatScreenState extends State<ChatScreen> {
     // Persist the reset color
     _saveChatColor('#1E1E1E');
     
-    // Emit reset color event
-    _socketService.emit('change_color', {
+    // Emit reset color event (must be 'reset_color' so backend broadcasts to all devices)
+    _socketService.emit('reset_color', {
       'recipient_id': widget.otherUser.id,
-      'color': '#1E1E1E',
-      'sender_name': 'You',
     });
     
     // Add outgoing message about reset
