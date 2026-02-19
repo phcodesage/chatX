@@ -2,22 +2,40 @@ import 'package:flutter/material.dart';
 
 /// WhatsApp/Skype-style reaction picker
 /// Shows a horizontal row of quick emoji options + a "+" button to open full picker
-class ReactionPicker extends StatelessWidget {
+class ReactionPicker extends StatefulWidget {
   final Function(String emoji) onReactionSelected;
   final VoidCallback onClose;
   final VoidCallback? onMorePressed;
 
-  // Quick reaction emojis - common, well-supported emojis
-  static const List<String> emojis = [
+  // Default quick reaction emojis (10 total, scrollable)
+  static const List<String> _defaultEmojis = [
     '👍',
-    '❤️',
+    '💗',
     '😂',
-    '😮',
     '😢',
-    '😡',
     '🔥',
     '🎉',
+    '😍',
+    '😮',
+    '😡',
+    '🙏',
   ];
+  
+  // Custom emoji picked from expanded picker (replaces first position)
+  static String? _customFirstEmoji;
+  
+  // Get the current emojis list with custom emoji at first position if set
+  static List<String> get emojis {
+    if (_customFirstEmoji != null && !_defaultEmojis.contains(_customFirstEmoji)) {
+      return [_customFirstEmoji!, ..._defaultEmojis.take(9)];
+    }
+    return _defaultEmojis;
+  }
+  
+  // Set custom emoji at first position
+  static void setCustomFirstEmoji(String emoji) {
+    _customFirstEmoji = emoji;
+  }
 
   // Full emoji grid for the "+" expanded picker
   static const List<Map<String, dynamic>> emojiCategories = [
@@ -93,69 +111,7 @@ class ReactionPicker extends StatelessWidget {
   }) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2C2C2E),
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ...emojis.map((emoji) {
-              return GestureDetector(
-                onTap: () {
-                  onReactionSelected(emoji);
-                  onClose();
-                },
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 2),
-                  padding: const EdgeInsets.all(5),
-                  decoration: BoxDecoration(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    emoji,
-                    style: const TextStyle(fontSize: 22),
-                  ),
-                ),
-              );
-            }),
-            // "+" button to open full emoji picker
-            GestureDetector(
-              onTap: () {
-                onMorePressed?.call();
-              },
-              child: Container(
-                margin: const EdgeInsets.only(left: 2),
-                padding: const EdgeInsets.all(5),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF4A4A4C),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.add,
-                  color: Colors.white70,
-                  size: 22,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  State<ReactionPicker> createState() => _ReactionPickerState();
 
   /// Show the reaction picker as an overlay
   static void show({
@@ -186,79 +142,291 @@ class ReactionPicker extends StatelessWidget {
       final screenSize = MediaQuery.of(context).size;
 
       expandedOverlayEntry = OverlayEntry(
-        builder: (context) => Stack(
-          children: [
-            // Tap outside to close
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: removeOverlay,
-                behavior: HitTestBehavior.translucent,
-                child: Container(color: Colors.black54),
+        builder: (context) => Material(
+          type: MaterialType.transparency,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Tap outside to close
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: removeOverlay,
+                  behavior: HitTestBehavior.translucent,
+                  child: Container(color: Colors.black54),
+                ),
               ),
-            ),
-            // Expanded emoji picker centered on screen
-            Center(
-              child: _ExpandedReactionPicker(
-                onEmojiSelected: (emoji) {
-                  onReactionSelected(emoji);
-                  removeOverlay();
-                },
-                onClose: removeOverlay,
-                maxWidth: screenSize.width * 0.9,
+              // Expanded emoji picker centered on screen
+              Center(
+                child: _ExpandedReactionPicker(
+                  onEmojiSelected: (emoji) {
+                    // Add the picked emoji to quick reactions (first position)
+                    ReactionPicker.setCustomFirstEmoji(emoji);
+                    onReactionSelected(emoji);
+                    removeOverlay();
+                  },
+                  onClose: removeOverlay,
+                  maxWidth: screenSize.width * 0.9,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       );
 
       overlay.insert(expandedOverlayEntry!);
     }
 
-    // Calculate position to ensure picker stays on screen
-    final screenSize = MediaQuery.of(context).size;
+    // Calculate position to ensure picker stays on screen (full width)
     const pickerHeight = 52.0;
-    const pickerWidth = 340.0;
-
-    double left = position.dx - (pickerWidth / 2);
-    double top = position.dy - pickerHeight - 8;
-
-    final minLeft = 8.0;
-    final maxLeft = (screenSize.width - pickerWidth - 8).clamp(minLeft, screenSize.width);
-    left = left.clamp(minLeft, maxLeft);
-
-    if (top < 8) {
-      top = position.dy + 8;
+    const spacing = 12.0; // Space between picker and message
+    
+    // Position above the message bubble
+    double left = 0; // Full width
+    double top = position.dy - pickerHeight - spacing;
+    
+    // Ensure it stays on screen (with safe area consideration)
+    if (top < MediaQuery.of(context).padding.top + 8) {
+      // Not enough space above, position below instead
+      top = position.dy + spacing;
     }
-
+    
     overlayEntry = OverlayEntry(
-      builder: (context) => Stack(
-        children: [
-          // Tap outside to close
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: removeOverlay,
-              behavior: HitTestBehavior.translucent,
-              child: Container(color: Colors.transparent),
+      builder: (context) => Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Tap outside to close
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: removeOverlay,
+                behavior: HitTestBehavior.translucent,
+                child: Container(color: Colors.transparent),
+              ),
             ),
-          ),
-          // The picker itself
-          Positioned(
-            left: left,
-            top: top,
-            child: ReactionPicker(
-              onReactionSelected: (emoji) {
-                onReactionSelected(emoji);
-                removeOverlay();
-              },
-              onClose: removeOverlay,
-              onMorePressed: showExpandedPicker,
+            // The picker itself (full width)
+            Positioned(
+              left: left,
+              top: top,
+              right: 0,
+              child: ReactionPicker(
+                onReactionSelected: (emoji) {
+                  onReactionSelected(emoji);
+                  removeOverlay();
+                },
+                onClose: removeOverlay,
+                onMorePressed: showExpandedPicker,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
 
     overlay.insert(overlayEntry!);
+  }
+}
+
+class _ReactionPickerState extends State<ReactionPicker> with TickerProviderStateMixin {
+  late AnimationController _containerController;
+  late Animation<double> _containerScale;
+  late Animation<double> _containerFade;
+  
+  // Staggered animations for each emoji
+  late List<AnimationController> _emojiControllers;
+  late List<Animation<double>> _emojiAnimations;
+  
+  final Map<int, double> _emojiTapScales = {};
+
+  @override
+  void initState() {
+    super.initState();
+    
+    // Container animation
+    _containerController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+    _containerScale = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(parent: _containerController, curve: Curves.easeOutBack),
+    );
+    _containerFade = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _containerController, curve: Curves.easeOut),
+    );
+    
+    // Staggered emoji animations (7 = 6 emojis + 1 plus button)
+    final itemCount = ReactionPicker.emojis.length + 1;
+    _emojiControllers = List.generate(
+      itemCount,
+      (index) => AnimationController(
+        duration: const Duration(milliseconds: 300),
+        vsync: this,
+      ),
+    );
+    _emojiAnimations = _emojiControllers.map((controller) {
+      return Tween<double>(begin: 0.0, end: 1.0).animate(
+        CurvedAnimation(parent: controller, curve: Curves.easeOutBack),
+      );
+    }).toList();
+    
+    // Start animations with stagger
+    _startStaggeredAnimations();
+  }
+  
+  void _startStaggeredAnimations() async {
+    _containerController.forward();
+    
+    // Stagger each emoji with 40ms delay
+    for (int i = 0; i < _emojiControllers.length; i++) {
+      await Future.delayed(const Duration(milliseconds: 40));
+      if (mounted) {
+        _emojiControllers[i].forward();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _containerController.dispose();
+    for (final controller in _emojiControllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  void _onEmojiTapDown(int index) {
+    setState(() => _emojiTapScales[index] = 1.4);
+  }
+
+  void _onEmojiTapUp(int index) {
+    setState(() => _emojiTapScales[index] = 1.0);
+  }
+
+  void _onEmojiTapCancel(int index) {
+    setState(() => _emojiTapScales[index] = 1.0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final emojis = ReactionPicker.emojis;
+    final plusButtonIndex = emojis.length; // Index for the + button
+    
+    return AnimatedBuilder(
+      animation: _containerController,
+      builder: (context, child) => Transform.scale(
+        scale: _containerScale.value,
+        child: Opacity(
+          opacity: _containerFade.value.clamp(0.0, 1.0),
+          child: child,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: screenWidth,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2C2C2E),
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              // Scrollable emoji list (takes remaining space)
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ...emojis.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final emoji = entry.value;
+                        final tapScale = _emojiTapScales[index] ?? 1.0;
+                        
+                        return AnimatedBuilder(
+                          animation: _emojiAnimations[index],
+                          builder: (context, child) {
+                            final staggerScale = _emojiAnimations[index].value;
+                            return Transform.scale(
+                              scale: staggerScale * tapScale,
+                              child: Opacity(
+                                opacity: staggerScale.clamp(0.0, 1.0),
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: GestureDetector(
+                            onTapDown: (_) => _onEmojiTapDown(index),
+                            onTapUp: (_) => _onEmojiTapUp(index),
+                            onTapCancel: () => _onEmojiTapCancel(index),
+                            onTap: () {
+                              widget.onReactionSelected(emoji);
+                              widget.onClose();
+                            },
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 2),
+                              padding: const EdgeInsets.all(5),
+                              decoration: BoxDecoration(
+                                color: Colors.transparent,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                emoji,
+                                style: const TextStyle(fontSize: 24),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+              // Fixed "+" button on the right
+              AnimatedBuilder(
+                animation: _emojiAnimations[plusButtonIndex],
+                builder: (context, child) {
+                  final staggerScale = _emojiAnimations[plusButtonIndex].value;
+                  return Transform.scale(
+                    scale: staggerScale,
+                    child: Opacity(
+                      opacity: staggerScale.clamp(0.0, 1.0),
+                      child: child,
+                    ),
+                  );
+                },
+                child: GestureDetector(
+                  onTap: () {
+                    widget.onMorePressed?.call();
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(left: 8),
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4A4A4C),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.add,
+                      color: Colors.white70,
+                      size: 22,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

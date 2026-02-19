@@ -5223,35 +5223,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
     );
 
-    // Build the reaction button
-    final reactionButton = Builder(
-      builder: (BuildContext buttonContext) {
-        return GestureDetector(
-          onTap: () {
-            final RenderBox renderBox = buttonContext.findRenderObject() as RenderBox;
-            final position = renderBox.localToGlobal(Offset.zero);
-            final size = renderBox.size;
-            _showReactionPicker(
-              context,
-              message.id,
-              Offset(
-                position.dx + size.width / 2,
-                position.dy,
-              ),
-            );
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Icon(
-              Icons.sentiment_satisfied_alt_outlined,
-              color: Colors.white.withOpacity(0.6),
-              size: 22,
-            ),
-          ),
-        );
-      },
-    );
-
     // Wrap bubble with Column for reactions below (Column keeps pills in hit-test bounds)
     return Align(
       alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -5259,16 +5230,46 @@ class _ChatScreenState extends State<ChatScreen> {
         crossAxisAlignment: isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Row with bubble and reaction button
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // The bubble
-              bubbleWidget,
-              // For incoming (not sent by me): show reaction button on right
-              if (!isSentByMe) reactionButton,
-            ],
+          // Row with bubble and reaction button - wrapped in Builder to get row position
+          Builder(
+            builder: (BuildContext rowContext) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // The bubble
+                  bubbleWidget,
+                  // For incoming (not sent by me): show reaction button on right
+                  if (!isSentByMe)
+                    GestureDetector(
+                      onTap: () {
+                        // Get the position of the entire row (bubble + button)
+                        final RenderBox? renderBox = rowContext.findRenderObject() as RenderBox?;
+                        if (renderBox != null) {
+                          final position = renderBox.localToGlobal(Offset.zero);
+                          // Position picker above the bubble
+                          _showReactionPicker(
+                            context,
+                            message.id,
+                            Offset(
+                              0, // Full width from left
+                              position.dy, // Top of the message bubble row
+                            ),
+                          );
+                        }
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Icon(
+                          Icons.sentiment_satisfied_alt_outlined,
+                          color: Colors.white.withOpacity(0.6),
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
           
           // Reaction pills below bubble — tight against bubble bottom
