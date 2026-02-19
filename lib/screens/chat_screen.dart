@@ -4967,6 +4967,34 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Ensure emoji uses color presentation (appends U+FE0F if needed)
+  /// Characters like ❤ (U+2764) render as black text on Android without this.
+  String _ensureColorEmoji(String emoji) {
+    const variationSelector = '\uFE0F';
+    // Characters that need the variation selector for color rendering
+    const needsSelector = <int>{
+      0x2764, // ❤
+      0x2602, // ☂
+      0x2614, // ☔
+      0x263A, // ☺
+      0x2B50, // ⭐
+      0x2600, // ☀
+      0x2601, // ☁
+      0x260E, // ☎
+      0x2709, // ✉
+      0x270F, // ✏
+      0x2744, // ❄
+      0x2728, // ✨
+      0x2702, // ✂
+      0x26A1, // ⚡
+      0x2615, // ☕
+    };
+    if (emoji.isNotEmpty && needsSelector.contains(emoji.runes.first) && !emoji.contains(variationSelector)) {
+      return emoji + variationSelector;
+    }
+    return emoji;
+  }
+
   /// Build reaction pills for a message
   Widget _buildReactionPills(int messageId) {
     final reactions = _messageReactions[messageId];
@@ -4974,29 +5002,36 @@ class _ChatScreenState extends State<ChatScreen> {
       return const SizedBox.shrink();
     }
 
+    final currentUserStr = _currentUserId?.toString() ?? '';
     final pills = <Widget>[];
     reactions.forEach((emoji, users) {
       if (users.isNotEmpty) {
+        final iReacted = users.contains(currentUserStr);
+        final displayEmoji = _ensureColorEmoji(emoji);
         pills.add(
           GestureDetector(
-            onTap: () => _toggleReaction(messageId, emoji),
+            onTap: () => _showReactorsSheet(messageId),
             child: Container(
               margin: const EdgeInsets.only(right: 2),
               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
               decoration: BoxDecoration(
-                color: const Color(0xFF2C2C2E),
+                color: iReacted 
+                    ? const Color(0xFF3A3A5C) // Highlighted if you reacted
+                    : const Color(0xFF2C2C2E),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: Colors.white.withOpacity(0.15),
-                  width: 0.5,
+                  color: iReacted 
+                      ? const Color(0xFF6D28D9).withOpacity(0.5)
+                      : Colors.white.withOpacity(0.15),
+                  width: iReacted ? 1.0 : 0.5,
                 ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    emoji,
-                    style: const TextStyle(fontSize: 12),
+                    displayEmoji,
+                    style: const TextStyle(fontSize: 16),
                   ),
                   const SizedBox(width: 2),
                   Text(
@@ -5029,6 +5064,119 @@ class _ChatScreenState extends State<ChatScreen> {
     // if not it adds it. User can have multiple different emojis on same message.
     _socketService.setReaction(messageId, emoji);
     debugPrint('👆 Toggling reaction $emoji on message $messageId');
+  }
+
+  /// Show bottom sheet listing who reacted to a message (WhatsApp-style)
+  /// Tapping your own reaction row removes it.
+  void _showReactorsSheet(int messageId) {
+    final reactions = _messageReactions[messageId];
+    if (reactions == null || reactions.isEmpty) return;
+
+    final currentUserStr = _currentUserId?.toString() ?? '';
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Drag handle
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const Text(
+                  'Reactions',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ...reactions.entries.where((e) => e.value.isNotEmpty).map((entry) {
+                  final emoji = entry.key;
+                  final users = entry.value;
+                  final iReacted = users.contains(currentUserStr);
+                  return GestureDetector(
+                    onTap: iReacted
+                        ? () {
+                            // Remove your reaction and close sheet
+                            _toggleReaction(messageId, emoji);
+                            Navigator.of(ctx).pop();
+                          }
+                        : null,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                      margin: const EdgeInsets.only(bottom: 4),
+                      decoration: BoxDecoration(
+                        color: iReacted
+                            ? const Color(0xFF2A2A3E)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(_ensureColorEmoji(emoji), style: const TextStyle(fontSize: 24)),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  users.join(', '),
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 14,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 2,
+                                ),
+                                if (iReacted)
+                                  const Text(
+                                    'Tap to remove',
+                                    style: TextStyle(
+                                      color: Color(0xFF9B59B6),
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            '${users.length}',
+                            style: const TextStyle(
+                              color: Colors.white38,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// Show reaction picker for a message
