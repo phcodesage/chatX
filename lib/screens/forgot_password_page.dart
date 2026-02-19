@@ -87,7 +87,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           Center(
             child: TextButton(
               onPressed: () => Navigator.pushReplacementNamed(context, SignInPage.route),
-              child: const Text('Back to sign in'),
+              child: const Text('Back to sign in', style: TextStyle(color: Color(0xFF00E5FF))),
             ),
           )
         ],

@@ -113,7 +113,7 @@ class _SignInPageState extends State<SignInPage> {
             alignment: Alignment.centerRight,
             child: TextButton(
               onPressed: () => Navigator.pushNamed(context, ForgotPasswordPage.route),
-              child: const Text('Forgot password?'),
+              child: const Text('Forgot password?', style: TextStyle(color: Color(0xFF00E5FF))),
             ),
           ),
           const SizedBox(height: 8),
@@ -122,8 +122,11 @@ class _SignInPageState extends State<SignInPage> {
               Checkbox(
                 value: remember,
                 onChanged: (v) => setState(() => remember = v ?? false),
+                checkColor: Colors.white,
+                activeColor: const Color(0xFF00E5FF),
+                side: const BorderSide(color: Colors.white70),
               ),
-              const Text('Remember Me'),
+              const Text('Remember Me', style: TextStyle(color: Colors.white)),
             ],
           ),
           const SizedBox(height: 12),
@@ -140,10 +143,10 @@ class _SignInPageState extends State<SignInPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text("Don't have an account? "),
+              const Text("Don't have an account? ", style: TextStyle(color: Colors.white70)),
               TextButton(
                 onPressed: () => Navigator.pushReplacementNamed(context, RegisterPage.route),
-                child: const Text('Create one'),
+                child: const Text('Create one', style: TextStyle(color: Color(0xFF00E5FF))),
               ),
             ],
           )

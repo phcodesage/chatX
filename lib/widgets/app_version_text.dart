@@ -24,8 +24,9 @@ class AppVersionText extends StatelessWidget {
           child: Text(
             'v${info.version}',
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.35),
-              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.7),
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
             ),
             textAlign: TextAlign.center,
           ),

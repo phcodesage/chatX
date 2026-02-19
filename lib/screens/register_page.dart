@@ -131,10 +131,10 @@ class _RegisterPageState extends State<RegisterPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('Already have an account? '),
+              const Text('Already have an account? ', style: TextStyle(color: Colors.white70)),
               TextButton(
                 onPressed: () => Navigator.pushReplacementNamed(context, SignInPage.route),
-                child: const Text('Sign in'),
+                child: const Text('Sign in', style: TextStyle(color: Color(0xFF00E5FF))),
               )
             ],
           )
