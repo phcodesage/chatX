@@ -205,18 +205,17 @@ class CallService {
       // Create a completer to wait for call_initiated response
       final callInitiatedCompleter = Completer<Map<String, dynamic>>();
       
-      // Temporarily store the callback to listen for call_initiated
-      final previousCallback = _socketService.onCallInitiated;
-      _socketService.onCallInitiated = (data) {
+      // Register a temporary keyed listener for call_initiated
+      _socketService.addListener('callInitiated', '_call_initiate', (Map<String, dynamic> data) {
         debugPrint('✅ Received call_initiated response: $data');
         if (!callInitiatedCompleter.isCompleted) {
           _callId = data['id'] as int?;
           _callRoomId = data['call_room_id'] as String?;
           callInitiatedCompleter.complete(data);
         }
-        // Call the previous callback if it exists
-        previousCallback?.call(data);
-      };
+        // Remove the temporary listener after use
+        _socketService.removeListener('callInitiated', '_call_initiate');
+      });
 
       // Emit initiate_call event
       _socketService.emit('initiate_call', {

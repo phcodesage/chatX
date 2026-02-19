@@ -32,25 +32,27 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   @override
   void dispose() {
-    _socketService.clearCallbacks();
+    _socketService.removeListenersForKey('tasks');
     super.dispose();
   }
 
   void _setupSocketListeners() {
+    const key = 'tasks';
+
     // Listen for task added event
-    _socketService.onTaskAdded = (data) {
+    _socketService.addListener('taskAdded', key, (Map<String, dynamic> data) {
       _loadTasks(); // Refresh on any task change
-    };
+    });
 
     // Listen for task completed event
-    _socketService.onTaskCompleted = (data) {
+    _socketService.addListener('taskCompleted', key, (Map<String, dynamic> data) {
       _handleTaskCompleted(data);
-    };
+    });
 
     // Listen for task uncompleted event
-    _socketService.onTaskUncompleted = (data) {
+    _socketService.addListener('taskUncompleted', key, (Map<String, dynamic> data) {
       _handleTaskUncompleted(data);
-    };
+    });
   }
 
   void _handleTaskCompleted(Map<String, dynamic> data) {

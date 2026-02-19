@@ -273,13 +273,18 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _setupRealtimeListeners() {
-    // Listen for new messages
-    _socketService.onMessageReceived = (data) {
+    const key = 'chat';
+
+    // Listen for new messages (from other user)
+    _socketService.addListener('messageReceived', key, (Map<String, dynamic> data) {
       final message = Message.fromJson(data);
       
       // Only add if it's from the current conversation
       if (message.senderId == widget.otherUser.id || 
           message.recipientId == widget.otherUser.id) {
+        // Skip if this is our own message (we already have it optimistically)
+        if (message.senderId == _currentUserId) return;
+
         setState(() {
           _messages.insert(0, message);
           // Clear typing preview when message is received
@@ -315,10 +320,32 @@ class _ChatScreenState extends State<ChatScreen> {
           _scrollToBottom();
         }
       }
-    };
+    });
+
+    // Listen for message_sent (echoes our own messages from other devices)
+    _socketService.addListener('messageSent', key, (Map<String, dynamic> data) {
+      final recipientId = data['recipient_id'] as int?;
+      // Only process if this is for the current conversation
+      if (recipientId == widget.otherUser.id) {
+        final message = Message.fromJson(data);
+        // Avoid duplicating optimistic messages already in the list
+        final alreadyExists = _messages.any((m) =>
+          m.id == message.id ||
+          (m.senderId == message.senderId &&
+           m.content == message.content &&
+           (m.timestampMs - message.timestampMs).abs() < 3000));
+        if (!alreadyExists) {
+          setState(() {
+            _messages.insert(0, message);
+          });
+          _scrollToBottom();
+          debugPrint('📤 Cross-device: added own sent message to chat');
+        }
+      }
+    });
 
     // Listen for typing indicator (includes live typing preview)
-    _socketService.onUserTyping = (data) {
+    _socketService.addListener('userTyping', key, (Map<String, dynamic> data) {
       if (data['user_id'] == widget.otherUser.id) {
         setState(() {
           final isTyping = data['is_typing'] ?? false;
@@ -336,10 +363,10 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         });
       }
-    };
+    });
 
     // Listen for live typing preview (separate event if used)
-    _socketService.onTypingUpdate = (data) {
+    _socketService.addListener('typingUpdate', key, (Map<String, dynamic> data) {
       if (data['user_id'] == widget.otherUser.id || 
           data['sender_id'] == widget.otherUser.id) {
         final preview = data['message'] ?? '';
@@ -348,91 +375,112 @@ class _ChatScreenState extends State<ChatScreen> {
           _typingPreview = preview;
         });
       }
-    };
+    });
 
     // Listen for joined chat confirmation
-    _socketService.onJoinedChat = (data) {
+    _socketService.addListener('joinedChat', key, (Map<String, dynamic> data) {
       debugPrint('Successfully joined chat with ${widget.otherUser.fullName}');
-    };
+    });
 
-    // Listen for doorbell rings
-    _socketService.onDoorbellRing = (data) {
-      if (data['sender_id'] == widget.otherUser.id) {
+    // Listen for doorbell rings (from other user OR from self on another device)
+    _socketService.addListener('doorbellRing', key, (Map<String, dynamic> data) {
+      final senderId = data['sender_id'] as int?;
+      final recipientId = data['recipient_id'] as int?;
+      if (senderId == widget.otherUser.id) {
         _handleIncomingDoorbell(data);
+      } else if (senderId == _currentUserId && recipientId == widget.otherUser.id) {
+        // Cross-device: our other device rang the doorbell — show outgoing system message
+        _handleOutgoingDoorbellSync(data);
       }
-    };
+    });
 
-    // Listen for color change events
-    _socketService.onColorChanged = (data) {
-      if (data['sender_id'] == widget.otherUser.id) {
+    // Listen for color change events (from other user OR from self on another device)
+    _socketService.addListener('colorChanged', key, (Map<String, dynamic> data) {
+      final senderId = data['sender_id'] as int?;
+      if (senderId == widget.otherUser.id || senderId == _currentUserId) {
         _handleColorChange(data);
       }
-    };
+    });
 
-    // Listen for color reset events
-    _socketService.onColorReset = (data) {
-      if (data['sender_id'] == widget.otherUser.id) {
+    // Listen for color reset events (from other user OR from self on another device)
+    _socketService.addListener('colorReset', key, (Map<String, dynamic> data) {
+      final senderId = data['sender_id'] as int?;
+      if (senderId == widget.otherUser.id || senderId == _currentUserId) {
         _handleColorReset(data);
       }
-    };
+    });
 
     // Listen for all messages deleted event
-    _socketService.onAllMessagesDeleted = (data) {
+    _socketService.addListener('allMessagesDeleted', key, (Map<String, dynamic> data) {
       _handleAllMessagesDeleted(data);
-    };
+    });
 
     // Listen for single message deleted event
-    _socketService.onMessageDeleted = (data) {
+    _socketService.addListener('messageDeleted', key, (Map<String, dynamic> data) {
       _handleMessageDeleted(data);
-    };
+    });
 
     // Listen for message edited event
-    _socketService.onMessageEdited = (data) {
+    _socketService.addListener('messageEdited', key, (Map<String, dynamic> data) {
       _handleMessageEdited(data);
-    };
+    });
 
     // Listen for task added event
-    _socketService.onTaskAdded = (data) {
+    _socketService.addListener('taskAdded', key, (Map<String, dynamic> data) {
       _handleTaskAdded(data);
-    };
+    });
 
     // Listen for task completed event
-    _socketService.onTaskCompleted = (data) {
+    _socketService.addListener('taskCompleted', key, (Map<String, dynamic> data) {
       _handleTaskCompleted(data);
-    };
+    });
 
     // Listen for task uncompleted event
-    _socketService.onTaskUncompleted = (data) {
+    _socketService.addListener('taskUncompleted', key, (Map<String, dynamic> data) {
       _handleTaskUncompleted(data);
-    };
+    });
 
     // Listen for excalidraw pinned event
-    _socketService.onExcalidrawPinned = (data) {
+    _socketService.addListener('excalidrawPinned', key, (Map<String, dynamic> data) {
       _handleExcalidrawPinned(data);
-    };
+    });
 
     // Listen for excalidraw unpinned event
-    _socketService.onExcalidrawUnpinned = (data) {
+    _socketService.addListener('excalidrawUnpinned', key, (Map<String, dynamic> data) {
       _handleExcalidrawUnpinned(data);
-    };
+    });
 
     // Listen for message status updates (delivered/seen)
-    _socketService.onMessageStatusUpdated = (data) {
+    _socketService.addListener('messageStatusUpdated', key, (Map<String, dynamic> data) {
       _handleMessageStatusUpdate(data);
-    };
+    });
 
     // Listen for messages read notifications
-    _socketService.onMessagesRead = (data) {
+    _socketService.addListener('messagesRead', key, (Map<String, dynamic> data) {
       _handleMessagesRead(data);
-    };
+    });
 
     // Listen for file messages from web
-    _socketService.onFileReceived = (data) {
+    _socketService.addListener('fileReceived', key, (Map<String, dynamic> data) {
       debugPrint('📎 File message received in chat: $data');
-      // Only process if it's from the current conversation partner
-      if (data['sender_id'] == widget.otherUser.id) {
+      final senderId = data['sender_id'] as int?;
+      final recipientId = data['recipient_id'] as int?;
+      
+      // Process if from conversation partner OR from current user (cross-device sync)
+      final isFromPartner = senderId == widget.otherUser.id;
+      final isFromSelfToPartner = senderId == _currentUserId && recipientId == widget.otherUser.id;
+      
+      if (isFromPartner || isFromSelfToPartner) {
         final now = DateTime.now();
         final timestampMs = data['timestamp_ms'] ?? now.millisecondsSinceEpoch;
+        
+        // Check for duplicates (cross-device sync may send same message twice)
+        final messageId = data['message_id'];
+        if (messageId != null && _messages.any((m) => m.id == messageId)) {
+          debugPrint('📎 Skipping duplicate file message: $messageId');
+          return;
+        }
+        
         // Detect audio files as voice messages
         final fileType = (data['file_type'] as String?) ?? '';
         final msgType = (data['message_type'] as String?) ?? '';
@@ -448,9 +496,9 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         // Create a message from the file data
         final message = Message(
-          id: data['message_id'] ?? timestampMs,
-          senderId: data['sender_id'],
-          recipientId: _currentUserId ?? 0,
+          id: messageId ?? timestampMs,
+          senderId: senderId ?? 0,
+          recipientId: recipientId ?? _currentUserId ?? 0,
           content: data['file_name'] ?? 'File',
           messageType: messageType,
           timestamp: now.toIso8601String(),
@@ -470,23 +518,33 @@ class _ChatScreenState extends State<ChatScreen> {
           _messages.insert(0, message);
         });
         
-        // Play message sound
-        try {
-          _audioPlayer.play(AssetSource('sounds/splat2.m4a'));
-        } catch (e) {
-          debugPrint('Error playing message sound: $e');
+        // Play message sound only for incoming messages from partner
+        if (isFromPartner) {
+          try {
+            _audioPlayer.play(AssetSource('sounds/splat2.m4a'));
+          } catch (e) {
+            debugPrint('Error playing message sound: $e');
+          }
+        } else {
+          debugPrint('📎 Cross-device: added own sent file to chat');
         }
         
         // Scroll to bottom
         _scrollToBottom();
       }
-    };
+    });
 
     // Listen for voice messages from web
-    _socketService.onVoiceMessageReceived = (data) {
+    _socketService.addListener('voiceMessageReceived', key, (Map<String, dynamic> data) {
       debugPrint('🎤 Voice message received in chat: $data');
-      // Only process if it's from the current conversation partner
-      if (data['sender_id'] == widget.otherUser.id) {
+      final senderId = data['sender_id'] as int?;
+      final recipientId = data['recipient_id'] as int?;
+      
+      // Process if from conversation partner OR from current user (cross-device sync)
+      final isFromPartner = senderId == widget.otherUser.id;
+      final isFromSelfToPartner = senderId == _currentUserId && recipientId == widget.otherUser.id;
+      
+      if (isFromPartner || isFromSelfToPartner) {
         final now = DateTime.now();
         final timestampMs = data['timestamp_ms'] ?? now.millisecondsSinceEpoch;
         final audioUrl = data['audio_url'] as String?;
@@ -494,14 +552,22 @@ class _ChatScreenState extends State<ChatScreen> {
           debugPrint('🎤 Voice message has no audio_url, ignoring');
           return;
         }
+        
+        // Check for duplicates (cross-device sync may send same message twice)
+        final messageId = data['message_id'];
+        if (messageId != null && _messages.any((m) => m.id == messageId)) {
+          debugPrint('🎤 Skipping duplicate voice message: $messageId');
+          return;
+        }
+        
         // Build full URL if it's a relative path
         final fullAudioUrl = audioUrl.startsWith('http')
             ? audioUrl
             : '${ApiConfig.baseUrl}$audioUrl';
         final message = Message(
-          id: data['message_id'] ?? timestampMs,
-          senderId: data['sender_id'],
-          recipientId: _currentUserId ?? 0,
+          id: messageId ?? timestampMs,
+          senderId: senderId ?? 0,
+          recipientId: recipientId ?? _currentUserId ?? 0,
           content: 'Voice message',
           messageType: 'voice',
           timestamp: now.toIso8601String(),
@@ -520,30 +586,34 @@ class _ChatScreenState extends State<ChatScreen> {
           _messages.insert(0, message);
         });
         
-        // Play message sound
-        try {
-          _audioPlayer.play(AssetSource('sounds/splat2.m4a'));
-        } catch (e) {
-          debugPrint('Error playing message sound: $e');
+        // Play message sound only for incoming messages from partner
+        if (isFromPartner) {
+          try {
+            _audioPlayer.play(AssetSource('sounds/splat2.m4a'));
+          } catch (e) {
+            debugPrint('Error playing message sound: $e');
+          }
+        } else {
+          debugPrint('🎤 Cross-device: added own sent voice message to chat');
         }
         
         // Scroll to bottom
         _scrollToBottom();
       }
-    };
+    });
 
     // Listen for incoming calls (while in chat)
-    _socketService.onIncomingCall = (data) {
+    _socketService.addListener('incomingCall', key, (Map<String, dynamic> data) {
       _handleIncomingCallInChat(data);
-    };
+    });
     
     // Listen for cross-room call offers (from web client)
-    _socketService.onCrossRoomCallOffer = (data) {
+    _socketService.addListener('crossRoomCallOffer', key, (Map<String, dynamic> data) {
       _handleCrossRoomCallOfferInChat(data);
-    };
+    });
     
     // Listen for reaction updates (multi-reaction: user can have multiple different emojis)
-    _socketService.onReactionUpdated = (data) {
+    _socketService.addListener('reactionUpdated', key, (Map<String, dynamic> data) {
       debugPrint('👍 Reaction updated received: $data');
       final messageId = data['message_id'] as int?;
       final reactorId = data['user_id']?.toString() ?? '';
@@ -557,9 +627,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _messageReactions[messageId]![reaction]!.add(reactorId);
         });
       }
-    };
+    });
     
-    _socketService.onReactionCleared = (data) {
+    _socketService.addListener('reactionCleared', key, (Map<String, dynamic> data) {
       debugPrint('❌ Reaction cleared received: $data');
       final messageId = data['message_id'] as int?;
       final reactorId = data['user_id']?.toString() ?? '';
@@ -588,10 +658,10 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         });
       }
-    };
+    });
     
     // Listen for presence updates (status changes)
-    _socketService.onPresenceUpdate = (data) {
+    _socketService.addListener('presenceUpdate', key, (Map<String, dynamic> data) {
       debugPrint('👤 Presence update in chat: $data');
       final userId = data['user_id'] as int?;
       final status = data['status'] as String?;
@@ -606,14 +676,15 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         });
       }
-    };
+    });
 
     // Listen for backend connection state changes
-    _socketService.onConnectionChanged = (isConnected) {
+    _socketService.addListener('connectionChanged', key, (Map<String, dynamic> data) {
+      final isConnected = data['connected'] as bool;
       if (mounted) {
         setState(() => _isBackendAvailable = isConnected);
       }
-    };
+    });
 
     // Set initial state from current socket status
     _isBackendAvailable = _socketService.isConnected;
@@ -923,6 +994,48 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // Scroll to bottom to show the notification
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+    });
+  }
+
+  /// Cross-device sync: show outgoing doorbell system message when we rang from another device
+  void _handleOutgoingDoorbellSync(Map<String, dynamic> data) {
+    final timestampMs = data['timestamp_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch;
+    
+    // Check for duplicates
+    final alreadyExists = _messages.any((msg) => 
+      msg.messageType == 'system' && 
+      msg.timestampMs == timestampMs &&
+      (msg.content.contains('sent a notification') || msg.content.contains('Sent a notification'))
+    );
+    
+    if (alreadyExists) {
+      debugPrint('🔔 Cross-device doorbell already exists, skipping duplicate');
+      return;
+    }
+    
+    debugPrint('🔔 Cross-device: showing outgoing doorbell in chat');
+    
+    final doorbellMessage = Message(
+      id: timestampMs,
+      senderId: _currentUserId!,
+      recipientId: widget.otherUser.id,
+      content: 'Sent a notification',
+      messageType: 'system',
+      timestamp: DateTime.now().toIso8601String(),
+      timestampMs: timestampMs,
+      isRead: true,
+      status: 'sent',
+      threadId: 'thread_${_currentUserId}_${widget.otherUser.id}',
+      reactions: {},
+      isDeleted: false,
+    );
+
+    setState(() {
+      _messages.insert(0, doorbellMessage);
+    });
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom();
     });
@@ -2782,20 +2895,8 @@ class _ChatScreenState extends State<ChatScreen> {
     // Clear active chat so FCM notifications resume for this user
     FirebaseMessagingService.instance.activeChatUserId = null;
     
-    // Clear callbacks
-    _socketService.onMessageReceived = null;
-    _socketService.onUserTyping = null;
-    _socketService.onTypingUpdate = null;
-    _socketService.onJoinedChat = null;
-    _socketService.onDoorbellRing = null;
-    _socketService.onColorChanged = null;
-    _socketService.onMessageDeleted = null;
-    _socketService.onMessageEdited = null;
-    _socketService.onTaskAdded = null;
-    _socketService.onTaskCompleted = null;
-    _socketService.onTaskUncompleted = null;
-    _socketService.onExcalidrawPinned = null;
-    _socketService.onExcalidrawUnpinned = null;
+    // Clear all chat socket listeners (does NOT affect lobby listeners)
+    _socketService.removeListenersForKey('chat');
     
     super.dispose();
   }

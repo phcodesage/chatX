@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_version_text.dart';
 
 /// Shared scaffold widget for authentication screens
 class AuthScaffold extends StatelessWidget {
@@ -61,6 +62,12 @@ class AuthScaffold extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
+            const Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Center(child: AppVersionText()),
             ),
           ],
         ),

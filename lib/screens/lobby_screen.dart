@@ -4,6 +4,7 @@ import '../models/lobby_user.dart';
 import '../services/lobby_service.dart';
 import '../services/auth_service.dart';
 import '../services/socket_service.dart';
+import '../widgets/app_version_text.dart';
 import '../services/call_service.dart';
 import '../widgets/incoming_call_setup_modal.dart';
 import 'sign_in_page.dart';
@@ -76,65 +77,68 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _setupRealtimeListeners() {
+    const key = 'lobby';
+
     // Listen for doorbell rings
-    _socketService.onDoorbellRing = (data) {
+    _socketService.addListener('doorbellRing', key, (Map<String, dynamic> data) {
       _handleDoorbellRing(data);
-    };
+    });
 
     // Listen for new messages (incoming)
-    _socketService.onMessageReceived = (data) {
+    _socketService.addListener('messageReceived', key, (Map<String, dynamic> data) {
       _handleNewMessage(data);
-    };
+    });
 
     // Listen for sent messages (outgoing from current user)
-    _socketService.onMessageSent = (data) {
+    _socketService.addListener('messageSent', key, (Map<String, dynamic> data) {
       _handleSentMessage(data);
-    };
+    });
 
     // Listen for file messages (incoming files from web)
-    _socketService.onFileReceived = (data) {
+    _socketService.addListener('fileReceived', key, (Map<String, dynamic> data) {
       _handleFileMessage(data);
-    };
+    });
 
     // Listen for voice messages (incoming voice from web)
-    _socketService.onVoiceMessageReceived = (data) {
+    _socketService.addListener('voiceMessageReceived', key, (Map<String, dynamic> data) {
       _handleVoiceMessage(data);
-    };
+    });
 
     // Listen for presence updates
-    _socketService.onPresenceUpdate = (data) {
+    _socketService.addListener('presenceUpdate', key, (Map<String, dynamic> data) {
       _updateUserPresence(data);
-    };
+    });
 
     // Listen for presence snapshot (initial state on connect)
-    _socketService.onPresenceSnapshot = (contacts) {
+    _socketService.addListener('presenceSnapshot', key, (List<dynamic> contacts) {
       _handlePresenceSnapshot(contacts);
-    };
+    });
 
     // Listen for incoming calls (global handler)
-    _socketService.onIncomingCall = (data) {
+    _socketService.addListener('incomingCall', key, (Map<String, dynamic> data) {
       _handleIncomingCall(data);
-    };
+    });
     
     // Listen for cross-room call offers (from web client)
-    _socketService.onCrossRoomCallOffer = (data) {
+    _socketService.addListener('crossRoomCallOffer', key, (Map<String, dynamic> data) {
       _handleCrossRoomCallOffer(data);
-    };
+    });
 
     // Listen for backend connection state changes
-    _socketService.onConnectionChanged = (isConnected) {
+    _socketService.addListener('connectionChanged', key, (Map<String, dynamic> data) {
+      final isConnected = data['connected'] as bool;
       if (mounted) {
         setState(() => _isBackendAvailable = isConnected);
       }
-    };
+    });
 
     // Auto-reload lobby when backend reconnects
-    _socketService.onReconnected = () {
+    _socketService.addListener('reconnected', key, () {
       if (mounted) {
         debugPrint('🔄 Backend reconnected - reloading lobby');
         _loadLobby();
       }
-    };
+    });
 
     // Set initial state from current socket status
     _isBackendAvailable = _socketService.isConnected;
@@ -346,8 +350,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              // Clear doorbell listener before navigating to chat
-              _socketService.onDoorbellRing = null;
               // Navigate to chat with this user
               Navigator.push(
                 context,
@@ -632,16 +634,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void dispose() {
     _searchController.dispose();
     _lastSeenRefreshTimer?.cancel();
-    // Clear socket callbacks to prevent memory leaks
-    _socketService.onDoorbellRing = null;
-    _socketService.onMessageReceived = null;
-    _socketService.onMessageSent = null;
-    _socketService.onFileReceived = null;
-    _socketService.onVoiceMessageReceived = null;
-    _socketService.onPresenceUpdate = null;
-    _socketService.onPresenceSnapshot = null;
-    _socketService.onConnectionChanged = null;
-    _socketService.onReconnected = null;
+    // Clear all lobby socket listeners to prevent memory leaks
+    _socketService.removeListenersForKey('lobby');
     super.dispose();
   }
 
@@ -1158,6 +1152,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                               ),
                       ),
           ),
+          const AppVersionText(),
         ],
       ),
     );
