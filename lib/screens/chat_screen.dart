@@ -500,6 +500,12 @@ class _ChatScreenState extends State<ChatScreen> {
         } else {
           messageType = 'file';
         }
+        // Build full URL if it's a relative path
+        final rawFileUrl = data['file_url'] as String? ?? '';
+        final fullFileUrl = rawFileUrl.startsWith('http')
+            ? rawFileUrl
+            : '${ApiConfig.baseUrl}$rawFileUrl';
+        
         // Create a message from the file data
         final message = Message(
           id: messageId ?? timestampMs,
@@ -514,7 +520,7 @@ class _ChatScreenState extends State<ChatScreen> {
           threadId: '',
           reactions: {},
           isDeleted: false,
-          fileUrl: data['file_url'],
+          fileUrl: fullFileUrl,
           fileName: data['file_name'],
           fileType: data['file_type'],
           fileSize: data['file_size'],
@@ -549,6 +555,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // Process if from conversation partner OR from current user (cross-device sync)
       final isFromPartner = senderId == widget.otherUser.id;
       final isFromSelfToPartner = senderId == _currentUserId && recipientId == widget.otherUser.id;
+      debugPrint('🎤 Voice filter: senderId=$senderId, recipientId=$recipientId, _currentUserId=$_currentUserId, otherUserId=${widget.otherUser.id}, isFromPartner=$isFromPartner, isFromSelfToPartner=$isFromSelfToPartner');
       
       if (isFromPartner || isFromSelfToPartner) {
         final now = DateTime.now();
@@ -2752,30 +2759,37 @@ class _ChatScreenState extends State<ChatScreen> {
         // NOTE: The REST API upload already emits file_message to the recipient,
         // so we do NOT emit send_file here to avoid duplicate messages on the web.
 
-        // Create local message to show in chat
-        final now = DateTime.now();
-        final message = Message(
-          id: fileData['message_id'] ?? DateTime.now().millisecondsSinceEpoch,
-          senderId: _currentUserId!,
-          recipientId: widget.otherUser.id,
-          content: fileName,
-          messageType: 'voice',
-          timestamp: now.toIso8601String(),
-          timestampMs: now.millisecondsSinceEpoch,
-          isRead: false,
-          status: 'sent',
-          threadId: '',
-          reactions: {},
-          isDeleted: false,
-          fileUrl: fileData['file_url'] ?? fileData['url'],
-          fileName: fileName,
-          fileType: 'audio/mp4',
-          fileSize: file.lengthSync(),
-        );
+        // Check if the fileReceived socket handler already added this message
+        // (race condition: socket event can arrive before REST response)
+        final serverId = fileData['message_id'];
+        if (serverId != null && _messages.any((m) => m.id == serverId)) {
+          debugPrint('🎤 Voice message already added by socket handler, skipping local insert');
+        } else {
+          // Create local message to show in chat
+          final now = DateTime.now();
+          final message = Message(
+            id: serverId ?? DateTime.now().millisecondsSinceEpoch,
+            senderId: _currentUserId!,
+            recipientId: widget.otherUser.id,
+            content: fileName,
+            messageType: 'voice',
+            timestamp: now.toIso8601String(),
+            timestampMs: now.millisecondsSinceEpoch,
+            isRead: false,
+            status: 'sent',
+            threadId: '',
+            reactions: {},
+            isDeleted: false,
+            fileUrl: fileData['file_url'] ?? fileData['url'],
+            fileName: fileName,
+            fileType: 'audio/mp4',
+            fileSize: file.lengthSync(),
+          );
 
-        setState(() {
-          _messages.insert(0, message);
-        });
+          setState(() {
+            _messages.insert(0, message);
+          });
+        }
 
         // Scroll to bottom
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2865,32 +2879,39 @@ class _ChatScreenState extends State<ChatScreen> {
         // avoid duplicate messages. Cross-device sync is handled by the REST
         // endpoint emitting to the sender's room as well.
 
-        // Create local message to show in chat
-        // Use server message_id so the fileReceived dedup check catches the echo
-        final now = DateTime.now();
-        final message = Message(
-          id: fileData['message_id'] ?? DateTime.now().millisecondsSinceEpoch,
-          senderId: _currentUserId!,
-          recipientId: widget.otherUser.id,
-          content: fileName,
-          messageType: mimeType.startsWith('image/') ? 'image' : 
-                       mimeType.startsWith('video/') ? 'video' : 'file',
-          timestamp: now.toIso8601String(),
-          timestampMs: now.millisecondsSinceEpoch,
-          isRead: false,
-          status: 'sent',
-          threadId: '',
-          reactions: {},
-          isDeleted: false,
-          fileUrl: fileData['file_url'] ?? fileData['url'],
-          fileName: fileName,
-          fileType: mimeType,
-          fileSize: file.lengthSync(),
-        );
+        // Check if the fileReceived socket handler already added this message
+        // (race condition: socket event can arrive before REST response)
+        final serverId = fileData['message_id'];
+        if (serverId != null && _messages.any((m) => m.id == serverId)) {
+          debugPrint('📎 File message already added by socket handler, skipping local insert');
+        } else {
+          // Create local message to show in chat
+          // Use server message_id so the fileReceived dedup check catches the echo
+          final now = DateTime.now();
+          final message = Message(
+            id: serverId ?? DateTime.now().millisecondsSinceEpoch,
+            senderId: _currentUserId!,
+            recipientId: widget.otherUser.id,
+            content: fileName,
+            messageType: mimeType.startsWith('image/') ? 'image' : 
+                         mimeType.startsWith('video/') ? 'video' : 'file',
+            timestamp: now.toIso8601String(),
+            timestampMs: now.millisecondsSinceEpoch,
+            isRead: false,
+            status: 'sent',
+            threadId: '',
+            reactions: {},
+            isDeleted: false,
+            fileUrl: fileData['file_url'] ?? fileData['url'],
+            fileName: fileName,
+            fileType: mimeType,
+            fileSize: file.lengthSync(),
+          );
 
-        setState(() {
-          _messages.insert(0, message);
-        });
+          setState(() {
+            _messages.insert(0, message);
+          });
+        }
         _scrollToBottom();
 
         ScaffoldMessenger.of(context).showSnackBar(

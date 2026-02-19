@@ -515,7 +515,7 @@ class SocketService {
 
     // Voice message event (receiving voice messages from web)
     _socket!.on('voice_message', (data) {
-      debugPrint('🎤 Voice message received: $data');
+      debugPrint('🎤 Voice message received (${_voiceMessageReceivedListeners.length} listeners): $data');
       _broadcast(_voiceMessageReceivedListeners, data as Map<String, dynamic>);
     });
 
