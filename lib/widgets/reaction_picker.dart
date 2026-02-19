@@ -446,13 +446,26 @@ class _ExpandedReactionPicker extends StatefulWidget {
   State<_ExpandedReactionPicker> createState() => _ExpandedReactionPickerState();
 }
 
-class _ExpandedReactionPickerState extends State<_ExpandedReactionPicker> {
+class _ExpandedReactionPickerState extends State<_ExpandedReactionPicker>
+    with TickerProviderStateMixin {
   int _selectedCategory = 0;
+
+  // Animation key to force rebuild on category change
+  int _animationGeneration = 0;
+
+  void _selectCategory(int index) {
+    if (index == _selectedCategory) return;
+    setState(() {
+      _selectedCategory = index;
+      _animationGeneration++;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final categories = ReactionPicker.emojiCategories;
-    final currentEmojis = categories[_selectedCategory]['emojis'] as List<String>;
+    final currentEmojis =
+        categories[_selectedCategory]['emojis'] as List<String>;
 
     return Material(
       color: Colors.transparent,
@@ -495,61 +508,150 @@ class _ExpandedReactionPickerState extends State<_ExpandedReactionPicker> {
             ),
             // Category tabs
             SizedBox(
-              height: 40,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                itemCount: categories.length,
-                itemBuilder: (context, index) {
-                  final isSelected = index == _selectedCategory;
-                  return GestureDetector(
-                    onTap: () => setState(() => _selectedCategory = index),
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: isSelected ? const Color(0xFF6D28D9) : const Color(0xFF3D3D3D),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        categories[index]['label'] as String,
-                        style: TextStyle(
-                          color: isSelected ? Colors.white : Colors.white60,
-                          fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+              height: 34,
+              child: ShaderMask(
+                shaderCallback: (Rect bounds) {
+                  return const LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [Colors.white, Colors.white, Colors.white, Colors.transparent],
+                    stops: [0.0, 0.85, 0.92, 1.0],
+                  ).createShader(bounds);
+                },
+                blendMode: BlendMode.dstIn,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  itemCount: categories.length,
+                  itemBuilder: (context, index) {
+                    final isSelected = index == _selectedCategory;
+                    return GestureDetector(
+                      onTap: () => _selectCategory(index),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOut,
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isSelected ? const Color(0xFF6D28D9) : const Color(0xFF3D3D3D),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Center(
+                          child: Text(
+                            categories[index]['label'] as String,
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : Colors.white60,
+                              fontSize: 12,
+                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
             ),
             const SizedBox(height: 8),
-            // Emoji grid
+            // Animated emoji grid
             Expanded(
-              child: GridView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 8,
-                  childAspectRatio: 1,
-                ),
-                itemCount: currentEmojis.length,
-                itemBuilder: (context, index) {
-                  return GestureDetector(
-                    onTap: () => widget.onEmojiSelected(currentEmojis[index]),
-                    child: Center(
-                      child: Text(
-                        currentEmojis[index],
-                        style: const TextStyle(fontSize: 26),
-                      ),
-                    ),
-                  );
-                },
+              child: _AnimatedEmojiGrid(
+                key: ValueKey(_animationGeneration),
+                emojis: currentEmojis,
+                onEmojiSelected: widget.onEmojiSelected,
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Grid of emojis with staggered pop-in animations.
+/// Rebuilds its animation state whenever [key] changes.
+class _AnimatedEmojiGrid extends StatefulWidget {
+  final List<String> emojis;
+  final Function(String emoji) onEmojiSelected;
+
+  const _AnimatedEmojiGrid({
+    super.key,
+    required this.emojis,
+    required this.onEmojiSelected,
+  });
+
+  @override
+  State<_AnimatedEmojiGrid> createState() => _AnimatedEmojiGridState();
+}
+
+class _AnimatedEmojiGridState extends State<_AnimatedEmojiGrid>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final emojis = widget.emojis;
+    // Number of columns in the grid
+    const crossAxisCount = 8;
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return GridView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            childAspectRatio: 1,
+          ),
+          itemCount: emojis.length,
+          itemBuilder: (context, index) {
+            // Stagger delay based on row + column for a diagonal wave
+            final row = index ~/ crossAxisCount;
+            final col = index % crossAxisCount;
+            final staggerIndex = row + col;
+            // Max stagger slots: (maxRows-1) + (crossAxisCount-1)
+            const maxStagger = 14.0;
+            final delay = (staggerIndex / maxStagger) * 0.5; // 0..0.5 of total
+            final interval = Interval(
+              delay.clamp(0.0, 0.7),
+              (delay + 0.3).clamp(0.3, 1.0),
+              curve: Curves.easeOutBack,
+            );
+            final t = interval.transform(_controller.value);
+
+            return Transform.scale(
+              scale: t,
+              child: Opacity(
+                opacity: t.clamp(0.0, 1.0),
+                child: GestureDetector(
+                  onTap: () => widget.onEmojiSelected(emojis[index]),
+                  child: Center(
+                    child: Text(
+                      emojis[index],
+                      style: const TextStyle(fontSize: 26),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

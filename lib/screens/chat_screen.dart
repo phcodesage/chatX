@@ -82,7 +82,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // Reply state
   Message? _replyingToMessage;
   
-  // Reaction state: { messageId: { emoji: Set<userName> } }
+  // Reaction state: { messageId: { emoji: Set<userId> } }
   final Map<int, Map<String, Set<String>>> _messageReactions = {};
   
   // Emoji picker state for chat input
@@ -5066,6 +5066,14 @@ class _ChatScreenState extends State<ChatScreen> {
     debugPrint('👆 Toggling reaction $emoji on message $messageId');
   }
 
+  /// Resolve a user ID string to a display name for the reactions sheet.
+  String _resolveReactorName(String odorIdStr) {
+    final currentUserStr = _currentUserId?.toString() ?? '';
+    if (odorIdStr == currentUserStr) return 'You';
+    if (odorIdStr == widget.otherUser.id.toString()) return widget.otherUser.fullName;
+    return 'User $odorIdStr';
+  }
+
   /// Show bottom sheet listing who reacted to a message (WhatsApp-style)
   /// Tapping your own reaction row removes it.
   void _showReactorsSheet(int messageId) {
@@ -5113,6 +5121,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   final emoji = entry.key;
                   final users = entry.value;
                   final iReacted = users.contains(currentUserStr);
+                  // Resolve user IDs to display names
+                  final displayNames = users.map((id) => _resolveReactorName(id)).toList();
                   return GestureDetector(
                     onTap: iReacted
                         ? () {
@@ -5139,7 +5149,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  users.join(', '),
+                                  displayNames.join(', '),
                                   style: const TextStyle(
                                     color: Colors.white70,
                                     fontSize: 14,
