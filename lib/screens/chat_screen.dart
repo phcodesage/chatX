@@ -91,6 +91,12 @@ class _ChatScreenState extends State<ChatScreen> {
   // Collapsible action buttons state (FB Messenger style)
   bool _showActionButtons = false;
   
+  // Flag to suppress doorbell echo on the triggering device
+  bool _localDoorbellPending = false;
+  
+  // Flag to suppress color reset echo on the triggering device
+  bool _localColorResetPending = false;
+  
   // Backend connectivity state
   bool _isBackendAvailable = true;
   
@@ -389,8 +395,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (senderId == widget.otherUser.id) {
         _handleIncomingDoorbell(data);
       } else if (senderId == _currentUserId && recipientId == widget.otherUser.id) {
-        // Cross-device: our other device rang the doorbell — show outgoing system message
-        _handleOutgoingDoorbellSync(data);
+        if (_localDoorbellPending) {
+          // This is the echo from OUR ring — ignore, we already showed it optimistically
+          _localDoorbellPending = false;
+        } else {
+          // Cross-device: our other device rang the doorbell — show outgoing system message
+          _handleOutgoingDoorbellSync(data);
+        }
       }
     });
 
@@ -412,7 +423,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (senderId == widget.otherUser.id) {
         _handleColorReset(data);
       } else if (senderId == _currentUserId && recipientId == widget.otherUser.id) {
-        _handleColorReset(data);
+        if (_localColorResetPending) {
+          // This is the echo from OUR reset — ignore, we already showed it optimistically
+          _localColorResetPending = false;
+        } else {
+          // Cross-device: our other device reset the color
+          _handleColorReset(data);
+        }
       }
     });
 
@@ -1591,6 +1608,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _resetColor() {
+    // Mark that we locally triggered the reset so we can suppress the echo
+    _localColorResetPending = true;
+    
     // Reset to default color
     const defaultColor = Color(0xFF1E1E1E);
     
@@ -1683,6 +1703,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _ringDoorbell() {
+    // Mark that we locally triggered the doorbell so we can suppress the echo
+    _localDoorbellPending = true;
+    
     // Send doorbell via Socket.IO
     _socketService.ringDoorbell(widget.otherUser.id);
     
@@ -3143,7 +3166,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             child: ListView.builder(
                               controller: _scrollController,
                               reverse: true,
-                              padding: const EdgeInsets.all(16),
+                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
                               physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
                               cacheExtent: 500,
                               itemCount: _messages.length,
@@ -3268,8 +3291,8 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: EdgeInsets.only(
                 left: 12,
                 right: 12,
-                top: 12,
-                bottom: 12 + MediaQuery.of(context).viewInsets.bottom,
+                top: 0,
+                bottom: 4 + MediaQuery.of(context).viewInsets.bottom,
               ),
               decoration: BoxDecoration(
                 color: _headerColor,
@@ -3282,96 +3305,111 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                 // Reply preview (when replying to a message)
                 _buildReplyPreview(),
-                // Text input field with emoji button - full width, max 3 lines
+                // Text input field with embedded emoji button and send button
                 RepaintBoundary(
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Emoji picker button
-                      Container(
-                        margin: const EdgeInsets.only(right: 8, bottom: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF6D28D9), // Purple like web app
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: IconButton(
-                          onPressed: () => _showEmojiPickerModal(context),
-                          icon: const Icon(
-                            Icons.sentiment_satisfied_alt_outlined,
-                            color: Colors.white,
-                          ),
-                          padding: const EdgeInsets.all(12),
-                          constraints: const BoxConstraints(),
-                        ),
-                      ),
-                      // Text input field
-                      Expanded(
-                        child: TextField(
-                          key: const ValueKey('message_input'),
-                          controller: _messageController,
-                          focusNode: _inputFocusNode,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: InputDecoration(
-                            hintText: 'Type a message...',
-                            hintStyle: TextStyle(color: Colors.grey[600]),
-                            filled: true,
-                            fillColor: const Color(0xFF4D4D4D),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 12,
-                            ),
-                          ),
-                          onChanged: _onTextChanged,
-                          onSubmitted: (_) => _sendMessage(),
-                          minLines: 1,
-                          maxLines: 3,
-                          textInputAction: TextInputAction.send,
-                          keyboardType: TextInputType.text,
-                          textCapitalization: TextCapitalization.sentences,
-                          enableInteractiveSelection: true,
-                          autocorrect: true,
-                          enableSuggestions: true,
-                          scribbleEnabled: false,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-                // Primary buttons row - toggle on left, Clear/Send on right
-                Row(
-                  children: [
-                    // Show/Hide Actions toggle (only when emoji picker closed & keyboard hidden)
-                    if (!_showEmojiPicker && MediaQuery.of(context).viewInsets.bottom == 0)
-                      GestureDetector(
-                        onTap: () => setState(() => _showActionButtons = !_showActionButtons),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      // Actions toggle icon (hidden when input focused or has text)
+                      if (!_inputFocusNode.hasFocus && _messageController.text.isEmpty)
+                        Container(
+                          margin: const EdgeInsets.only(right: 6),
                           decoration: BoxDecoration(
                             color: const Color(0xFF3D3D3D),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: IconButton(
+                            onPressed: () => setState(() => _showActionButtons = !_showActionButtons),
+                            icon: Icon(
+                              _showActionButtons ? Icons.expand_more : Icons.add_circle_outline,
+                              color: Colors.white70,
+                              size: 18,
+                            ),
+                            padding: const EdgeInsets.all(6),
+                            constraints: const BoxConstraints(),
+                            tooltip: _showActionButtons ? 'Hide Actions' : 'Show Actions',
+                          ),
+                        ),
+                      // Text input field with embedded emoji button
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4D4D4D),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                           child: Row(
-                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
-                                _showActionButtons ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
-                                color: Colors.white70,
-                                size: 18,
+                              // Emoji picker button (inside input)
+                              IconButton(
+                                onPressed: () => _showEmojiPickerModal(context),
+                                icon: const Icon(
+                                  Icons.sentiment_satisfied_alt_outlined,
+                                  color: Colors.white70,
+                                  size: 18,
+                                ),
+                                padding: const EdgeInsets.all(6),
+                                constraints: const BoxConstraints(),
+                                tooltip: 'Emoji',
                               ),
-                              const SizedBox(width: 4),
-                              Text(
-                                _showActionButtons ? 'Hide' : 'Actions',
-                                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              // Text input
+                              Expanded(
+                                child: TextField(
+                                  key: const ValueKey('message_input'),
+                                  controller: _messageController,
+                                  focusNode: _inputFocusNode,
+                                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                                  decoration: InputDecoration(
+                                    hintText: 'Type a message...',
+                                    hintStyle: TextStyle(color: Colors.grey[600], fontSize: 14),
+                                    border: InputBorder.none,
+                                    filled: false,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 10,
+                                    ),
+                                    isDense: true,
+                                  ),
+                                  onChanged: _onTextChanged,
+                                  onSubmitted: (_) => _sendMessage(),
+                                  minLines: 1,
+                                  maxLines: 3,
+                                  textInputAction: TextInputAction.send,
+                                  keyboardType: TextInputType.text,
+                                  textCapitalization: TextCapitalization.sentences,
+                                  enableInteractiveSelection: true,
+                                  autocorrect: true,
+                                  enableSuggestions: true,
+                                  scribbleEnabled: false,
+                                ),
                               ),
                             ],
                           ),
                         ),
                       ),
+                      // Send button (right of input)
+                      Container(
+                        margin: const EdgeInsets.only(left: 6),
+                        child: ElevatedButton(
+                          onPressed: _sendMessage,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6D28D9), // rgb(109 40 217)
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            minimumSize: const Size(0, 0),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: const Text('Send', style: TextStyle(fontSize: 13)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Clear button row
+                Row(
+                  children: [
                     const Spacer(),
                     // Clear button
                     ElevatedButton(
@@ -3382,30 +3420,17 @@ class _ChatScreenState extends State<ChatScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFEF4444), // rgb(239 68 68)
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                        minimumSize: const Size(0, 0),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
                       child: const Text('Clear'),
                     ),
-                    const SizedBox(width: 8),
-                    // Send button
-                    ElevatedButton(
-                      onPressed: _sendMessage,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6D28D9), // rgb(109 40 217)
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: const Text('Send'),
-                    ),
                   ],
                 ),
-                const SizedBox(height: 8),
                 // Inline emoji picker (shown when active)
                 if (_showEmojiPicker)
                   _buildInlineEmojiPicker(),
@@ -3419,10 +3444,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     alignment: Alignment.topCenter,
                     child: _showActionButtons
                       ? Padding(
-                          padding: const EdgeInsets.only(top: 8),
+                          padding: const EdgeInsets.only(top: 4),
                           child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
+                            spacing: 6,
+                            runSpacing: 6,
                             children: [
                               // Ring Doorbell
                               ElevatedButton(
@@ -3430,11 +3455,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF8B5CF6),
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
                                   ),
-                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                                 ),
                                 child: const Text('Ring Doorbell'),
                               ),
@@ -3444,11 +3471,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFFA855F7),
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
                                   ),
-                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                                 ),
                                 child: const Text('Change Color'),
                               ),
@@ -3459,11 +3488,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.white,
                                     foregroundColor: Colors.black87,
-                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    minimumSize: const Size(0, 0),
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(6),
                                     ),
-                                    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                    textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                                   ),
                                   child: const Text('Reset Color'),
                                 ),
@@ -3473,11 +3504,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF10B981),
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
                                   ),
-                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                                 ),
                                 child: const Text('Send File'),
                               ),
@@ -3487,11 +3520,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF3B82F6),
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
                                   ),
-                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                                 ),
                                 child: const Text('Camera'),
                               ),
@@ -3501,11 +3536,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFFEF4444),
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
                                   ),
-                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                                 ),
                                 child: const Text('Voice Message'),
                               ),
@@ -3517,11 +3554,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ? const Color(0xFF059669)
                                       : const Color(0xFF0891B2),
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
                                   ),
-                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                                 ),
                                 child: Text(_autoTranslate ? 'Translate: ON' : 'Translate: OFF'),
                               ),
@@ -3533,11 +3572,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ? const Color(0xFF4F46E5)
                                       : const Color(0xFF8B5CF6),
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
                                   ),
-                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                                 ),
                                 child: Text(_showTimestamps ? 'Hide Timestamps' : 'Show Timestamps'),
                               ),
@@ -3547,11 +3588,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF6B7280),
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(6),
                                   ),
-                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                                 ),
                                 child: const Text('Export Chat'),
                               ),
