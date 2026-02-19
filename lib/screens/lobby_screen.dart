@@ -1086,7 +1086,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                 children: [
                                   // Online section
                                   if (onlineUsers.isNotEmpty) ...[
-                                    _buildSectionHeader('ONLINE', onlineUsers.length, const Color(0xFF4CAF50)),
+                                    _buildSectionHeader('ONLINE', onlineUsers.length, const Color(0xFF00E676)),
                                     ...onlineUsers.map((user) => _buildUserTile(user, isOnlineSection: true)),
                                   ],
                                   // Last Seen section
@@ -1130,7 +1130,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Color _getStatusDotColor(String effectiveStatus) {
     switch (effectiveStatus) {
       case 'online':
-        return const Color(0xFF4CAF50); // green
+        return const Color(0xFF00E676); // neon green
       case 'away':
         return const Color(0xFFFFC107); // yellow/amber
       default:
@@ -1313,7 +1313,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                 : _formatRelativeTime(user.lastSeen),
                         style: TextStyle(
                           color: effectiveStatus == 'online'
-                              ? const Color(0xFF4CAF50)
+                              ? const Color(0xFF00E676)
                               : effectiveStatus == 'away'
                                   ? const Color(0xFFFFC107)
                                   : Colors.grey[500],

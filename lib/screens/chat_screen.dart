@@ -1752,7 +1752,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ? 'Away'
             : 'Offline';
     final statusColor = _partnerStatus == 'online'
-        ? const Color(0xFF4CAF50)
+        ? const Color(0xFF00E676)
         : _partnerStatus == 'away'
             ? const Color(0xFFFFC107)
             : Colors.grey;
@@ -3037,9 +3037,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                       : 'offline')),
                       style: TextStyle(
                         color: _otherUserTyping
-                            ? const Color(0xFF4CAF50)
+                            ? const Color(0xFF00E676)
                             : (_partnerStatus == 'online'
-                                ? const Color(0xFF4CAF50)
+                                ? const Color(0xFF00E676)
                                 : _partnerStatus == 'away'
                                     ? const Color(0xFFFFC107)
                                     : Colors.grey[600]),
