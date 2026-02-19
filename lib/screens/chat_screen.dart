@@ -2840,9 +2840,17 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
 
+      // Create MultipartFile with explicit content type so server knows the MIME type
+      final multipartFile = await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        filename: fileName,
+        contentType: MediaType.parse(mimeType),
+      );
+      
       // Upload file using MessageService
       final result = await MessageService.uploadFile(
-        file: file,
+        file: multipartFile,
         recipientId: widget.otherUser.id,
       );
 
