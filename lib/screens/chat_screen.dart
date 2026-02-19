@@ -2852,20 +2852,16 @@ class _ChatScreenState extends State<ChatScreen> {
       if (result != null && result['success'] == true) {
         final fileData = result['file'] ?? result;
         
-        // Emit file message via socket
-        _socketService.emit('send_file', {
-          'recipient_id': widget.otherUser.id,
-          'file_id': fileData['file_id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
-          'file_name': fileName,
-          'file_type': mimeType,
-          'file_size': file.lengthSync(),
-          'file_url': fileData['file_url'] ?? fileData['url'],
-        });
+        // NOTE: The REST API upload already creates the DB message and emits
+        // file_message to the recipient, so we do NOT emit send_file here to
+        // avoid duplicate messages. Cross-device sync is handled by the REST
+        // endpoint emitting to the sender's room as well.
 
         // Create local message to show in chat
+        // Use server message_id so the fileReceived dedup check catches the echo
         final now = DateTime.now();
         final message = Message(
-          id: DateTime.now().millisecondsSinceEpoch,
+          id: fileData['message_id'] ?? DateTime.now().millisecondsSinceEpoch,
           senderId: _currentUserId!,
           recipientId: widget.otherUser.id,
           content: fileName,
