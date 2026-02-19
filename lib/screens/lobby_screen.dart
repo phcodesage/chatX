@@ -79,8 +79,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void _setupRealtimeListeners() {
     const key = 'lobby';
 
-    // Listen for doorbell rings
+    // Listen for doorbell rings (only incoming — ignore self-sent for cross-device sync)
     _socketService.addListener('doorbellRing', key, (Map<String, dynamic> data) {
+      final senderId = data['sender_id'] as int?;
+      if (senderId == _socketService.currentUserId) return;
       _handleDoorbellRing(data);
     });
 
@@ -313,60 +315,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _handleDoorbellRing(Map<String, dynamic> data) {
-    final senderId = data['sender_id'] as int;
-    final senderName = data['sender_name'] as String;
-    
-    // Only show dialog if we're still on the lobby screen (not in a chat)
-    if (!mounted) return;
-    
-    // Find the user in the lobby
-    final user = _lobbyUsers.firstWhere(
-      (u) => u.id == senderId,
-      orElse: () => _lobbyUsers.first, // fallback
-    );
-
-    // Show doorbell notification only in lobby
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2D2D2D),
-        title: Row(
-          children: [
-            const Icon(Icons.notifications_active, color: Color(0xFFFFA726)),
-            const SizedBox(width: 8),
-            const Text('Doorbell Ring', style: TextStyle(color: Colors.white)),
-          ],
-        ),
-        content: Text(
-          '$senderName is calling you!',
-          style: const TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Dismiss'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // Navigate to chat with this user
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ChatScreen(otherUser: user),
-                ),
-              ).then((_) {
-                // Reload lobby and restore doorbell listener
-                _loadLobby();
-                _setupRealtimeListeners();
-              });
-            },
-            child: const Text('Answer'),
-          ),
-        ],
-      ),
-    );
+    // Doorbell ring sound is already played via the socket service
+    // No modal needed - the notification sound is sufficient
+    debugPrint('Doorbell ring received from ${data['sender_name']}');
   }
 
   void _handleNewMessage(Map<String, dynamic> data) {

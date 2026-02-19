@@ -397,7 +397,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // Listen for color change events (from other user OR from self on another device)
     _socketService.addListener('colorChanged', key, (Map<String, dynamic> data) {
       final senderId = data['sender_id'] as int?;
-      if (senderId == widget.otherUser.id || senderId == _currentUserId) {
+      final recipientId = data['recipient_id'] as int?;
+      if (senderId == widget.otherUser.id) {
+        _handleColorChange(data);
+      } else if (senderId == _currentUserId && recipientId == widget.otherUser.id) {
         _handleColorChange(data);
       }
     });
@@ -405,7 +408,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // Listen for color reset events (from other user OR from self on another device)
     _socketService.addListener('colorReset', key, (Map<String, dynamic> data) {
       final senderId = data['sender_id'] as int?;
-      if (senderId == widget.otherUser.id || senderId == _currentUserId) {
+      final recipientId = data['recipient_id'] as int?;
+      if (senderId == widget.otherUser.id) {
+        _handleColorReset(data);
+      } else if (senderId == _currentUserId && recipientId == widget.otherUser.id) {
         _handleColorReset(data);
       }
     });
@@ -861,32 +867,50 @@ class _ChatScreenState extends State<ChatScreen> {
   void _handleColorChange(Map<String, dynamic> data) {
     final colorHex = data['color'] as String?;
     final senderName = data['sender_name'] ?? widget.otherUser.fullName;
+    final senderId = data['sender_id'] as int?;
+    final isFromSelf = senderId == _currentUserId;
+    final timestampMs = data['timestamp_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch;
     
     if (colorHex != null) {
       try {
+        // Dedup check - look for any existing color change message
+        final alreadyExists = _messages.any((msg) =>
+          msg.messageType == 'system' &&
+          (msg.content.contains('bg color') || msg.content.contains('Changed bg color'))
+        );
+        
+        // If from self and message already exists locally, skip (same device echo)
+        if (isFromSelf && alreadyExists) {
+          debugPrint('🎨 Skipping color change from self (already added locally)');
+          return;
+        }
+
         // Parse hex color (e.g., "#FF5733" or "FF5733")
         final hexColor = colorHex.replaceAll('#', '');
         final color = Color(int.parse('FF$hexColor', radix: 16));
         
-        setState(() {
-          _headerColor = color;
-          _showResetButton = true;
-        });
+        // Only apply color change if we are the RECIPIENT (not the sender)
+        if (!isFromSelf) {
+          setState(() {
+            _headerColor = color;
+            _showResetButton = true;
+          });
+          
+          // Persist the color so it survives app restarts / background
+          _saveChatColor(colorHex);
+        }
         
-        // Persist the color so it survives app restarts / background
-        _saveChatColor(colorHex);
-        
-        // Create incoming system message about color change
+        // Create system message
         final colorMessage = Message(
-          id: DateTime.now().millisecondsSinceEpoch,
-          senderId: widget.otherUser.id,
-          recipientId: _currentUserId!,
-          content: '$senderName changed your bg color to $colorHex',
+          id: timestampMs,
+          senderId: isFromSelf ? _currentUserId! : widget.otherUser.id,
+          recipientId: isFromSelf ? widget.otherUser.id : _currentUserId!,
+          content: isFromSelf ? 'You changed the bg color of ${widget.otherUser.fullName}' : '$senderName changed your bg color to $colorHex',
           messageType: 'system',
           timestamp: DateTime.now().toIso8601String(),
-          timestampMs: DateTime.now().millisecondsSinceEpoch,
+          timestampMs: timestampMs,
           isRead: true,
-          status: 'delivered',
+          status: isFromSelf ? 'sent' : 'delivered',
           threadId: 'thread_${_currentUserId}_${widget.otherUser.id}',
           reactions: {},
           isDeleted: false,
@@ -901,7 +925,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _scrollToBottom();
         });
         
-        debugPrint('🎨 Color changed to: $colorHex');
+        debugPrint('🎨 Color changed to: $colorHex (${isFromSelf ? "cross-device sync" : "incoming from $senderName"})');  
       } catch (e) {
         debugPrint('Error parsing color: $e');
       }
@@ -910,29 +934,42 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _handleColorReset(Map<String, dynamic> data) {
     final senderName = data['sender_name'] ?? widget.otherUser.fullName;
+    final senderId = data['sender_id'] as int?;
+    final isFromSelf = senderId == _currentUserId;
+    final timestampMs = data['timestamp_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch;
     
-    // Reset header color to default
-    const defaultColor = Color(0xFF1E1E1E);
+    // Dedup check
+    final alreadyExists = _messages.any((msg) =>
+      msg.messageType == 'system' &&
+      msg.timestampMs == timestampMs &&
+      (msg.content.contains('reset') || msg.content.contains('Reset'))
+    );
+    if (alreadyExists) {
+      debugPrint('🔄 Skipping duplicate color reset message');
+      return;
+    }
     
-    setState(() {
-      _headerColor = defaultColor;
-      _showResetButton = false;
-    });
+    // Only reset our bg color if we are the RECIPIENT (not the sender)
+    if (!isFromSelf) {
+      const defaultColor = Color(0xFF1E1E1E);
+      setState(() {
+        _headerColor = defaultColor;
+        _showResetButton = false;
+      });
+      _saveChatColor('#1E1E1E');
+    }
     
-    // Persist the reset color
-    _saveChatColor('#1E1E1E');
-    
-    // Create incoming system message about color reset
+    // Create system message
     final resetMessage = Message(
-      id: DateTime.now().millisecondsSinceEpoch,
-      senderId: widget.otherUser.id,
-      recipientId: _currentUserId!,
-      content: '$senderName reset your bg color',
+      id: timestampMs,
+      senderId: isFromSelf ? _currentUserId! : widget.otherUser.id,
+      recipientId: isFromSelf ? widget.otherUser.id : _currentUserId!,
+      content: isFromSelf ? 'Reset bg color' : '$senderName reset\'s their bg color',
       messageType: 'system',
       timestamp: DateTime.now().toIso8601String(),
-      timestampMs: DateTime.now().millisecondsSinceEpoch,
+      timestampMs: timestampMs,
       isRead: true,
-      status: 'delivered',
+      status: isFromSelf ? 'sent' : 'delivered',
       threadId: 'thread_${_currentUserId}_${widget.otherUser.id}',
       reactions: {},
       isDeleted: false,
@@ -942,12 +979,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.insert(0, resetMessage);
     });
 
-    // Scroll to bottom to show the notification
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToBottom();
     });
     
-    debugPrint('🔄 Color reset by ${widget.otherUser.fullName}');
+    debugPrint('🔄 Color ${isFromSelf ? "reset (cross-device sync)" : "reset by ${widget.otherUser.fullName}"}');
   }
 
   void _handleIncomingDoorbell(Map<String, dynamic> data) {
@@ -1616,7 +1652,7 @@ class _ChatScreenState extends State<ChatScreen> {
             id: DateTime.now().millisecondsSinceEpoch,
             senderId: _currentUserId!,
             recipientId: widget.otherUser.id,
-            content: 'Changed bg color',
+            content: 'You changed the bg color of ${widget.otherUser.fullName}',
             messageType: 'system',
             timestamp: DateTime.now().toIso8601String(),
             timestampMs: DateTime.now().millisecondsSinceEpoch,
