@@ -103,6 +103,9 @@ class _ChatScreenState extends State<ChatScreen> {
   // Backend connectivity state
   bool _isBackendAvailable = true;
   
+  // Guard against duplicate incoming call modals
+  bool _isHandlingIncomingCall = false;
+  
   // Presence state for the chat partner
   String _partnerStatus = 'offline';
   String? _partnerLastSeen;
@@ -740,6 +743,12 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _handleCrossRoomCallOfferInChat(Map<String, dynamic> data) async {
     if (!mounted) return;
     
+    if (_isHandlingIncomingCall) {
+      debugPrint('⚠️ Already handling an incoming call, ignoring cross-room duplicate');
+      return;
+    }
+    _isHandlingIncomingCall = true;
+    
     debugPrint('📲 Cross-room call offer received in chat: $data');
     
     final callerId = data['caller_id'] as int?;
@@ -749,6 +758,7 @@ class _ChatScreenState extends State<ChatScreen> {
     
     if (callerId == null || room == null) {
       debugPrint('⚠️ Invalid cross-room call offer data');
+      _isHandlingIncomingCall = false;
       return;
     }
     
@@ -777,18 +787,19 @@ class _ChatScreenState extends State<ChatScreen> {
     };
     callService.handleIncomingCall(syntheticCallData);
     
-    // Set up call ended/declined handlers
-    _socketService.onCallEnded = (endData) {
-      debugPrint('📴 Call ended by remote user');
+    // Use keyed listeners for call ended/declined handlers
+    const crossRoomListenerKey = 'chat_cross_room_call';
+    _socketService.addListener('callEnded', crossRoomListenerKey, (Map<String, dynamic> endData) {
+      debugPrint('📴 Call ended by remote user (chat cross-room)');
       _socketService.stopSignalBuffering();
       callService.handleCallEnded();
-    };
+    });
     
-    _socketService.onCallDeclined = (declineData) {
-      debugPrint('❌ Call declined');
+    _socketService.addListener('callDeclined', crossRoomListenerKey, (Map<String, dynamic> declineData) {
+      debugPrint('❌ Call declined (chat cross-room)');
       _socketService.stopSignalBuffering();
       callService.handleCallDeclined();
-    };
+    });
     
     // Show incoming call setup modal with device selection
     Navigator.of(context).push(
@@ -802,10 +813,16 @@ class _ChatScreenState extends State<ChatScreen> {
           onDecline: () {
             debugPrint('📞 Call declined by user');
             _socketService.stopSignalBuffering();
+            _socketService.removeListener('callEnded', crossRoomListenerKey);
+            _socketService.removeListener('callDeclined', crossRoomListenerKey);
           },
         ),
       ),
     ).then((result) {
+      // Clean up listeners when modal closes
+      _socketService.removeListener('callEnded', crossRoomListenerKey);
+      _socketService.removeListener('callDeclined', crossRoomListenerKey);
+      
       if (result is Map && (result['result'] == 'accepted' || result['result'] == 'connected')) {
         final localStream = result['localStream'];
         Navigator.of(context).push(
@@ -823,12 +840,19 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       }
+      _isHandlingIncomingCall = false;
     });
   }
 
   /// Handle incoming call while in chat screen
   Future<void> _handleIncomingCallInChat(Map<String, dynamic> data) async {
     if (!mounted) return;
+    
+    if (_isHandlingIncomingCall) {
+      debugPrint('⚠️ Already handling an incoming call, ignoring duplicate');
+      return;
+    }
+    _isHandlingIncomingCall = true;
     
     debugPrint('📲 Incoming call received in chat: $data');
     
@@ -843,6 +867,7 @@ class _ChatScreenState extends State<ChatScreen> {
     
     if (callId == null || callRoomId == null || callerId == null) {
       debugPrint('⚠️ Invalid incoming call data');
+      _isHandlingIncomingCall = false;
       return;
     }
     
@@ -857,16 +882,17 @@ class _ChatScreenState extends State<ChatScreen> {
       callService.handleSignal(signalData);
     };
     
-    // Set up call ended/declined handlers
-    _socketService.onCallEnded = (endData) {
-      debugPrint('📴 Call ended by remote user');
+    // Use keyed listeners for call ended/declined handlers to avoid overwriting
+    const callListenerKey = 'chat_incoming_call';
+    _socketService.addListener('callEnded', callListenerKey, (Map<String, dynamic> endData) {
+      debugPrint('📴 Call ended by remote user (chat)');
       callService.handleCallEnded();
-    };
+    });
     
-    _socketService.onCallDeclined = (declineData) {
-      debugPrint('❌ Call declined');
+    _socketService.addListener('callDeclined', callListenerKey, (Map<String, dynamic> declineData) {
+      debugPrint('❌ Call declined (chat)');
       callService.handleCallDeclined();
-    };
+    });
     
     // Show incoming call setup modal with device selection
     Navigator.of(context).push(
@@ -879,10 +905,17 @@ class _ChatScreenState extends State<ChatScreen> {
           callService: callService,
           onDecline: () {
             debugPrint('📞 Call declined by user');
+            // Clean up listeners
+            _socketService.removeListener('callEnded', callListenerKey);
+            _socketService.removeListener('callDeclined', callListenerKey);
           },
         ),
       ),
     ).then((result) {
+      // Clean up listeners when modal closes
+      _socketService.removeListener('callEnded', callListenerKey);
+      _socketService.removeListener('callDeclined', callListenerKey);
+      
       if (result is Map && (result['result'] == 'accepted' || result['result'] == 'connected')) {
         // Navigate to connected call screen with the local stream from setup
         final localStream = result['localStream'];
@@ -901,6 +934,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       }
+      _isHandlingIncomingCall = false;
     });
   }
 
@@ -2006,19 +2040,21 @@ class _ChatScreenState extends State<ChatScreen> {
       callService.handleSignal(data);
     };
     
-    _socketService.onCallInitiated = (data) {
+    // Use keyed listeners for proper event handling
+    const callListenerKey = 'chat_outgoing_call';
+    _socketService.addListener('callInitiated', callListenerKey, (Map<String, dynamic> data) {
       callService.handleCallInitiated(data);
-    };
+    });
     
-    _socketService.onCallEnded = (data) {
+    _socketService.addListener('callEnded', callListenerKey, (Map<String, dynamic> data) {
       debugPrint('📴 Call ended - cleaning up');
       callService.handleCallEnded();
-    };
+    });
     
-    _socketService.onCallDeclined = (data) {
+    _socketService.addListener('callDeclined', callListenerKey, (Map<String, dynamic> data) {
       debugPrint('❌ Call declined by remote user');
       callService.handleCallDeclined();
-    };
+    });
     
     // Set up error callback
     callService.onCallError = (error) {
@@ -2052,6 +2088,10 @@ class _ChatScreenState extends State<ChatScreen> {
           callService: callService,
           onCancel: () {
             debugPrint('📞 Call cancelled by user');
+            // Clean up listeners
+            _socketService.removeListener('callInitiated', callListenerKey);
+            _socketService.removeListener('callEnded', callListenerKey);
+            _socketService.removeListener('callDeclined', callListenerKey);
           },
           onConnected: () {
             debugPrint('📞 Call connected!');
@@ -2059,6 +2099,11 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+    
+    // Clean up listeners when modal closes (if not already cleaned up)
+    _socketService.removeListener('callInitiated', callListenerKey);
+    _socketService.removeListener('callEnded', callListenerKey);
+    _socketService.removeListener('callDeclined', callListenerKey);
     
     // Navigate to connected call screen if call connected
     if (result == 'connected' && mounted) {

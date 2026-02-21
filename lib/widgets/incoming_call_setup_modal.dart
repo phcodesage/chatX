@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/call_service.dart';
+import '../services/socket_service.dart';
 
 /// Incoming call setup modal with device selection
 /// Shows camera/mic/speaker selection before answering a call
@@ -56,6 +57,10 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
 
   // Pulse animation for caller avatar
   late AnimationController _pulseController;
+  
+  // Socket service for listening to call events
+  final SocketService _socketService = SocketService();
+  static const String _listenerKey = 'incoming_call_setup_modal';
 
   @override
   void initState() {
@@ -71,6 +76,17 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
     
     // Listen for call state changes (caller might cancel)
     widget.callService.onCallStateChanged = _handleCallStateChanged;
+    
+    // Also listen directly for socket events to ensure modal closes
+    _socketService.addListener('callEnded', _listenerKey, _handleSocketCallEnded);
+    _socketService.addListener('callDeclined', _listenerKey, _handleSocketCallEnded);
+  }
+  
+  void _handleSocketCallEnded(Map<String, dynamic> data) {
+    debugPrint('📴 IncomingCallSetupModal received call end event: $data');
+    if (!mounted) return;
+    widget.callService.handleCallEnded();
+    Navigator.of(context).pop('ended');
   }
 
   void _handleCallStateChanged(CallState state) {
@@ -126,11 +142,16 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
   }
 
   Future<void> _requestPermissions() async {
-    final cameraStatus = await Permission.camera.request();
-    final micStatus = await Permission.microphone.request();
+    // Batch both permissions in a single request to avoid
+    // "A request for permissions is already running" PlatformException
+    final statuses = await [
+      Permission.camera,
+      Permission.microphone,
+    ].request();
 
     setState(() {
-      _hasPermissions = cameraStatus.isGranted && micStatus.isGranted;
+      _hasPermissions = (statuses[Permission.camera]?.isGranted ?? false) &&
+          (statuses[Permission.microphone]?.isGranted ?? false);
     });
   }
 
@@ -240,6 +261,9 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
   void dispose() {
     _isDisposed = true;
     _pulseController.dispose();
+    // Remove socket listeners
+    _socketService.removeListener('callEnded', _listenerKey);
+    _socketService.removeListener('callDeclined', _listenerKey);
     if (!_streamHandedOff) {
       _stopMediaStream();
     }

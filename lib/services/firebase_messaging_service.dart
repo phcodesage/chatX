@@ -167,6 +167,16 @@ class FirebaseMessagingService {
       // Handle foreground messages
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
         debugPrint('📨 Foreground message received: ${message.notification?.title}');
+        
+        // For call notifications in foreground, trigger the call handler directly
+        // instead of showing a notification (socket already handles this, but as fallback)
+        final data = message.data;
+        if (data['type'] == 'call') {
+          debugPrint('📞 Foreground call notification - triggering call handler');
+          _handleNotificationTap(data);
+          return;
+        }
+        
         showNotification(message);
       });
 

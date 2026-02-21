@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import '../screens/chat_screen.dart';
+import '../screens/connected_call_screen.dart';
+import '../widgets/incoming_call_setup_modal.dart';
 import '../models/lobby_user.dart';
+import '../services/call_service.dart';
+import '../services/socket_service.dart';
 
 /// Helper class to handle notification taps and navigate to appropriate screens
 class NotificationHandler {
@@ -8,6 +12,9 @@ class NotificationHandler {
   
   // Store pending navigation data for when app opens from terminated state
   static Map<String, dynamic>? _pendingNotificationData;
+  
+  // Callback for incoming call from FCM (set by lobby/chat screens)
+  static Function(Map<String, dynamic>)? onIncomingCallFromFCM;
 
   /// Handle notification tap and navigate to the appropriate screen
   static void handleNotificationTap(Map<String, dynamic> data) {
@@ -37,7 +44,7 @@ class NotificationHandler {
         _navigateToChat(senderId, senderName ?? 'User');
         break;
       case 'call':
-        _navigateToChat(senderId, senderName ?? 'User');
+        _handleIncomingCallNotification(data);
         break;
       case 'color_change':
         _navigateToChat(senderId, senderName ?? 'User');
@@ -47,6 +54,103 @@ class NotificationHandler {
         // Still navigate to chat for unknown types if we have sender info
         _navigateToChat(senderId, senderName ?? 'User');
     }
+  }
+  
+  /// Handle incoming call notification tap - show incoming call modal
+  static Future<void> _handleIncomingCallNotification(Map<String, dynamic> data) async {
+    debugPrint('📞 Handling incoming call notification: $data');
+    
+    final senderId = int.tryParse(data['sender_id']?.toString() ?? '');
+    final senderName = data['sender_name'] as String? ?? 'Unknown';
+    final callType = data['call_type'] as String? ?? 'video';
+    final callId = int.tryParse(data['call_id']?.toString() ?? '');
+    final callRoomId = data['call_room_id'] as String?;
+    
+    if (senderId == null) {
+      debugPrint('❌ Invalid sender_id for call notification');
+      return;
+    }
+    
+    final context = navigatorKey.currentContext;
+    if (context == null) {
+      debugPrint('❌ No context available for showing call modal');
+      return;
+    }
+    
+    // Initialize call service
+    final callService = CallService();
+    await callService.initialize();
+    
+    // Create call data for the call service
+    final callData = {
+      'id': callId ?? DateTime.now().millisecondsSinceEpoch,
+      'call_room_id': callRoomId ?? '${senderId}_call_${DateTime.now().millisecondsSinceEpoch}',
+      'call_type': callType,
+      'caller_id': senderId,
+      'caller': {
+        'id': senderId,
+        'username': senderName,
+        'full_name': senderName,
+      },
+    };
+    callService.handleIncomingCall(callData);
+    
+    // Set up socket signal handler
+    final socketService = SocketService();
+    socketService.onSignal = (signalData) {
+      debugPrint('📡 Signal received for FCM call: $signalData');
+      callService.handleSignal(signalData);
+    };
+    
+    // Use addListener with unique key for proper event handling
+    const listenerKey = 'fcm_call_handler';
+    socketService.addListener('callEnded', listenerKey, (Map<String, dynamic> endData) {
+      debugPrint('📴 Call ended by remote user (FCM handler)');
+      callService.handleCallEnded();
+    });
+    
+    socketService.addListener('callDeclined', listenerKey, (Map<String, dynamic> declineData) {
+      debugPrint('❌ Call declined (FCM handler)');
+      callService.handleCallDeclined();
+    });
+    
+    // Show incoming call setup modal
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (context) => IncomingCallSetupModal(
+          callerName: senderName,
+          callerId: senderId,
+          callType: callType,
+          callService: callService,
+          onDecline: () {
+            debugPrint('📞 Call declined by user from FCM notification');
+            // Clean up listeners
+            socketService.removeListener('callEnded', listenerKey);
+            socketService.removeListener('callDeclined', listenerKey);
+          },
+        ),
+      ),
+    ).then((result) {
+      // Clean up listeners when modal closes
+      socketService.removeListener('callEnded', listenerKey);
+      socketService.removeListener('callDeclined', listenerKey);
+      
+      if (result is Map && (result['result'] == 'accepted' || result['result'] == 'connected')) {
+        final localStream = result['localStream'];
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (context) => ConnectedCallScreen(
+              remoteName: senderName,
+              callType: callType,
+              callService: callService,
+              localStream: localStream ?? callService.localStream,
+            ),
+          ),
+        );
+      }
+    });
   }
   
   /// Check and process any pending notification navigation

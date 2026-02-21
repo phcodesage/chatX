@@ -67,6 +67,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
   final CallNotificationService _callNotificationService = CallNotificationService();
   final PipService _pipService = PipService();
   bool _isInPipMode = false;
+  
+  // Listener key for socket events
+  static const String _listenerKey = 'connected_call_screen';
 
   @override
   void initState() {
@@ -171,11 +174,23 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
       }
     };
     
-    // Listen for call ended from socket (remote user ended call)
-    socketService.onCallEnded = (data) {
-      debugPrint('📴 Call ended event received from socket');
-      widget.callService.handleCallEnded();
-    };
+    // Listen for call ended from socket using keyed listener (remote user ended call)
+    socketService.addListener('callEnded', _listenerKey, (data) {
+      debugPrint('📴 ConnectedCallScreen received callEnded event: $data');
+      if (!_isEnding) {
+        widget.callService.handleCallEnded();
+        _endCall();
+      }
+    });
+    
+    // Also listen for call declined
+    socketService.addListener('callDeclined', _listenerKey, (data) {
+      debugPrint('📴 ConnectedCallScreen received callDeclined event: $data');
+      if (!_isEnding) {
+        widget.callService.handleCallDeclined();
+        _endCall();
+      }
+    });
     
     // Listen for signals during the call
     socketService.onSignal = (data) {
@@ -427,6 +442,12 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _durationTimer?.cancel();
+    
+    // Remove socket listeners
+    final socketService = SocketService();
+    socketService.removeListener('callEnded', _listenerKey);
+    socketService.removeListener('callDeclined', _listenerKey);
+    
     _localRenderer.dispose();
     _remoteRenderer.dispose();
     

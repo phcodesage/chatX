@@ -233,6 +233,10 @@ class CallService {
         );
       } on TimeoutException catch (e) {
         debugPrint('❌ Call initiation timed out: $e');
+        // Remove the listener since we timed out
+        _socketService.removeListener('callInitiated', '_call_initiate');
+        // Clean up call state
+        _cleanup();
         _callState = CallState.failed;
         onCallStateChanged?.call(_callState);
         onCallError?.call('Call initiation timed out');
@@ -632,11 +636,24 @@ class CallService {
 
   /// Decline an incoming call
   void declineCall() {
-    if (_callId == null) return;
-
-    _socketService.emit('decline_call', {
-      'call_id': _callId,
-    });
+    debugPrint('📴 Declining call - callId: $_callId, callRoomId: $_callRoomId');
+    
+    // Emit decline_call for backend-managed calls (initiate_call flow)
+    if (_callId != null) {
+      _socketService.emit('decline_call', {
+        'call_id': _callId,
+      });
+    }
+    
+    // Also emit signal-based decline for cross-room calls (web client compatibility)
+    if (_callRoomId != null) {
+      _socketService.emit('signal', {
+        'room': _callRoomId,
+        'signal': {
+          'type': 'call-ended',
+        },
+      });
+    }
 
     _cleanup();
   }

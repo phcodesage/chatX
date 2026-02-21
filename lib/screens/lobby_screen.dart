@@ -35,6 +35,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
+  bool _isHandlingIncomingCall = false;
 
   // Avatar colors palette
   static const List<Color> avatarColors = [
@@ -150,6 +151,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Future<void> _handleCrossRoomCallOffer(Map<String, dynamic> data) async {
     if (!mounted) return;
     
+    // Guard against duplicate/rapid incoming call events
+    if (_isHandlingIncomingCall) {
+      debugPrint('⚠️ Already handling an incoming call, ignoring cross-room duplicate');
+      return;
+    }
+    _isHandlingIncomingCall = true;
+    
     debugPrint('📲 Cross-room call offer received in lobby: $data');
     
     final callerId = data['caller_id'] as int?;
@@ -159,6 +167,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     
     if (callerId == null || room == null) {
       debugPrint('⚠️ Invalid cross-room call offer data');
+      _isHandlingIncomingCall = false;
       return;
     }
     
@@ -187,18 +196,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
     };
     callService.handleIncomingCall(syntheticCallData);
     
-    // Set up call ended/declined handlers
-    _socketService.onCallEnded = (endData) {
-      debugPrint('📴 Call ended by remote user');
+    // Use keyed listeners for call ended/declined handlers
+    const crossRoomListenerKey = 'lobby_cross_room_call';
+    _socketService.addListener('callEnded', crossRoomListenerKey, (Map<String, dynamic> endData) {
+      debugPrint('📴 Call ended by remote user (lobby cross-room)');
       _socketService.stopSignalBuffering();
       callService.handleCallEnded();
-    };
+    });
     
-    _socketService.onCallDeclined = (declineData) {
-      debugPrint('❌ Call declined');
+    _socketService.addListener('callDeclined', crossRoomListenerKey, (Map<String, dynamic> declineData) {
+      debugPrint('❌ Call declined (lobby cross-room)');
       _socketService.stopSignalBuffering();
       callService.handleCallDeclined();
-    };
+    });
     
     // Show incoming call setup modal with device selection
     Navigator.of(context).push(
@@ -212,10 +222,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
           onDecline: () {
             debugPrint('📞 Call declined by user');
             _socketService.stopSignalBuffering();
+            _socketService.removeListener('callEnded', crossRoomListenerKey);
+            _socketService.removeListener('callDeclined', crossRoomListenerKey);
           },
         ),
       ),
     ).then((result) {
+      // Clean up listeners when modal closes
+      _socketService.removeListener('callEnded', crossRoomListenerKey);
+      _socketService.removeListener('callDeclined', crossRoomListenerKey);
+      
       if (result is Map && (result['result'] == 'accepted' || result['result'] == 'connected')) {
         final localStream = result['localStream'];
         Navigator.of(context).push(
@@ -232,6 +248,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _setupRealtimeListeners();
         });
       }
+      _isHandlingIncomingCall = false;
       _setupRealtimeListeners();
     });
   }
@@ -239,6 +256,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// Handle incoming call from another user
   Future<void> _handleIncomingCall(Map<String, dynamic> data) async {
     if (!mounted) return;
+    
+    // Guard against duplicate/rapid incoming call events
+    if (_isHandlingIncomingCall) {
+      debugPrint('⚠️ Already handling an incoming call, ignoring duplicate event');
+      return;
+    }
+    _isHandlingIncomingCall = true;
     
     debugPrint('📲 Incoming call received in lobby: $data');
     
@@ -253,6 +277,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     
     if (callId == null || callRoomId == null || callerId == null) {
       debugPrint('⚠️ Invalid incoming call data');
+      _isHandlingIncomingCall = false;
       return;
     }
     
@@ -267,16 +292,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
       callService.handleSignal(signalData);
     };
     
-    // Set up call ended/declined handlers
-    _socketService.onCallEnded = (endData) {
-      debugPrint('📴 Call ended by remote user');
+    // Use keyed listeners for call ended/declined handlers to avoid overwriting
+    const callListenerKey = 'lobby_incoming_call';
+    _socketService.addListener('callEnded', callListenerKey, (Map<String, dynamic> endData) {
+      debugPrint('📴 Call ended by remote user (lobby)');
       callService.handleCallEnded();
-    };
+    });
     
-    _socketService.onCallDeclined = (declineData) {
-      debugPrint('❌ Call declined');
+    _socketService.addListener('callDeclined', callListenerKey, (Map<String, dynamic> declineData) {
+      debugPrint('❌ Call declined (lobby)');
       callService.handleCallDeclined();
-    };
+    });
     
     // Show incoming call setup modal with device selection
     Navigator.of(context).push(
@@ -289,10 +315,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
           callService: callService,
           onDecline: () {
             debugPrint('📞 Call declined by user');
+            // Clean up listeners
+            _socketService.removeListener('callEnded', callListenerKey);
+            _socketService.removeListener('callDeclined', callListenerKey);
           },
         ),
       ),
     ).then((result) {
+      // Clean up listeners when modal closes
+      _socketService.removeListener('callEnded', callListenerKey);
+      _socketService.removeListener('callDeclined', callListenerKey);
+      
       if (result is Map && (result['result'] == 'accepted' || result['result'] == 'connected')) {
         // Navigate to connected call screen with the local stream from setup
         final localStream = result['localStream'];
@@ -310,6 +343,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _setupRealtimeListeners();
         });
       }
+      _isHandlingIncomingCall = false;
       _setupRealtimeListeners();
     });
   }

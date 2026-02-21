@@ -107,12 +107,16 @@ class _CallSetupModalState extends State<CallSetupModal> {
   }
 
   Future<void> _requestPermissions() async {
-    // Request camera and microphone permissions
-    final cameraStatus = await Permission.camera.request();
-    final micStatus = await Permission.microphone.request();
+    // Batch both permissions in a single request to avoid
+    // "A request for permissions is already running" PlatformException
+    final statuses = await [
+      Permission.camera,
+      Permission.microphone,
+    ].request();
     
     setState(() {
-      _hasPermissions = cameraStatus.isGranted && micStatus.isGranted;
+      _hasPermissions = (statuses[Permission.camera]?.isGranted ?? false) &&
+          (statuses[Permission.microphone]?.isGranted ?? false);
     });
   }
 
