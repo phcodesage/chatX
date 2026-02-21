@@ -611,7 +611,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   /// Get the effective status tier: 0=online, 1=away/lastSeen, 2=offline
   int _getStatusTier(LobbyUser user) {
-    if (user.isOnline || user.status == 'online') return 0;
+    if (user.isOnline || user.status == 'online') {
+      // Cross-check with last_seen to detect stale online status
+      // (matches web app's grace-period logic)
+      if (user.lastSeen != null) {
+        try {
+          final lastSeenTime = _parseUtcTimestamp(user.lastSeen!);
+          final age = DateTime.now().difference(lastSeenTime);
+          if (age.inMinutes > 2) {
+            // Stale online status — treat as away/last seen if recent, offline otherwise
+            return age.inHours < 24 ? 1 : 2;
+          }
+        } catch (_) {}
+      }
+      return 0;
+    }
     if (user.status == 'away') return 1;
     // Recently seen (within 24h) counts as "last seen" tier
     if (user.lastSeen != null) {
@@ -1112,8 +1126,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// Determine effective display status: online, away, or offline
   /// Matches the web app's recently-seen logic (yellow dot for offline users
   /// who were active within the last 24 hours)
+  /// Also validates 'online' status against last_seen to detect stale DB entries
   String _getEffectiveStatus(LobbyUser user) {
-    if (user.isOnline || user.status == 'online') return 'online';
+    if (user.isOnline || user.status == 'online') {
+      // Cross-check with last_seen to detect stale online status
+      if (user.lastSeen != null) {
+        try {
+          final lastSeenTime = _parseUtcTimestamp(user.lastSeen!);
+          final age = DateTime.now().difference(lastSeenTime);
+          if (age.inMinutes > 2) {
+            // Stale online status — show as away if recent, offline otherwise
+            return age.inHours < 24 ? 'away' : 'offline';
+          }
+        } catch (_) {}
+      }
+      return 'online';
+    }
     if (user.status == 'away') return 'away';
     // Check if recently seen (within 24 hours) → show as away
     if (user.lastSeen != null) {
