@@ -97,6 +97,9 @@ class _ChatScreenState extends State<ChatScreen> {
   // Flag to suppress color reset echo on the triggering device
   bool _localColorResetPending = false;
   
+  // Track optimistic messages awaiting server confirmation (dedup keys)
+  final Set<String> _pendingMessageKeys = {};
+  
   // Backend connectivity state
   bool _isBackendAvailable = true;
   
@@ -334,18 +337,31 @@ class _ChatScreenState extends State<ChatScreen> {
       // Only process if this is for the current conversation
       if (recipientId == widget.otherUser.id) {
         final message = Message.fromJson(data);
-        // Avoid duplicating optimistic messages already in the list
-        final alreadyExists = _messages.any((m) =>
-          m.id == message.id ||
-          (m.senderId == message.senderId &&
-           m.content == message.content &&
-           (m.timestampMs - message.timestampMs).abs() < 3000));
-        if (!alreadyExists) {
+        final dedupKey = '${message.senderId}:${message.recipientId}:${message.content}';
+
+        if (_pendingMessageKeys.contains(dedupKey)) {
+          // This is the server echo of our optimistic message — replace it with real data
+          _pendingMessageKeys.remove(dedupKey);
           setState(() {
-            _messages.insert(0, message);
+            final index = _messages.indexWhere((m) =>
+              m.senderId == message.senderId &&
+              m.content == message.content &&
+              m.status == 'sending');
+            if (index != -1) {
+              _messages[index] = message;
+            }
           });
-          _scrollToBottom();
-          debugPrint('📤 Cross-device: added own sent message to chat');
+          debugPrint('📤 Replaced optimistic message with server data (id: ${message.id})');
+        } else {
+          // Check if message already exists (by ID)
+          final alreadyExists = _messages.any((m) => m.id == message.id);
+          if (!alreadyExists) {
+            setState(() {
+              _messages.insert(0, message);
+            });
+            _scrollToBottom();
+            debugPrint('📤 Cross-device: added own sent message to chat');
+          }
         }
       }
     });
@@ -1466,6 +1482,10 @@ class _ChatScreenState extends State<ChatScreen> {
       reactions: {},
       isDeleted: false,
     );
+
+    // Track this optimistic message for dedup when server echoes back
+    final dedupKey = '${_currentUserId}:${widget.otherUser.id}:$content';
+    _pendingMessageKeys.add(dedupKey);
 
     setState(() {
       _messages.insert(0, optimisticMessage);

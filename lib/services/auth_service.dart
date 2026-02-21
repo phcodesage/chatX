@@ -13,6 +13,17 @@ import 'firebase_messaging_service.dart';
 
 /// Service for handling authentication API calls
 class AuthService {
+  /// Safely extract error message from a response body (handles both JSON and plain text)
+  static String _extractErrorMessage(String body, String fallback) {
+    try {
+      final error = jsonDecode(body);
+      return error['error'] ?? fallback;
+    } on FormatException {
+      // Server returned non-JSON (e.g. plain text error)
+      return body.isNotEmpty ? body : fallback;
+    }
+  }
+
   /// Register a new user
   static Future<AuthResponse> register({
     required String username,
@@ -60,8 +71,7 @@ class AuthService {
         
         return authResponse;
       } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['error'] ?? 'Registration failed');
+        throw Exception(_extractErrorMessage(response.body, 'Registration failed'));
       }
     } catch (e) {
       debugPrint('Registration error: $e');
@@ -115,8 +125,7 @@ class AuthService {
         
         return authResponse;
       } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['error'] ?? 'Login failed');
+        throw Exception(_extractErrorMessage(response.body, 'Login failed'));
       }
     } catch (e) {
       debugPrint('Login error: $e');
@@ -179,8 +188,7 @@ class AuthService {
         final data = jsonDecode(response.body);
         return User.fromJson(data['user']);
       } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['error'] ?? 'Failed to get user info');
+        throw Exception(_extractErrorMessage(response.body, 'Failed to get user info'));
       }
     } catch (e) {
       debugPrint('Get current user error: $e');
@@ -205,8 +213,7 @@ class AuthService {
         final data = jsonDecode(response.body);
         return data['message'] ?? 'Password reset link sent';
       } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['error'] ?? 'Failed to send reset link');
+        throw Exception(_extractErrorMessage(response.body, 'Failed to send reset link'));
       }
     } catch (e) {
       debugPrint('Forgot password error: $e');
@@ -233,8 +240,7 @@ class AuthService {
         final data = jsonDecode(response.body);
         return data['message'] ?? 'Password reset successful';
       } else {
-        final error = jsonDecode(response.body);
-        throw Exception(error['error'] ?? 'Failed to reset password');
+        throw Exception(_extractErrorMessage(response.body, 'Failed to reset password'));
       }
     } catch (e) {
       debugPrint('Reset password error: $e');
