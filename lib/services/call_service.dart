@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
@@ -171,8 +172,17 @@ class CallService {
     // Listen for incoming call
     socket.emit('subscribe_calls', {});
     
-    // We need to add listeners to the socket directly
-    // These will be added via the socket_service callbacks
+    // Listen for screen share started/stopped via dedicated socket events
+    // (Web client sends these in addition to signal-based notifications)
+    socket.onScreenShareStarted = (data) {
+      debugPrint('🖥️ Remote screen share started (socket event): $data');
+      onScreenShareChanged?.call(true);
+    };
+    
+    socket.onScreenShareStopped = (data) {
+      debugPrint('🖥️ Remote screen share stopped (socket event): $data');
+      onScreenShareChanged?.call(false);
+    };
   }
 
   /// Initiate a call to another user
@@ -452,6 +462,20 @@ class CallService {
   Future<void> _handleOffer(Map<String, dynamic> signal) async {
     debugPrint('📥 Received WebRTC offer (callDirection: $_callDirection, callState: $_callState)');
     
+    // RENEGOTIATION DETECTION: If we already have an active peer connection
+    // with remote description set (i.e., call is connected/connecting), this is
+    // a renegotiation offer (e.g., web started/stopped screen sharing which
+    // adds/removes tracks). We must auto-answer it immediately.
+    final isRenegotiation = signal['renegotiate'] == true;
+    final hasActiveConnection = _peerConnection != null && _remoteDescriptionSet;
+    final isCallActive = _callState == CallState.connected || _callState == CallState.connecting;
+    
+    if (isRenegotiation || (hasActiveConnection && isCallActive)) {
+      debugPrint('🔄 Renegotiation offer detected (renegotiate flag: $isRenegotiation, activePC: $hasActiveConnection, callActive: $isCallActive) - auto-answering');
+      await _processRenegotiationOffer(signal);
+      return;
+    }
+    
     // For incoming calls or when direction is not yet set (cross-room calls),
     // store the offer and wait for user to answer.
     // The answer will be created in answerCall() after user provides local stream
@@ -469,6 +493,56 @@ class CallService {
     await _processOffer(signal);
   }
   
+  /// Process a renegotiation offer during an active call (e.g., screen share started/stopped)
+  /// Unlike _processOffer, this reuses the existing peer connection and does NOT re-add local tracks.
+  Future<void> _processRenegotiationOffer(Map<String, dynamic> signal) async {
+    if (_peerConnection == null) {
+      debugPrint('⚠️ Cannot process renegotiation - no peer connection');
+      return;
+    }
+
+    try {
+      final sdp = signal['sdp'] as String;
+      
+      // Reset remote description flag so ICE candidates are queued during transition
+      _remoteDescriptionSet = false;
+      
+      await _peerConnection!.setRemoteDescription(
+        RTCSessionDescription(sdp, 'offer'),
+      );
+      
+      _remoteDescriptionSet = true;
+      debugPrint('🔄 Remote description set (renegotiation offer)');
+      
+      // Process any queued ICE candidates
+      await _processQueuedCandidates();
+
+      // Create and send answer (do NOT re-add local tracks - they're already there)
+      final answer = await _peerConnection!.createAnswer();
+      await _peerConnection!.setLocalDescription(answer);
+
+      debugPrint('🔄 Sending renegotiation answer to room: $_callRoomId');
+      
+      if (_callRoomId == null || _callRoomId!.isEmpty) {
+        debugPrint('❌ ERROR: _callRoomId is null or empty! Cannot send renegotiation answer.');
+        return;
+      }
+      
+      _socketService.emit('signal', {
+        'room': _callRoomId,
+        'signal': {
+          'type': 'answer',
+          'sdp': answer.sdp,
+          'renegotiate': true,
+        },
+      });
+
+      debugPrint('✅ Renegotiation answer sent successfully');
+    } catch (e) {
+      debugPrint('❌ Error processing renegotiation offer: $e');
+    }
+  }
+
   /// Process the offer and create answer (called after user answers incoming call)
   Future<void> _processOffer(Map<String, dynamic> signal) async {
     if (_peerConnection == null) {
@@ -859,18 +933,16 @@ class CallService {
       
       // On Android, we need to start the foreground service first
       // This is required for media projection on Android 10+
-      /*
       try {
-        await Helper.startForegroundService(
-          notificationTitle: 'Screen Sharing',
-          notificationText: 'You are sharing your screen',
-          enableAudio: true,
-        );
+        const channel = MethodChannel('FlutterWebRTC.Method');
+        await channel.invokeMethod('startForegroundService', {
+          'notificationTitle': 'Screen Sharing',
+          'notificationText': 'You are sharing your screen',
+        });
         debugPrint('🖥️ Foreground service started');
       } catch (e) {
         debugPrint('⚠️ Could not start foreground service (may not be needed on this platform): $e');
       }
-      */
       
       // Get screen capture stream
       _screenStream = await navigator.mediaDevices.getDisplayMedia({
@@ -924,6 +996,11 @@ class CallService {
         },
       });
       
+      // Also notify via dedicated socket event for reliability (matches web client behavior)
+      _socketService.emit('screen_share_started', {
+        'from': '${_socketService.currentUserId}',
+      });
+      
       debugPrint('✅ Screen sharing started');
       return true;
     } catch (e) {
@@ -974,15 +1051,19 @@ class CallService {
         },
       });
       
+      // Also notify via dedicated socket event for reliability (matches web client behavior)
+      _socketService.emit('screen_share_stopped', {
+        'from': '${_socketService.currentUserId}',
+      });
+      
       // Stop the foreground service on Android
-      /*
       try {
-        await Helper.stopForegroundService();
+        const channel = MethodChannel('FlutterWebRTC.Method');
+        await channel.invokeMethod('stopForegroundService');
         debugPrint('🖥️ Foreground service stopped');
       } catch (e) {
         debugPrint('⚠️ Could not stop foreground service: $e');
       }
-      */
       
       debugPrint('✅ Screen sharing stopped');
     } catch (e) {

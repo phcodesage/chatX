@@ -55,6 +55,8 @@ class SocketService {
   final Map<String, Function(Map<String, dynamic>)> _callEndedListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _connectionChangedListeners = {};
   final Map<String, Function()> _reconnectedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _screenShareStartedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _screenShareStoppedListeners = {};
 
   // ---------------------------------------------------------------------------
   // Keyed listener registration / removal helpers
@@ -96,6 +98,8 @@ class SocketService {
       case 'callEnded': _callEndedListeners[key] = callback as Function(Map<String, dynamic>); break;
       case 'connectionChanged': _connectionChangedListeners[key] = callback as Function(Map<String, dynamic>); break;
       case 'reconnected': _reconnectedListeners[key] = callback as Function(); break;
+      case 'screenShareStarted': _screenShareStartedListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'screenShareStopped': _screenShareStoppedListeners[key] = callback as Function(Map<String, dynamic>); break;
     }
   }
 
@@ -136,6 +140,8 @@ class SocketService {
       case 'callEnded': _callEndedListeners.remove(key); break;
       case 'connectionChanged': _connectionChangedListeners.remove(key); break;
       case 'reconnected': _reconnectedListeners.remove(key); break;
+      case 'screenShareStarted': _screenShareStartedListeners.remove(key); break;
+      case 'screenShareStopped': _screenShareStoppedListeners.remove(key); break;
     }
   }
 
@@ -176,6 +182,8 @@ class SocketService {
     _callEndedListeners.remove(key);
     _connectionChangedListeners.remove(key);
     _reconnectedListeners.remove(key);
+    _screenShareStartedListeners.remove(key);
+    _screenShareStoppedListeners.remove(key);
   }
 
   // Broadcast helpers
@@ -237,6 +245,8 @@ class SocketService {
     }
   }
   set onReconnected(Function()? cb) => cb != null ? _reconnectedListeners[_dk] = cb : _reconnectedListeners.remove(_dk);
+  set onScreenShareStarted(Function(Map<String, dynamic>)? cb) => cb != null ? _screenShareStartedListeners[_dk] = cb : _screenShareStartedListeners.remove(_dk);
+  set onScreenShareStopped(Function(Map<String, dynamic>)? cb) => cb != null ? _screenShareStoppedListeners[_dk] = cb : _screenShareStoppedListeners.remove(_dk);
 
   Function(Map<String, dynamic>)? _onSignal;
   
@@ -610,6 +620,17 @@ class SocketService {
     _socket!.on('call_ended', (data) {
       debugPrint('📴 Call ended: $data');
       _broadcast(_callEndedListeners, data as Map<String, dynamic>);
+    });
+
+    // Screen share started/stopped (web client sends these via dedicated socket events)
+    _socket!.on('screen_share_started', (data) {
+      debugPrint('🖥️ Screen share started: $data');
+      _broadcast(_screenShareStartedListeners, data as Map<String, dynamic>);
+    });
+
+    _socket!.on('screen_share_stopped', (data) {
+      debugPrint('🖥️ Screen share stopped: $data');
+      _broadcast(_screenShareStoppedListeners, data as Map<String, dynamic>);
     });
 
     // WebRTC signaling (offer/answer/ICE candidates)
