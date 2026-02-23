@@ -218,7 +218,7 @@ class FirebaseMessagingService {
     await _localNotifications.initialize(
       settings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
-        debugPrint('🔔 Local notification tapped');
+        debugPrint('Local notification tapped');
         if (response.payload != null) {
           _handleNotificationPayload(response.payload!);
         }
@@ -273,7 +273,7 @@ class FirebaseMessagingService {
     // Suppress notification if the user is currently viewing the chat with this sender
     final senderId = int.tryParse(data['sender_id']?.toString() ?? '');
     if (senderId != null && activeChatUserId == senderId) {
-      debugPrint('🔕 Suppressing notification — user is in chat with sender $senderId');
+      debugPrint('Suppressing notification — user is in chat with sender $senderId');
       return;
     }
     
@@ -285,7 +285,7 @@ class FirebaseMessagingService {
         final color = data['color'] as String?;
         if (senderIdStr != null && color != null) {
           await prefs.setString('chat_color_$senderIdStr', color);
-          debugPrint('🎨 Foreground: persisted chat color $color for user $senderIdStr');
+          debugPrint('Foreground: persisted chat color $color for user $senderIdStr');
         }
       } catch (e) {
         debugPrint('Error persisting foreground color change: $e');

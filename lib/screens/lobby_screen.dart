@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import '../models/lobby_user.dart';
 import '../services/lobby_service.dart';
 import '../services/auth_service.dart';
@@ -13,6 +15,7 @@ import 'connected_call_screen.dart';
 import 'task_list_screen.dart';
 import '../services/app_update_service.dart';
 import '../services/storage_service.dart';
+import '../config/api_config.dart';
 
 /// Lobby/Chat list screen
 class LobbyScreen extends StatefulWidget {
@@ -1276,7 +1279,28 @@ class _LobbyScreenState extends State<LobbyScreen> {
               MaterialPageRoute(
                 builder: (context) => ChatScreen(otherUser: user),
               ),
-            ).then((_) {
+            ).then((_) async {
+              // Mark messages from this user as read via REST (fallback for any
+              // messages the socket handler may have missed while offline)
+              try {
+                final token = await StorageService.getToken();
+                if (token != null) {
+                  // Find the most recent message ID (use a large int as sentinel)
+                  await http.post(
+                    Uri.parse(ApiConfig.markReadUrl),
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': 'Bearer $token',
+                    },
+                    body: jsonEncode({
+                      'sender_id': user.id,
+                      'last_message_id': 2147483647, // INT_MAX — marks ALL messages
+                    }),
+                  );
+                }
+              } catch (e) {
+                debugPrint('[LOBBY] mark-read REST fallback failed: $e');
+              }
               // Reload lobby and restore socket listeners when returning from chat
               _loadLobby();
               _setupRealtimeListeners();

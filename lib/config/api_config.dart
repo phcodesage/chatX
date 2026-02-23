@@ -22,6 +22,7 @@ class ApiConfig {
   static String get contactsUrl => '$baseUrl$mobilePrefix/contacts';
   static String get conversationsUrl => '$baseUrl$mobilePrefix/messages/conversations';
   static String get sendMessageUrl => '$baseUrl$mobilePrefix/messages/send';
+  static String get markReadUrl => '$baseUrl$mobilePrefix/messages/mark-read';
   static String get presenceStatusUrl => '$baseUrl$mobilePrefix/presence/status';
   static String get heartbeatUrl => '$baseUrl$mobilePrefix/presence/heartbeat';
   

@@ -154,7 +154,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     
     if (unreadMessageIds.isNotEmpty) {
-      // Mark messages as viewed via socket - this will notify web clients
+      // Mark messages as read/viewed so both web + lobby state clear their badges
+      _socketService.markMessagesRead(widget.otherUser.id);
       _socketService.markMessagesViewed(widget.otherUser.id);
       debugPrint('📧 Sent read confirmations for ${unreadMessageIds.length} messages to update web clients');
     }
