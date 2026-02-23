@@ -56,6 +56,45 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // Screen share foreground service channel
+        val screenShareChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.example.flutter_messenger/screen_share")
+        screenShareChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "startForegroundService" -> {
+                    try {
+                        val title = call.argument<String>("notificationTitle") ?: "Screen Sharing"
+                        val text = call.argument<String>("notificationText") ?: "You are sharing your screen"
+                        val serviceIntent = Intent(this, com.cloudwebrtc.webrtc.FlutterWebRTCForegroundService::class.java).apply {
+                            putExtra("notificationTitle", title)
+                            putExtra("notificationText", text)
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(serviceIntent)
+                        } else {
+                            startService(serviceIntent)
+                        }
+                        Log.d(TAG, "Screen share foreground service started")
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error starting foreground service: ${e.message}", e)
+                        result.error("FOREGROUND_SERVICE_ERROR", e.message, null)
+                    }
+                }
+                "stopForegroundService" -> {
+                    try {
+                        val serviceIntent = Intent(this, com.cloudwebrtc.webrtc.FlutterWebRTCForegroundService::class.java)
+                        stopService(serviceIntent)
+                        Log.d(TAG, "Screen share foreground service stopped")
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error stopping foreground service: ${e.message}", e)
+                        result.error("FOREGROUND_SERVICE_ERROR", e.message, null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
