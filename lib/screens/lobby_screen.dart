@@ -40,6 +40,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Timer? _lastSeenRefreshTimer;
   bool _isHandlingIncomingCall = false;
 
+  // Typing indicator: maps userId → auto-clear timer
+  final Map<int, Timer> _typingUsers = {};
+
   // Avatar colors palette
   static const List<Color> avatarColors = [
     Color(0xFFE91E63), // Pink
@@ -148,6 +151,37 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     // Set initial state from current socket status
     _isBackendAvailable = _socketService.isConnected;
+
+    // Listen for typing events from peers
+    _socketService.addListener('userTyping', key, (Map<String, dynamic> data) {
+      final userId = data['user_id'] as int?;
+      final isTyping = data['is_typing'] as bool? ?? false;
+      if (userId == null) return;
+      if (!mounted) return;
+      setState(() {
+        if (isTyping) {
+          _typingUsers[userId]?.cancel();
+          _typingUsers[userId] = Timer(const Duration(seconds: 5), () {
+            if (mounted) setState(() => _typingUsers.remove(userId));
+          });
+        } else {
+          _typingUsers[userId]?.cancel();
+          _typingUsers.remove(userId);
+        }
+      });
+    });
+
+    _socketService.addListener('typingUpdate', key, (Map<String, dynamic> data) {
+      final userId = (data['user_id'] ?? data['sender_id']) as int?;
+      if (userId == null) return;
+      if (!mounted) return;
+      setState(() {
+        _typingUsers[userId]?.cancel();
+        _typingUsers[userId] = Timer(const Duration(seconds: 5), () {
+          if (mounted) setState(() => _typingUsers.remove(userId));
+        });
+      });
+    });
   }
   
   /// Handle cross-room call offer from web client
@@ -622,6 +656,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void dispose() {
     _searchController.dispose();
     _lastSeenRefreshTimer?.cancel();
+    // Cancel all active typing timers
+    for (final timer in _typingUsers.values) {
+      timer.cancel();
+    }
+    _typingUsers.clear();
     // Clear all lobby socket listeners to prevent memory leaks
     _socketService.removeListenersForKey('lobby');
     super.dispose();
@@ -1407,15 +1446,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      // Last message preview
-                      Text(
-                        _getLastMessagePreview(),
-                        style: TextStyle(
-                          color: Colors.grey[400],
-                          fontSize: 12,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      // Last message preview OR typing indicator
+                      _typingUsers.containsKey(user.id)
+                          ? const _TypingIndicator()
+                          : Text(
+                              _getLastMessagePreview(),
+                              style: TextStyle(
+                                color: Colors.grey[400],
+                                fontSize: 12,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                     ],
                   ),
                 ),
@@ -1463,6 +1504,86 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Animated WhatsApp-style typing indicator (3 bouncing dots + label)
+class _TypingIndicator extends StatefulWidget {
+  const _TypingIndicator();
+
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late List<Animation<double>> _dotAnimations;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+
+    // Stagger each dot by 200 ms
+    _dotAnimations = List.generate(3, (i) {
+      final start = i * 0.2;
+      final end = start + 0.4;
+      return Tween<double>(begin: 0.25, end: 1.0).animate(
+        CurvedAnimation(
+          parent: _controller,
+          curve: Interval(start, end, curve: Curves.easeInOut),
+        ),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(
+              'typing',
+              style: TextStyle(
+                color: const Color(0xFF00D9FF),
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+            const SizedBox(width: 3),
+            ...List.generate(3, (i) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                child: Opacity(
+                  opacity: _dotAnimations[i].value,
+                  child: const Text(
+                    '●',
+                    style: TextStyle(
+                      color: Color(0xFF00D9FF),
+                      fontSize: 8,
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        );
+      },
     );
   }
 }
