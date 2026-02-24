@@ -26,8 +26,7 @@ class IncomingCallSetupModal extends StatefulWidget {
   State<IncomingCallSetupModal> createState() => _IncomingCallSetupModalState();
 }
 
-class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
-    with SingleTickerProviderStateMixin {
+class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
   // Device lists
   List<MediaDeviceInfo> _microphones = [];
   List<MediaDeviceInfo> _speakers = [];
@@ -55,9 +54,6 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
   bool _isDisposed = false;
   bool _streamHandedOff = false;
 
-  // Pulse animation for caller avatar
-  late AnimationController _pulseController;
-  
   // Socket service for listening to call events
   final SocketService _socketService = SocketService();
   static const String _listenerKey = 'incoming_call_setup_modal';
@@ -66,11 +62,6 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
   void initState() {
     super.initState();
     _videoEnabled = widget.callType == 'video';
-    
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    )..repeat(reverse: true);
     
     _initializeDevices();
     
@@ -260,7 +251,6 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
   @override
   void dispose() {
     _isDisposed = true;
-    _pulseController.dispose();
     // Remove socket listeners
     _socketService.removeListener('callEnded', _listenerKey);
     _socketService.removeListener('callDeclined', _listenerKey);
@@ -314,50 +304,40 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal>
   Widget _buildCallerInfo() {
     return Column(
       children: [
-        // Pulsing avatar
-        AnimatedBuilder(
-          animation: _pulseController,
-          builder: (context, child) {
-            return Container(
-              width: 100 + (_pulseController.value * 15),
-              height: 100 + (_pulseController.value * 15),
-              decoration: BoxDecoration(
+        // Static avatar (no size-changing animation to avoid layout shifts)
+        Container(
+          width: 100,
+          height: 100,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color.fromRGBO(76, 175, 80, 0.25),
+          ),
+          child: Center(
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: const BoxDecoration(
                 shape: BoxShape.circle,
-                color: Color.fromRGBO(
-                  76,
-                  175,
-                  80,
-                  0.3 - (_pulseController.value * 0.2),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
                 ),
               ),
               child: Center(
-                child: Container(
-                  width: 80,
-                  height: 80,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      widget.callerName.isNotEmpty
-                          ? widget.callerName[0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                child: Text(
+                  widget.callerName.isNotEmpty
+                      ? widget.callerName[0].toUpperCase()
+                      : '?',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 36,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
-            );
-          },
+            ),
+          ),
         ),
         const SizedBox(height: 16),
         Text(

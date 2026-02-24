@@ -16,6 +16,7 @@ import 'task_list_screen.dart';
 import '../services/app_update_service.dart';
 import '../services/storage_service.dart';
 import '../config/api_config.dart';
+import '../services/presence_service.dart';
 
 /// Lobby/Chat list screen
 class LobbyScreen extends StatefulWidget {
@@ -124,13 +125,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
 
     // Listen for incoming calls (global handler)
+    // NOTE: We only listen to 'incomingCall' here (not 'crossRoomCallOffer') because the
+    // server sends BOTH events to the callee for the same call. 'incomingCall' contains
+    // full call data (call_id, call_room_id) and is sufficient for mobile clients.
+    // Listening to both would open two modals for the same call.
     _socketService.addListener('incomingCall', key, (Map<String, dynamic> data) {
       _handleIncomingCall(data);
-    });
-    
-    // Listen for cross-room call offers (from web client)
-    _socketService.addListener('crossRoomCallOffer', key, (Map<String, dynamic> data) {
-      _handleCrossRoomCallOffer(data);
     });
 
     // Listen for backend connection state changes
@@ -294,6 +294,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Future<void> _handleIncomingCall(Map<String, dynamic> data) async {
     if (!mounted) return;
     
+    // Guard: ignore if already in an active call (e.g. screen-share renegotiation
+    // sends a new incoming_call event while ConnectedCallScreen is open)
+    if (PresenceService().isCallInProgress) {
+      debugPrint('⚠️ Ignoring incoming_call — call already in progress (screen share or renegotiation?)');
+      return;
+    }
+    
     // Guard against duplicate/rapid incoming call events
     if (_isHandlingIncomingCall) {
       debugPrint('⚠️ Already handling an incoming call, ignoring duplicate event');
@@ -318,16 +325,23 @@ class _LobbyScreenState extends State<LobbyScreen> {
       return;
     }
     
+    // START buffering WebRTC signals immediately — before the async callService.initialize().
+    // Previously this was triggered by the crossRoomCallOffer socket event, but we no longer
+    // listen for that in the lobby. Without buffering, any offer signal that arrives during
+    // the async gap would be silently dropped (_bufferSignals=false, _onSignal=null → noop).
+    _socketService.startSignalBuffering();
+    
     // Initialize call service (fetches ICE servers) and set up the call state
     final callService = CallService();
     await callService.initialize();
     callService.handleIncomingCall(data);
     
-    // Set up signal handler for WebRTC
+    // Set up signal handler for WebRTC — buffered signals are replayed immediately
     _socketService.onSignal = (signalData) {
       debugPrint('📡 Signal received for incoming call: $signalData');
       callService.handleSignal(signalData);
     };
+
     
     // Use keyed listeners for call ended/declined handlers to avoid overwriting
     const callListenerKey = 'lobby_incoming_call';

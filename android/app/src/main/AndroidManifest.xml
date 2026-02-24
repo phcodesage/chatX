@@ -16,6 +16,10 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <!-- Required for incoming call full-screen notification on lock screen (Android 14+) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <!-- Allows notification to wake screen for incoming calls -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     
     <!-- APK installation permission for OTA updates -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>

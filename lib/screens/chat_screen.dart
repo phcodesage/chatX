@@ -736,10 +736,69 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
+    // ── Call summary system messages ──────────────────────────────────────
+    // Show an in-chat pill when a call ends, is missed, or is declined.
+    // Only insert if the event involves the person we are currently chatting with.
+    _socketService.addListener('call_ended', key, (Map<String, dynamic> data) {
+      final callerId = data['caller_id'] as int?;
+      final calleeId = data['callee_id'] as int?;
+      if (callerId == null || calleeId == null) return;
+      if (callerId != widget.otherUser.id && calleeId != widget.otherUser.id) return;
+      // Format duration if available (duration is stored in seconds by the server)
+      final rawDuration = data['duration'];
+      String durationStr = '';
+      if (rawDuration != null) {
+        final secs = (rawDuration is num ? rawDuration.toInt() : int.tryParse(rawDuration.toString()) ?? 0);
+        final m = (secs ~/ 60).toString().padLeft(2, '0');
+        final s = (secs % 60).toString().padLeft(2, '0');
+        durationStr = ' · $m:$s';
+      }
+      final callType = data['call_type'] as String? ?? 'call';
+      final icon = callType == 'video' ? '📹' : '📞';
+      _insertCallSummaryMessage('$icon Call ended$durationStr');
+    });
+
+    _socketService.addListener('call_declined', key, (Map<String, dynamic> data) {
+      final callerId = data['caller_id'] as int?;
+      final calleeId = data['callee_id'] as int?;
+      if (callerId == null || calleeId == null) return;
+      if (callerId != widget.otherUser.id && calleeId != widget.otherUser.id) return;
+      _insertCallSummaryMessage('📞 Call declined');
+    });
+
+    _socketService.addListener('call_missed', key, (Map<String, dynamic> data) {
+      final callerId = data['caller_id'] as int?;
+      final calleeId = data['callee_id'] as int?;
+      if (callerId == null || calleeId == null) return;
+      if (callerId != widget.otherUser.id && calleeId != widget.otherUser.id) return;
+      _insertCallSummaryMessage('📞 Missed call');
+    });
+
     // Set initial state from current socket status
     _isBackendAvailable = _socketService.isConnected;
   }
   
+  /// Insert an ephemeral system message pill for call events (not persisted)
+  void _insertCallSummaryMessage(String text) {
+    if (!mounted) return;
+    final now = DateTime.now().toUtc();
+    final synthetic = Message(
+      id: -(now.millisecondsSinceEpoch), // negative id = synthetic, never collides with DB
+      senderId: 0,
+      recipientId: 0,
+      content: text,
+      messageType: 'system',
+      timestamp: now.toIso8601String(),
+      timestampMs: now.millisecondsSinceEpoch,
+      isRead: true,
+      status: 'read',
+      threadId: '',
+      reactions: {},
+      isDeleted: false,
+    );
+    setState(() => _messages.insert(0, synthetic));
+  }
+
   /// Handle cross-room call offer from web client while in chat
   Future<void> _handleCrossRoomCallOfferInChat(Map<String, dynamic> data) async {
     if (!mounted) return;
@@ -3258,11 +3317,37 @@ class _ChatScreenState extends State<ChatScreen> {
                                 return Column(
                                   children: [
                                     if (dateSeparator != null) dateSeparator,
-                                    _buildSwipeableMessage(
-                                      message,
-                                      isSentByMe,
-                                      _buildMessageBubble(message, isSentByMe),
-                                    ),
+                                    // System messages (call summaries) render as a centered pill
+                                    if (message.messageType == 'system')
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 6),
+                                        child: Center(
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 14,
+                                              vertical: 5,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white.withOpacity(0.08),
+                                              borderRadius: BorderRadius.circular(20),
+                                            ),
+                                            child: Text(
+                                              message.content,
+                                              style: TextStyle(
+                                                color: Colors.grey[400],
+                                                fontSize: 12,
+                                                fontStyle: FontStyle.italic,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    else
+                                      _buildSwipeableMessage(
+                                        message,
+                                        isSentByMe,
+                                        _buildMessageBubble(message, isSentByMe),
+                                      ),
                                   ],
                                 );
                               },

@@ -34,6 +34,7 @@ class CallService {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaStream? _remoteStream;
+  MediaStream? _primaryRemoteStream; // Track the first (camera) stream
   MediaStream? _screenStream;
   RTCDataChannel? _dataChannel;
   
@@ -181,6 +182,11 @@ class CallService {
     
     socket.onScreenShareStopped = (data) {
       debugPrint('🖥️ Remote screen share stopped (socket event): $data');
+      if (_primaryRemoteStream != null) {
+        debugPrint('🖥️ Reverting to primary camera stream');
+        _remoteStream = _primaryRemoteStream;
+        onRemoteStream?.call(_remoteStream!);
+      }
       onScreenShareChanged?.call(false);
     };
   }
@@ -342,6 +348,9 @@ class CallService {
         final stream = event.streams[0];
         debugPrint('🎥 Stream ID: ${stream.id}');
         
+        // Save the very first remote stream as our primary (camera) stream
+        _primaryRemoteStream ??= stream;
+        
         // Always update remote stream - this handles both initial stream and screen share
         _remoteStream = stream;
         onRemoteStream?.call(_remoteStream!);
@@ -392,6 +401,11 @@ class CallService {
         onScreenShareChanged?.call(true);
       } else if (message.text.contains('screen-share-stopped')) {
         debugPrint('🖥️ Remote stopped screen sharing (via data channel)');
+        if (_primaryRemoteStream != null) {
+          debugPrint('🖥️ Reverting to primary camera stream');
+          _remoteStream = _primaryRemoteStream;
+          onRemoteStream?.call(_remoteStream!);
+        }
         onScreenShareChanged?.call(false);
       }
     };
@@ -451,6 +465,11 @@ class CallService {
         break;
       case 'screen-share-stopped':
         debugPrint('🖥️ Remote user stopped screen sharing');
+        if (_primaryRemoteStream != null) {
+          debugPrint('🖥️ Reverting to primary camera stream');
+          _remoteStream = _primaryRemoteStream;
+          onRemoteStream?.call(_remoteStream!);
+        }
         onScreenShareChanged?.call(false);
         break;
       default:
@@ -460,15 +479,17 @@ class CallService {
 
   /// Handle incoming offer
   Future<void> _handleOffer(Map<String, dynamic> signal) async {
-    debugPrint('📥 Received WebRTC offer (callDirection: $_callDirection, callState: $_callState)');
+    debugPrint('📥 Received WebRTC offer (callDirection: $_callDirection, callState: $_callState, remoteDescSet: $_remoteDescriptionSet)');
     
     // RENEGOTIATION DETECTION: If we already have an active peer connection
-    // with remote description set (i.e., call is connected/connecting), this is
-    // a renegotiation offer (e.g., web started/stopped screen sharing which
-    // adds/removes tracks). We must auto-answer it immediately.
+    // with remote description set (i.e., call is TRULY connected/connecting),
+    // this is a renegotiation offer (e.g., screen share). We auto-answer it.
+    // NOTE: 'connecting' with no peer connection = we're still setting up the
+    // initial call — that is NOT renegotiation.
     final isRenegotiation = signal['renegotiate'] == true;
     final hasActiveConnection = _peerConnection != null && _remoteDescriptionSet;
-    final isCallActive = _callState == CallState.connected || _callState == CallState.connecting;
+    final isCallActive = _callState == CallState.connected ||
+        (_callState == CallState.connecting && hasActiveConnection);
     
     if (isRenegotiation || (hasActiveConnection && isCallActive)) {
       debugPrint('🔄 Renegotiation offer detected (renegotiate flag: $isRenegotiation, activePC: $hasActiveConnection, callActive: $isCallActive) - auto-answering');
@@ -478,8 +499,17 @@ class CallService {
     
     // For incoming calls or when direction is not yet set (cross-room calls),
     // store the offer and wait for user to answer.
-    // The answer will be created in answerCall() after user provides local stream
+    // The answer will be created in answerCall() after user provides local stream.
     if (_callDirection == CallDirection.incoming || _callDirection == null) {
+      // DUPLICATE OFFER GUARD: the mobile may receive the same offer twice —
+      // once via chat room membership and once via backend personal-room relay.
+      // Deduplicate by comparing SDP fingerprint so the second delivery is ignored.
+      final incomingSdp = signal['sdp'] as String?;
+      final existingSdp = _pendingOffer?['sdp'] as String?;
+      if (incomingSdp != null && existingSdp != null && incomingSdp == existingSdp) {
+        debugPrint('⏭ Duplicate offer received (same SDP) — ignoring');
+        return;
+      }
       debugPrint('📥 Storing offer for incoming call - waiting for user to answer');
       _pendingOffer = signal;
       // If direction not set, this is likely a cross-room call - set it now
@@ -807,6 +837,7 @@ class CallService {
     // The caller should dispose it when appropriate
     _localStream = null;
     _remoteStream = null;
+    _primaryRemoteStream = null;
     
     _callState = CallState.idle;
     _callDirection = null;
@@ -864,6 +895,7 @@ class CallService {
     
     _localStream = null;
     _remoteStream = null;
+    _primaryRemoteStream = null;
     _callState = CallState.idle;
     _callDirection = null;
     _callId = null;

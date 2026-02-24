@@ -168,13 +168,13 @@ class FirebaseMessagingService {
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
         debugPrint('📨 Foreground message received: ${message.notification?.title}');
         
-        // For call notifications in foreground, trigger the call handler directly
-        // instead of showing a notification (socket already handles this, but as fallback)
+        // For call notifications in foreground, trigger the call handler AND show
+        // a heads-up notification so the user sees a banner even when the app is open.
         final data = message.data;
         if (data['type'] == 'call') {
-          debugPrint('📞 Foreground call notification - triggering call handler');
+          debugPrint('📞 Foreground call notification - triggering call handler + showing banner');
           _handleNotificationTap(data);
-          return;
+          // Fall through to showNotification so a banner is displayed
         }
         
         showNotification(message);
@@ -251,6 +251,7 @@ class FirebaseMessagingService {
       importance: Importance.max,
       playSound: true,
       enableVibration: true,
+      showBadge: true,
     );
 
     await _localNotifications
@@ -313,12 +314,16 @@ class FirebaseMessagingService {
         channelId,
         channelName,
         channelDescription: body,
-        importance: Importance.high,
-        priority: Priority.high,
+        importance: data['type'] == 'call' ? Importance.max : Importance.high,
+        priority: data['type'] == 'call' ? Priority.max : Priority.high,
         showWhen: true,
         enableVibration: true,
         playSound: true,
         icon: '@mipmap/ic_launcher',
+        // For incoming calls: request full-screen intent so the notification
+        // appears as a heads-up alert even when the screen is off / locked
+        fullScreenIntent: data['type'] == 'call',
+        ticker: data['type'] == 'call' ? 'Incoming call' : null,
       );
 
       const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(

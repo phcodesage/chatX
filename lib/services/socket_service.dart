@@ -268,9 +268,17 @@ class SocketService {
     }
   }
   
-  /// Start buffering signals (call before expecting cross-room call)
+  /// Start buffering signals (call before expecting cross-room call).
+  /// If auto-buffering already kicked in (signals arrived before handler was
+  /// set) the existing buffer is PRESERVED so no ICE candidates are lost.
   void startSignalBuffering() {
+    if (_bufferSignals) {
+      // Auto-buffer already running — don't wipe any pre-buffered signals.
+      debugPrint('📡 Signal buffering already active (${_signalBuffer.length} signals preserved)');
+      return;
+    }
     _bufferSignals = true;
+    // Only clear when we're starting fresh (no pre-buffered signals).
     _signalBuffer.clear();
     debugPrint('📡 Started signal buffering');
   }
@@ -637,14 +645,24 @@ class SocketService {
     _socket!.on('signal', (data) {
       debugPrint('📡 Signal received: $data');
       final signalData = data as Map<String, dynamic>;
-      if (_bufferSignals && _onSignal == null) {
-        // Buffer signal if we're expecting a call but handler not set yet
+      if (_onSignal != null) {
+        // Handler is ready — deliver immediately (normal case during active call)
+        _onSignal!.call(signalData);
+      } else {
+        // No handler set yet. Auto-start buffering to capture trickle-ICE candidates
+        // that arrive before cross_room_call_offer or before the call is answered.
+        // Without this, pre-offer ICE candidates (sent by trickle ICE before the SDP
+        // offer) are silently dropped, leaving the callee with zero remote ICE pairs
+        // → ICE negotiation fails → PeerConnectionFailed.
+        if (!_bufferSignals) {
+          _bufferSignals = true;
+          debugPrint('📡 Auto-started signal buffering (pre-offer trickle ICE)');
+        }
         _signalBuffer.add(signalData);
         debugPrint('📡 Buffered signal (total: ${_signalBuffer.length})');
-      } else {
-        _onSignal?.call(signalData);
       }
     });
+
   }
 
   /// Disconnect from Socket.IO server
