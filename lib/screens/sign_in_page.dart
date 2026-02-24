@@ -29,15 +29,14 @@ class _SignInPageState extends State<SignInPage> {
   @override
   void initState() {
     super.initState();
-    _loadRememberedCredentials();
+    _loadRememberedUsername();
   }
 
-  Future<void> _loadRememberedCredentials() async {
-    final creds = await StorageService.getRememberedCredentials();
-    if (creds != null && mounted) {
+  Future<void> _loadRememberedUsername() async {
+    final rememberedUsername = await StorageService.getRememberedUsername();
+    if (rememberedUsername != null && mounted) {
       setState(() {
-        _username.text = creds['username'] ?? '';
-        _password.text = creds['password'] ?? '';
+        _username.text = rememberedUsername;
         remember = true;
       });
     }
@@ -64,9 +63,9 @@ class _SignInPageState extends State<SignInPage> {
     try {
       await AuthService.login(username: username, password: password);
       
-      // Save or clear remembered credentials based on checkbox
+      // Save or clear remembered username based on checkbox
       if (remember) {
-        await StorageService.saveRememberedCredentials(username, password);
+        await StorageService.saveRememberedUsername(username);
       } else {
         await StorageService.clearRememberedCredentials();
       }

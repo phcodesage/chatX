@@ -17,7 +17,7 @@ class FCMService {
         return false;
       }
 
-      debugPrint('🔑 Auth token retrieved: ${token.substring(0, 20)}...');
+      debugPrint('🔑 Auth token available for FCM update');
       debugPrint('📱 Sending FCM token to: $baseUrl/api/mobile/user/fcm-token');
 
       final response = await http.post(
