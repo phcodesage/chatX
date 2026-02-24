@@ -2,7 +2,8 @@
 /// Change the baseUrl here to point to your backend server
 class ApiConfig {
   // Base URL for the API - change this to switch backends
-  static const String baseUrl = 'https://m.flask-meet.site/';
+  static const String baseUrl = 'https://m.flask-meet.site/'; 
+  //static const String baseUrl = 'https://m.flask-meet.site/'; //local
   
   // API endpoints
   static const String authPrefix = '/api/auth';

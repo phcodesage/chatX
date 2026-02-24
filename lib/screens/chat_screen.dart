@@ -1534,6 +1534,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final content = _messageController.text.trim();
     if (content.isEmpty) return;
 
+    // Dismiss keyboard when sending (works for both the UI button and keyboard send key)
+    FocusScope.of(context).unfocus();
+
     // Capture reply info before clearing
     final replyToId = _replyingToMessage?.id;
     String? replyPreviewContent;
@@ -3521,11 +3524,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                     isDense: true,
                                   ),
                                   onChanged: _onTextChanged,
-                                  onSubmitted: (_) => _sendMessage(),
                                   minLines: 1,
-                                  maxLines: 3,
-                                  textInputAction: TextInputAction.send,
-                                  keyboardType: TextInputType.text,
+                                  maxLines: 5,
+                                  textInputAction: TextInputAction.newline,
+                                  keyboardType: TextInputType.multiline,
                                   textCapitalization: TextCapitalization.sentences,
                                   enableInteractiveSelection: true,
                                   autocorrect: true,
