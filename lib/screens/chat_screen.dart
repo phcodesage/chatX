@@ -55,6 +55,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String _typingPreview = '';
   int? _currentUserId;
   Timer? _typingTimer;
+  Timer? _typingHideTimer; // auto-clears the partner's typing indicator if stop event is missed
   Timer? _typingUpdateThrottle;
   Timer? _lastSeenRefreshTimer;
   DateTime? _lastTypingUpdate;
@@ -167,6 +168,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_isKeyboardVisible != isVisible) {
       setState(() {
         _isKeyboardVisible = isVisible;
+        // Auto-close emoji picker when keyboard opens (user tapped text field)
+        if (isVisible && _showEmojiPicker) {
+          _showEmojiPicker = false;
+        }
       });
     }
   }
@@ -298,9 +303,12 @@ class _ChatScreenState extends State<ChatScreen> {
         // Skip if this is our own message (we already have it optimistically)
         if (message.senderId == _currentUserId) return;
 
+        // Always clear typing indicator when a real message arrives
+        _typingHideTimer?.cancel();
+
         setState(() {
           _messages.insert(0, message);
-          // Clear typing preview when message is received
+          // Clear typing preview whenever a message from partner arrives
           _otherUserTyping = false;
           _typingPreview = '';
           
@@ -319,17 +327,13 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         }
         
-        // If at bottom, auto-scroll and mark messages as read immediately
-        if (_isAtBottom && message.senderId == widget.otherUser.id) {
-          // Mark messages from sender as read immediately - this will show "seen" on web
+        // Mark as read whenever chat is open and message is from partner.
+        // Don't guard on _isAtBottom — inserting into the list shifts the
+        // scroll offset momentarily, making _isAtBottom transiently false.
+        if (message.senderId == widget.otherUser.id) {
           _socketService.markMessagesRead(widget.otherUser.id);
-          
-          // Also mark specific messages as viewed for real-time status updates
           _socketService.markMessagesViewed(widget.otherUser.id);
-          
-          debugPrint('📧 Immediately marked message ${message.id} as seen - web will show "seen" status');
-          
-          // Scroll to bottom
+          debugPrint('📧 Marked message ${message.id} as seen (chat is open)');
           _scrollToBottom();
         }
       }
@@ -337,7 +341,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // Listen for message_sent (echoes our own messages from other devices)
     _socketService.addListener('messageSent', key, (Map<String, dynamic> data) {
-      final recipientId = data['recipient_id'] as int?;
+      final recipientId = _toInt(data['recipient_id']);
       // Only process if this is for the current conversation
       if (recipientId == widget.otherUser.id) {
         final message = Message.fromJson(data);
@@ -379,11 +383,16 @@ class _ChatScreenState extends State<ChatScreen> {
           
           if (isTyping) {
             _otherUserTyping = true;
-            // Update preview if message is provided
             if (message.isNotEmpty) {
               _typingPreview = message;
             }
+            // Auto-hide after 6 s in case typing_stop is never received
+            _typingHideTimer?.cancel();
+            _typingHideTimer = Timer(const Duration(seconds: 6), () {
+              if (mounted) setState(() { _otherUserTyping = false; _typingPreview = ''; });
+            });
           } else {
+            _typingHideTimer?.cancel();
             _otherUserTyping = false;
             _typingPreview = '';
           }
@@ -400,6 +409,13 @@ class _ChatScreenState extends State<ChatScreen> {
           _otherUserTyping = preview.isNotEmpty;
           _typingPreview = preview;
         });
+        // Reset the auto-hide timer on every preview update
+        _typingHideTimer?.cancel();
+        if (preview.isNotEmpty) {
+          _typingHideTimer = Timer(const Duration(seconds: 6), () {
+            if (mounted) setState(() { _otherUserTyping = false; _typingPreview = ''; });
+          });
+        }
       }
     });
 
@@ -501,6 +517,30 @@ class _ChatScreenState extends State<ChatScreen> {
     // Listen for messages read notifications
     _socketService.addListener('messagesRead', key, (Map<String, dynamic> data) {
       _handleMessagesRead(data);
+    });
+
+    // Listen for individual message delivery confirmations
+    _socketService.addListener('messageDelivered', key, (Map<String, dynamic> data) {
+      final messageId = _toInt(data['message_id']);
+      if (messageId != null) {
+        _handleMessageStatusUpdate({
+          'message_id': messageId,
+          'status': 'delivered',
+          'delivered_at': data['delivered_at'] ?? DateTime.now().toIso8601String(),
+        });
+      }
+    });
+
+    // Listen for individual message read confirmations
+    _socketService.addListener('messageRead', key, (Map<String, dynamic> data) {
+      final messageId = _toInt(data['message_id']);
+      if (messageId != null) {
+        _handleMessageStatusUpdate({
+          'message_id': messageId,
+          'status': 'seen',
+          'read_at': data['read_at'] ?? DateTime.now().toIso8601String(),
+        });
+      }
     });
 
     // Listen for file messages from web
@@ -1534,9 +1574,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final content = _messageController.text.trim();
     if (content.isEmpty) return;
 
-    // Dismiss keyboard when sending (works for both the UI button and keyboard send key)
-    FocusScope.of(context).unfocus();
-
     // Capture reply info before clearing
     final replyToId = _replyingToMessage?.id;
     String? replyPreviewContent;
@@ -1720,6 +1757,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) {
       setState(() => _isTyping = false);
     }
+    // Cancel any pending throttled typing update so it doesn't fire after stop
+    _typingUpdateThrottle?.cancel();
+    _typingUpdateThrottle = null;
+    // Send empty typing_update to explicitly clear live preview on receiver
+    _socketService.sendTypingUpdate(widget.otherUser.id, '');
     _socketService.stopTyping(widget.otherUser.id);
     _typingTimer?.cancel();
   }
@@ -2604,10 +2646,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Toggle emoji picker visibility (inline below input)
+  /// Behaves like FB Messenger: emoji picker replaces the keyboard.
   void _showEmojiPickerModal(BuildContext context) {
-    setState(() {
-      _showEmojiPicker = !_showEmojiPicker;
-    });
+    if (_showEmojiPicker) {
+      // Closing emoji picker → bring keyboard back
+      setState(() {
+        _showEmojiPicker = false;
+      });
+      _inputFocusNode.requestFocus();
+    } else {
+      // Opening emoji picker → dismiss keyboard first
+      _inputFocusNode.unfocus();
+      setState(() {
+        _showEmojiPicker = true;
+      });
+    }
   }
 
   // Emoji category tab index
@@ -3092,6 +3145,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _audioPlayer.dispose();
     _inputFocusNode.dispose();
     _typingTimer?.cancel();
+    _typingHideTimer?.cancel();
     _typingUpdateThrottle?.cancel();
     _lastSeenRefreshTimer?.cancel();
     
@@ -3493,17 +3547,19 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                           child: Row(
                             children: [
-                              // Emoji picker button (inside input)
+                              // Emoji picker button (inside input) - toggles between emoji/keyboard icon
                               IconButton(
                                 onPressed: () => _showEmojiPickerModal(context),
-                                icon: const Icon(
-                                  Icons.sentiment_satisfied_alt_outlined,
+                                icon: Icon(
+                                  _showEmojiPicker
+                                      ? Icons.keyboard_outlined
+                                      : Icons.sentiment_satisfied_alt_outlined,
                                   color: Colors.white70,
                                   size: 18,
                                 ),
                                 padding: const EdgeInsets.all(6),
                                 constraints: const BoxConstraints(),
-                                tooltip: 'Emoji',
+                                tooltip: _showEmojiPicker ? 'Keyboard' : 'Emoji',
                               ),
                               // Text input
                               Expanded(
@@ -4538,19 +4594,39 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Safely parse any numeric type (int, double, String) to int.
+  /// Socket.IO JSON may deliver numbers as double on some platforms.
+  int? _toInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
   /// Handle message status updates (delivered/seen)
   void _handleMessageStatusUpdate(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
+    final messageId = _toInt(data['message_id']);
     final status = data['status'] as String?;
     final deliveredAt = data['delivered_at'] as String?;
     final readAt = data['read_at'] as String?;
     
     if (messageId == null || status == null) return;
+
+    // Status priority — never downgrade (server may send 'seen' then 'delivered' out of order)
+    const statusRank = {'sending': 0, 'sent': 1, 'delivered': 2, 'seen': 3};
     
     setState(() {
       final index = _messages.indexWhere((m) => m.id == messageId);
       if (index != -1) {
         final message = _messages[index];
+        // Skip if incoming status is lower priority than current
+        final currentRank = statusRank[message.status] ?? 0;
+        final incomingRank = statusRank[status] ?? 0;
+        if (incomingRank < currentRank) {
+          debugPrint('⚠️ Ignoring status downgrade for $messageId: ${message.status} → $status');
+          return;
+        }
         final updatedMessage = Message(
           id: message.id,
           senderId: message.senderId,
@@ -4592,8 +4668,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Handle messages read notifications
   void _handleMessagesRead(Map<String, dynamic> data) {
-    final readerId = data['reader_id'] as int?;
-    final messageCount = data['message_count'] as int?;
+    final readerId = _toInt(data['reader_id']);
+    final messageCount = _toInt(data['message_count']);
     
     if (readerId == widget.otherUser.id && messageCount != null && messageCount > 0) {
       debugPrint('✓✓ ${widget.otherUser.fullName} read $messageCount messages');
