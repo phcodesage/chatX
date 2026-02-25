@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.drawable.Icon
+import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
 import android.util.Rational
@@ -19,9 +20,15 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val TAG = "PiP"
     private val CHANNEL = "com.example.flutter_messenger/pip"
+    private val AUDIO_CHANNEL = "com.example.flutter_messenger/audio_recorder"
     private var methodChannel: MethodChannel? = null
     private var isInCall = false
     private var isMuted = false
+
+    // Native audio recorder for accurate amplitude readings
+    @Suppress("DEPRECATION")
+    private var audioRecorder: MediaRecorder? = null
+    private var currentRecordingPath: String? = null
 
     companion object {
         private const val ACTION_TOGGLE_MIC = "com.example.flutter_messenger.PIP_TOGGLE_MIC"
@@ -56,7 +63,95 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // Screen share foreground service channel
+        // ── Audio recorder channel ─────────────────────────────────────────
+        // Uses MediaRecorder.getMaxAmplitude() for accurate real-time amplitude.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUDIO_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "startRecording" -> {
+                        try {
+                            val path = call.argument<String>("path")
+                                ?: return@setMethodCallHandler result.error(
+                                    "NO_PATH", "Recording path is required", null
+                                )
+                            // Release any existing recorder
+                            audioRecorder?.apply { try { stop() } catch (_: Exception) {}; release() }
+                            @Suppress("DEPRECATION")
+                            audioRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                MediaRecorder(this)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                MediaRecorder()
+                            }
+                            audioRecorder!!.apply {
+                                setAudioSource(MediaRecorder.AudioSource.MIC)
+                                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                                setAudioEncodingBitRate(128000)
+                                setAudioSamplingRate(44100)
+                                setOutputFile(path)
+                                prepare()
+                                start()
+                            }
+                            currentRecordingPath = path
+                            Log.d(TAG, "Audio recording started: $path")
+                            result.success(true)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "startRecording error: ${e.message}", e)
+                            result.error("RECORD_ERROR", e.message, null)
+                        }
+                    }
+                    "getAmplitude" -> {
+                        // getMaxAmplitude() resets after each call — perfect for scrolling waveform
+                        val amplitude = audioRecorder?.maxAmplitude ?: 0
+                        result.success(amplitude)
+                    }
+                    "pauseRecording" -> {
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                audioRecorder?.pause()
+                                result.success(true)
+                            } else {
+                                result.error("API_LEVEL", "Pause requires API 24+", null)
+                            }
+                        } catch (e: Exception) {
+                            result.error("PAUSE_ERROR", e.message, null)
+                        }
+                    }
+                    "resumeRecording" -> {
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                audioRecorder?.resume()
+                                result.success(true)
+                            } else {
+                                result.error("API_LEVEL", "Resume requires API 24+", null)
+                            }
+                        } catch (e: Exception) {
+                            result.error("RESUME_ERROR", e.message, null)
+                        }
+                    }
+                    "stopRecording" -> {
+                        try {
+                            audioRecorder?.apply {
+                                stop()
+                                release()
+                            }
+                            audioRecorder = null
+                            val path = currentRecordingPath
+                            currentRecordingPath = null
+                            Log.d(TAG, "Audio recording stopped: $path")
+                            result.success(path)
+                        } catch (e: Exception) {
+                            audioRecorder = null
+                            Log.e(TAG, "stopRecording error: ${e.message}", e)
+                            result.error("STOP_ERROR", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // ── Screen share foreground service channel ────────────────────────
         val screenShareChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.example.flutter_messenger/screen_share")
         screenShareChannel.setMethodCallHandler { call, result ->
             when (call.method) {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
@@ -99,9 +100,12 @@ class _ChatScreenState extends State<ChatScreen> {
   
   // Flag to suppress doorbell echo on the triggering device
   bool _localDoorbellPending = false;
-  
+
   // Flag to suppress color reset echo on the triggering device
   bool _localColorResetPending = false;
+
+  // Whether the currently logged-in user is an admin
+  bool _currentUserIsAdmin = false;
   
   // Track optimistic messages awaiting server confirmation (dedup keys)
   final Set<String> _pendingMessageKeys = {};
@@ -219,14 +223,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _initialize() async {
     _currentUserId = await StorageService.getUserId();
-    
+    _currentUserIsAdmin = await StorageService.getIsAdmin();
+
     // Initialize presence state from widget
     _partnerStatus = widget.otherUser.status;
     _partnerLastSeen = widget.otherUser.lastSeen;
-    
+
     // Load saved chat color for this conversation partner
     await _loadSavedChatColor();
-    
+
     await _loadTimestampPreference();
     await _loadCachedMessages();
     await _loadMessages();
@@ -1680,7 +1685,117 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
   }
-  
+
+  /// Admin-only: delete all messages in this conversation
+  Future<void> _adminDeleteAllMessages() async {
+    if (!_currentUserIsAdmin) return;
+
+    // Build the room ID the same way the socket join uses it
+    final ids = [_currentUserId!, widget.otherUser.id]..sort();
+    final room = 'chat_${ids[0]}_${ids[1]}';
+
+    // Confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF2D2D2D),
+        title: const Text(
+          'Delete All Messages',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          'This will permanently delete ALL messages between you and '
+          '${widget.otherUser.fullName}, including all uploaded files. '
+          'This cannot be undone.',
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // Show progress
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(children: [
+            SizedBox(
+              width: 18, height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ),
+            SizedBox(width: 12),
+            Text('Deleting all messages...'),
+          ]),
+          duration: Duration(seconds: 30),
+        ),
+      );
+    }
+
+    try {
+      final token = await StorageService.getToken();
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/api/mobile/admin/delete-all-messages'),
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+        body: '{"room":"$room"}',
+      );
+
+      if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+      if (response.statusCode == 200) {
+        // Clear the local messages list immediately
+        setState(() => _messages.clear());
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('All messages deleted successfully'),
+              backgroundColor: Color(0xFF10B981),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to delete messages (${response.statusCode})'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   /// Format date for export separator
   String _formatExportDate(String timestamp) {
     try {
@@ -3693,7 +3808,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   color: Colors.white70,
                                   size: 18,
                                 ),
-                                padding: const EdgeInsets.all(6),
+                                padding: const EdgeInsets.all(4),
                                 constraints: const BoxConstraints(),
                                 tooltip: _showEmojiPicker ? 'Keyboard' : 'Emoji',
                               ),
@@ -3709,9 +3824,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                     hintStyle: TextStyle(color: Colors.grey[600], fontSize: 14),
                                     border: InputBorder.none,
                                     filled: false,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                      vertical: 10,
+                                    contentPadding: const EdgeInsets.only(
+                                      left: 0,
+                                      right: 4,
+                                      top: 10,
+                                      bottom: 10,
                                     ),
                                     isDense: true,
                                   ),
@@ -3731,28 +3848,79 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       ),
-                      // Send button (right of input)
-                      Container(
-                        margin: const EdgeInsets.only(left: 6),
-                        child: ElevatedButton(
-                          onPressed: _sendMessage,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF6D28D9), // rgb(109 40 217)
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                            minimumSize: const Size(0, 0),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                      // Send button — when input is multi-line, stack [Send, Clear] vertically
+                      // to save horizontal space and prevent awkward gaps near the keyboard.
+                      () {
+                        final isMultiLine = _messageController.text.contains('\n') ||
+                            _messageController.text.length > 80;
+                        final sendBtn = Container(
+                          margin: const EdgeInsets.only(left: 6),
+                          child: ElevatedButton(
+                            onPressed: _sendMessage,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF6D28D9),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                             ),
+                            child: const Text('Send', style: TextStyle(fontSize: 13)),
                           ),
-                          child: const Text('Send', style: TextStyle(fontSize: 13)),
-                        ),
-                      ),
+                        );
+
+                        if (isMultiLine) {
+                          return Container(
+                            margin: const EdgeInsets.only(left: 6),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                ElevatedButton(
+                                  onPressed: _sendMessage,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF6D28D9),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                    minimumSize: const Size(0, 0),
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: const Text('Send', style: TextStyle(fontSize: 13)),
+                                ),
+                                const SizedBox(height: 4),
+                                ElevatedButton(
+                                  onPressed: () {
+                                    _messageController.clear();
+                                    _stopTyping();
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFEF4444),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                                    minimumSize: const Size(0, 0),
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: const Text('Clear', style: TextStyle(fontSize: 13)),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                        return sendBtn;
+                      }(),
                     ],
                   ),
                 ),
-                // Clear button row
+                // Clear button row — only shown in single-line mode
+                if (!(_messageController.text.contains('\n') || _messageController.text.length > 80))
                 Row(
                   children: [
                     const Spacer(),
@@ -3763,7 +3931,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         _stopTyping();
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEF4444), // rgb(239 68 68)
+                        backgroundColor: const Color(0xFFEF4444),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                         minimumSize: const Size(0, 0),
@@ -3939,6 +4107,29 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                             child: const Text('Export Chat'),
                           ),
+                          // Delete All Messages (admin only)
+                          if (_currentUserIsAdmin)
+                            ElevatedButton(
+                              onPressed: _adminDeleteAllMessages,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFDC2626),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                minimumSize: const Size(0, 0),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(width: 4),
+                                  Text('Delete All'),
+                                ],
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -6015,9 +6206,12 @@ class _VoiceRecordingModal extends StatefulWidget {
 }
 
 class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
-  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  // Native channel — backed by Android MediaRecorder
+  static const _ch = MethodChannel('com.example.flutter_messenger/audio_recorder');
+
+  // Keep FlutterSoundPlayer for pre-send playback preview
   final FlutterSoundPlayer _player = FlutterSoundPlayer();
-  
+
   bool _isRecorderInitialized = false;
   bool _isPlayerInitialized = false;
   bool _isRecording = false;
@@ -6028,7 +6222,6 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
   Timer? _timer;
   List<double> _waveformData = [];
   bool _isPlaying = false;
-  StreamSubscription? _recorderSubscription;
 
   @override
   void initState() {
@@ -6038,25 +6231,24 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
 
   Future<void> _initRecorder() async {
     try {
-      await _recorder.openRecorder();
+      // Only open the player — recording goes through the native channel
       await _player.openPlayer();
       setState(() {
-        _isRecorderInitialized = true;
+        _isRecorderInitialized = true; // native channel is always ready
         _isPlayerInitialized = true;
       });
-      
-      // Set up subscription for recording updates
-      _recorder.setSubscriptionDuration(const Duration(milliseconds: 100));
     } catch (e) {
-      debugPrint('Error initializing recorder: $e');
+      debugPrint('Error initializing player: $e');
     }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _recorderSubscription?.cancel();
-    _recorder.closeRecorder();
+    // Stop any in-progress recording when modal is dismissed
+    if (_isRecording) {
+      _ch.invokeMethod('stopRecording').catchError((_) {});
+    }
     _player.closePlayer();
     super.dispose();
   }
@@ -6069,37 +6261,12 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
   }
 
   Future<void> _startRecording() async {
-    if (!_isRecorderInitialized) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Recorder not initialized')),
-      );
-      return;
-    }
-    
+    if (!_isRecorderInitialized) return;
+
     try {
       final directory = await getTemporaryDirectory();
       final path = '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-      
-      _recorderSubscription = _recorder.onProgress?.listen((e) {
-        if (mounted && _isRecording && !_isPaused) {
-          setState(() {
-            _duration = e.duration;
-            // Generate waveform data from decibels
-            final db = e.decibels ?? -160.0;
-            final normalized = ((db + 160) / 160).clamp(0.1, 1.0);
-            _waveformData.add(normalized);
-            if (_waveformData.length > 50) {
-              _waveformData.removeAt(0);
-            }
-          });
-        }
-      });
-      
-      await _recorder.startRecorder(
-        toFile: path,
-        codec: Codec.aacMP4,
-      );
-      
+
       setState(() {
         _isRecording = true;
         _isPaused = false;
@@ -6107,43 +6274,81 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
         _duration = Duration.zero;
         _waveformData = [];
       });
+
+      // Start the native MediaRecorder
+      await _ch.invokeMethod('startRecording', {'path': path});
+
+      // Poll amplitude every 100 ms via MediaRecorder.getMaxAmplitude()
+      _startWaveformTimer();
     } catch (e) {
-      debugPrint('Error starting recording: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error starting recording: $e')),
-      );
+      debugPrint('Native startRecording error: $e');
+      if (mounted) {
+        setState(() => _isRecording = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error starting recording: $e')),
+        );
+      }
     }
+  }
+
+  void _startWaveformTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (t) async {
+      if (!mounted || !_isRecording || _isPaused) return;
+      try {
+        // getMaxAmplitude returns 0-32767; it resets each call (peak-hold)
+        final raw = await _ch.invokeMethod<int>('getAmplitude') ?? 0;
+        // Normalise: apply sqrt so quiet sounds are more visible
+        final normalized = raw > 0
+            ? math.sqrt(raw / 32767.0).clamp(0.05, 1.0)
+            : 0.05;
+        if (mounted && _isRecording && !_isPaused) {
+          setState(() {
+            _duration += const Duration(milliseconds: 100);
+            _waveformData.add(normalized);
+            if (_waveformData.length > 50) _waveformData.removeAt(0);
+          });
+        }
+      } catch (_) {
+        // Channel error — just increment duration silently
+        if (mounted && _isRecording && !_isPaused) {
+          setState(() => _duration += const Duration(milliseconds: 100));
+        }
+      }
+    });
   }
 
   Future<void> _pauseRecording() async {
     try {
-      await _recorder.pauseRecorder();
+      await _ch.invokeMethod('pauseRecording');
+      _timer?.cancel();
       setState(() => _isPaused = true);
     } catch (e) {
-      debugPrint('Error pausing recording: $e');
+      debugPrint('Pause error: $e');
     }
   }
 
   Future<void> _resumeRecording() async {
     try {
-      await _recorder.resumeRecorder();
+      await _ch.invokeMethod('resumeRecording');
       setState(() => _isPaused = false);
+      _startWaveformTimer();
     } catch (e) {
-      debugPrint('Error resuming recording: $e');
+      debugPrint('Resume error: $e');
     }
   }
 
   Future<void> _stopRecording() async {
     try {
-      _recorderSubscription?.cancel();
-      await _recorder.stopRecorder();
+      _timer?.cancel();
+      await _ch.invokeMethod('stopRecording');
       setState(() {
         _isRecording = false;
         _isPaused = false;
         _hasRecording = true;
       });
     } catch (e) {
-      debugPrint('Error stopping recording: $e');
+      debugPrint('Stop recording error: $e');
     }
   }
 
@@ -6358,7 +6563,7 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
                 TextButton(
                   onPressed: () async {
                     if (_isRecording) {
-                      await _recorder.stopRecorder();
+                      await _ch.invokeMethod('stopRecording').catchError((_) {});
                     }
                     widget.onCancel();
                   },
