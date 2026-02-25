@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shimmer/shimmer.dart';
@@ -37,10 +38,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
   bool _isLoading = true;
   bool _isBackendAvailable = true;
   bool _isCurrentUserAdmin = false;
+  bool _isSyncing = false;
   LobbySortMode _sortMode = LobbySortMode.recentChats;
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
+  String _connectivityBannerMessage = 'Server unavailable. Reconnecting...';
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
   // Typing indicator: maps userId → auto-clear timer
@@ -683,8 +686,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Future<void> _loadLobby({bool useCacheFirst = true}) async {
-    if (_isLoading && useCacheFirst) return;
-    setState(() => _isLoading = true);
+    if (_isLoading) {
+      setState(() => _isLoading = true);
+    } else {
+      setState(() => _isSyncing = true);
+    }
+
     final userId = await StorageService.getUserId();
     if (useCacheFirst && userId != null) {
       final cached = await ChatCacheService.loadLobbyUsers(userId);
@@ -693,6 +700,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _lobbyUsers = cached;
           _filteredUsers = List.from(cached);
           _isBackendAvailable = _socketService.isConnected;
+          _isLoading = false;
+          _isSyncing = true;
         });
       }
     }
@@ -703,6 +712,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _lobbyUsers = users;
           _isBackendAvailable = true;
           _isLoading = false;
+          _isSyncing = false;
+          _connectivityBannerMessage = 'Server unavailable. Reconnecting...';
         });
         _filterUsers();
       }
@@ -710,14 +721,41 @@ class _LobbyScreenState extends State<LobbyScreen> {
         await ChatCacheService.saveLobbyUsers(userId, users);
       }
     } catch (e) {
+      final friendly = _mapConnectivityError(
+        e,
+        offlineLabel: 'No internet connection. Showing cached contacts.',
+        backendLabel: 'Server unreachable. Showing cached contacts if available.',
+      );
       if (mounted) {
         setState(() {
           _isLoading = false;
+          _isSyncing = false;
           _isBackendAvailable = false;
+          _connectivityBannerMessage = friendly;
         });
       }
       debugPrint('Error loading lobby: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendly), backgroundColor: Colors.red),
+        );
+      }
     }
+  }
+
+  String _mapConnectivityError(
+    Object error, {
+    required String offlineLabel,
+    required String backendLabel,
+  }) {
+    final message = error.toString();
+    if (error is SocketException || message.contains('SocketException') || message.contains('Failed host lookup')) {
+      return offlineLabel;
+    }
+    if (error is TimeoutException || message.contains('TimeoutException') || message.contains('Connection timed out')) {
+      return backendLabel;
+    }
+    return 'Something went wrong. Please try again in a bit.';
   }
 
   /// Get the effective status tier: 0=online, 1=away/lastSeen, 2=offline
@@ -1102,10 +1140,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Server unavailable. Reconnecting...',
-                      style: TextStyle(
+                      _connectivityBannerMessage,
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
@@ -1126,6 +1164,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   ),
                 ],
               ),
+            ),
+          if (_isSyncing && !_isLoading)
+            LinearProgressIndicator(
+              minHeight: 2,
+              backgroundColor: const Color(0xFF252542),
+              valueColor: const AlwaysStoppedAnimation(Color(0xFF00D9FF)),
             ),
           // Search bar + sort button row
           Padding(

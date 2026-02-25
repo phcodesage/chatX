@@ -107,6 +107,7 @@ class _ChatScreenState extends State<ChatScreen> {
   
   // Backend connectivity state
   bool _isBackendAvailable = true;
+  String _connectionIssueMessage = 'Server unavailable. Reconnecting...';
   
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
   
@@ -811,7 +812,12 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('connectionChanged', key, (Map<String, dynamic> data) {
       final isConnected = data['connected'] as bool;
       if (mounted) {
-        setState(() => _isBackendAvailable = isConnected);
+        setState(() {
+          _isBackendAvailable = isConnected;
+          if (isConnected) {
+            _connectionIssueMessage = 'Server unavailable. Reconnecting...';
+          }
+        });
       }
     });
 
@@ -1372,6 +1378,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages = messages.reversed.toList(); // Reverse to show newest at bottom
         _isLoading = false;
         _isSyncing = false;
+        _connectionIssueMessage = 'Server unavailable. Reconnecting...';
         
         // Populate _messageReactions from loaded messages
         _messageReactions.clear();
@@ -1437,16 +1444,37 @@ class _ChatScreenState extends State<ChatScreen> {
       
       _scrollToBottom();
     } catch (e) {
+      final friendly = _mapConnectivityError(
+        e,
+        offlineLabel: 'No internet connection. Showing cached messages.',
+        backendLabel: 'Server unreachable. We\'ll retry shortly.',
+      );
       setState(() {
         _isLoading = false;
         _isSyncing = false;
+        _connectionIssueMessage = friendly;
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading messages: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendly), backgroundColor: Colors.red),
         );
       }
     }
+  }
+
+  String _mapConnectivityError(
+    Object error, {
+    String offlineLabel = 'No internet connection.',
+    String backendLabel = 'Server unreachable.',
+  }) {
+    final message = error.toString();
+    if (error is SocketException || message.contains('SocketException') || message.contains('Failed host lookup')) {
+      return offlineLabel;
+    }
+    if (error is TimeoutException || message.contains('TimeoutException') || message.contains('Connection timed out')) {
+      return backendLabel;
+    }
+    return 'Something went wrong. Please try again.';
   }
 
   void _scrollToBottom() {
@@ -3366,9 +3394,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   color: const Color(0xFFD32F2F),
-                  child: const Row(
+                  child: Row(
                     children: [
-                      SizedBox(
+                      const SizedBox(
                         width: 14,
                         height: 14,
                         child: CircularProgressIndicator(
@@ -3376,13 +3404,15 @@ class _ChatScreenState extends State<ChatScreen> {
                           valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
                       ),
-                      SizedBox(width: 10),
-                      Text(
-                        'Server unavailable. Reconnecting...',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _connectionIssueMessage,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ],
