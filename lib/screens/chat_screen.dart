@@ -3848,102 +3848,58 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       ),
-                      // Send button — when input is multi-line, stack [Send, Clear] vertically
-                      // to save horizontal space and prevent awkward gaps near the keyboard.
-                      () {
-                        final isMultiLine = _messageController.text.contains('\n') ||
-                            _messageController.text.length > 80;
-                        final sendBtn = Container(
+                      // Clear (top) + Send (bottom) — always visible, vertically centred
+                      IntrinsicWidth(
+                        child: Container(
                           margin: const EdgeInsets.only(left: 6),
-                          child: ElevatedButton(
-                            onPressed: _sendMessage,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF6D28D9),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              minimumSize: const Size(0, 0),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Clear button (top)
+                              ElevatedButton(
+                                onPressed: () {
+                                  _messageController.clear();
+                                  setState(() {});
+                                  _stopTyping();
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFEF4444),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                                child: const Text('Clear', style: TextStyle(fontSize: 12)),
                               ),
-                            ),
-                            child: const Text('Send', style: TextStyle(fontSize: 13)),
+                              const SizedBox(height: 4),
+                              // Send button (bottom)
+                              ElevatedButton(
+                                onPressed: _sendMessage,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF6D28D9),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                                  minimumSize: const Size(0, 0),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                                child: const Text('Send', style: TextStyle(fontSize: 12)),
+                              ),
+                            ],
                           ),
-                        );
-
-                        if (isMultiLine) {
-                          return Container(
-                            margin: const EdgeInsets.only(left: 6),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                ElevatedButton(
-                                  onPressed: _sendMessage,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF6D28D9),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                    minimumSize: const Size(0, 0),
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                  ),
-                                  child: const Text('Send', style: TextStyle(fontSize: 13)),
-                                ),
-                                const SizedBox(height: 4),
-                                ElevatedButton(
-                                  onPressed: () {
-                                    _messageController.clear();
-                                    _stopTyping();
-                                  },
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFFEF4444),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                                    minimumSize: const Size(0, 0),
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                  ),
-                                  child: const Text('Clear', style: TextStyle(fontSize: 13)),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-                        return sendBtn;
-                      }(),
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                // Clear button row — only shown in single-line mode
-                if (!(_messageController.text.contains('\n') || _messageController.text.length > 80))
-                Row(
-                  children: [
-                    const Spacer(),
-                    // Clear button
-                    ElevatedButton(
-                      onPressed: () {
-                        _messageController.clear();
-                        _stopTyping();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEF4444),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                        minimumSize: const Size(0, 0),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: const Text('Clear'),
-                    ),
-                  ],
-                ),
+                // Clear button only appears below Send (in the right-side Column) when multi-line.
                 // Inline emoji picker (shown when active)
                 if (_showEmojiPicker)
                   _buildInlineEmojiPicker(),
