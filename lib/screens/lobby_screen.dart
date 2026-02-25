@@ -39,7 +39,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
-  bool _isHandlingIncomingCall = false;
+  // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
   // Typing indicator: maps userId → auto-clear timer
   final Map<int, Timer> _typingUsers = {};
@@ -188,12 +188,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Future<void> _handleCrossRoomCallOffer(Map<String, dynamic> data) async {
     if (!mounted) return;
     
-    // Guard against duplicate/rapid incoming call events
-    if (_isHandlingIncomingCall) {
+    // Guard against duplicate/rapid incoming call events (global flag shared with chat screen)
+    if (PresenceService().isHandlingIncomingCall) {
       debugPrint('⚠️ Already handling an incoming call, ignoring cross-room duplicate');
       return;
     }
-    _isHandlingIncomingCall = true;
+    PresenceService().isHandlingIncomingCall = true;
     
     debugPrint('📲 Cross-room call offer received in lobby: $data');
     
@@ -204,7 +204,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     
     if (callerId == null || room == null) {
       debugPrint('⚠️ Invalid cross-room call offer data');
-      _isHandlingIncomingCall = false;
+      PresenceService().isHandlingIncomingCall = false;
       return;
     }
     
@@ -285,7 +285,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _setupRealtimeListeners();
         });
       }
-      _isHandlingIncomingCall = false;
+      PresenceService().isHandlingIncomingCall = false;
       _setupRealtimeListeners();
     });
   }
@@ -301,12 +301,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
       return;
     }
     
-    // Guard against duplicate/rapid incoming call events
-    if (_isHandlingIncomingCall) {
+    // Guard against duplicate/rapid incoming call events (global flag shared with chat screen)
+    if (PresenceService().isHandlingIncomingCall) {
       debugPrint('⚠️ Already handling an incoming call, ignoring duplicate event');
       return;
     }
-    _isHandlingIncomingCall = true;
+    PresenceService().isHandlingIncomingCall = true;
     
     debugPrint('📲 Incoming call received in lobby: $data');
     
@@ -321,7 +321,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     
     if (callId == null || callRoomId == null || callerId == null) {
       debugPrint('⚠️ Invalid incoming call data');
-      _isHandlingIncomingCall = false;
+      PresenceService().isHandlingIncomingCall = false;
       return;
     }
     
@@ -394,7 +394,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _setupRealtimeListeners();
         });
       }
-      _isHandlingIncomingCall = false;
+      PresenceService().isHandlingIncomingCall = false;
       _setupRealtimeListeners();
     });
   }

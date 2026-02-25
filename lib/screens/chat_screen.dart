@@ -27,6 +27,7 @@ import '../widgets/outgoing_call_modal.dart';
 import '../widgets/incoming_call_setup_modal.dart';
 import '../widgets/reaction_picker.dart';
 import '../services/call_service.dart';
+import '../services/presence_service.dart';
 import '../config/api_config.dart';
 import 'connected_call_screen.dart';
 
@@ -104,8 +105,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // Backend connectivity state
   bool _isBackendAvailable = true;
   
-  // Guard against duplicate incoming call modals
-  bool _isHandlingIncomingCall = false;
+  // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
   
   // Presence state for the chat partner
   String _partnerStatus = 'offline';
@@ -693,13 +693,12 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // Listen for incoming calls (while in chat)
+    // NOTE: We only listen to 'incomingCall' here (not 'crossRoomCallOffer') because the
+    // server sends BOTH events to the callee for the same call. 'incomingCall' contains
+    // full call data (call_id, call_room_id) and is sufficient for mobile clients.
+    // Listening to both would open two modals for the same call.
     _socketService.addListener('incomingCall', key, (Map<String, dynamic> data) {
       _handleIncomingCallInChat(data);
-    });
-    
-    // Listen for cross-room call offers (from web client)
-    _socketService.addListener('crossRoomCallOffer', key, (Map<String, dynamic> data) {
-      _handleCrossRoomCallOfferInChat(data);
     });
     
     // Listen for reaction updates (multi-reaction: user can have multiple different emojis)
@@ -843,11 +842,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _handleCrossRoomCallOfferInChat(Map<String, dynamic> data) async {
     if (!mounted) return;
     
-    if (_isHandlingIncomingCall) {
+    if (PresenceService().isHandlingIncomingCall) {
       debugPrint('⚠️ Already handling an incoming call, ignoring cross-room duplicate');
       return;
     }
-    _isHandlingIncomingCall = true;
+    PresenceService().isHandlingIncomingCall = true;
     
     debugPrint('📲 Cross-room call offer received in chat: $data');
     
@@ -858,7 +857,7 @@ class _ChatScreenState extends State<ChatScreen> {
     
     if (callerId == null || room == null) {
       debugPrint('⚠️ Invalid cross-room call offer data');
-      _isHandlingIncomingCall = false;
+      PresenceService().isHandlingIncomingCall = false;
       return;
     }
     
@@ -940,7 +939,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       }
-      _isHandlingIncomingCall = false;
+      PresenceService().isHandlingIncomingCall = false;
     });
   }
 
@@ -948,13 +947,20 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _handleIncomingCallInChat(Map<String, dynamic> data) async {
     if (!mounted) return;
     
-    if (_isHandlingIncomingCall) {
-      debugPrint('⚠️ Already handling an incoming call, ignoring duplicate');
+    // Guard: ignore if already in an active call
+    if (PresenceService().isCallInProgress) {
+      debugPrint('\u26a0\ufe0f Ignoring incoming_call \u2014 call already in progress');
       return;
     }
-    _isHandlingIncomingCall = true;
     
-    debugPrint('📲 Incoming call received in chat: $data');
+    // Guard against duplicate/rapid incoming call events (global flag shared with lobby)
+    if (PresenceService().isHandlingIncomingCall) {
+      debugPrint('\u26a0\ufe0f Already handling an incoming call, ignoring duplicate');
+      return;
+    }
+    PresenceService().isHandlingIncomingCall = true;
+    
+    debugPrint('\ud83d\udcf2 Incoming call received in chat: $data');
     
     final callId = data['id'] as int?;
     final callRoomId = data['call_room_id'] as String?;
@@ -966,10 +972,13 @@ class _ChatScreenState extends State<ChatScreen> {
                        widget.otherUser.fullName;
     
     if (callId == null || callRoomId == null || callerId == null) {
-      debugPrint('⚠️ Invalid incoming call data');
-      _isHandlingIncomingCall = false;
+      debugPrint('\u26a0\ufe0f Invalid incoming call data');
+      PresenceService().isHandlingIncomingCall = false;
       return;
     }
+    
+    // START buffering WebRTC signals immediately — before the async callService.initialize().
+    _socketService.startSignalBuffering();
     
     // Initialize call service (fetches ICE servers) and set up the call state
     final callService = CallService();
@@ -1034,7 +1043,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       }
-      _isHandlingIncomingCall = false;
+      PresenceService().isHandlingIncomingCall = false;
     });
   }
 

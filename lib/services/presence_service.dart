@@ -28,6 +28,11 @@ class PresenceService with WidgetsBindingObserver {
   /// Whether a call is in progress (skip marking away during calls)
   bool isCallInProgress = false;
 
+  /// Global guard: prevents multiple screens (lobby + chat) from handling
+  /// the same incoming call event simultaneously. Both screens share this
+  /// singleton flag so the first handler wins and the second is skipped.
+  bool isHandlingIncomingCall = false;
+
   /// Handle app lifecycle changes (Skype-like behavior)
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
