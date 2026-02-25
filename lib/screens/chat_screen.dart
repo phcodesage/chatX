@@ -13,6 +13,7 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/lobby_user.dart';
@@ -29,6 +30,7 @@ import '../widgets/reaction_picker.dart';
 import '../services/call_service.dart';
 import '../services/presence_service.dart';
 import '../config/api_config.dart';
+import '../services/chat_cache_service.dart';
 import 'connected_call_screen.dart';
 
 /// Chat screen for messaging with a specific user
@@ -50,6 +52,7 @@ class _ChatScreenState extends State<ChatScreen> {
   
   List<Message> _messages = [];
   bool _isLoading = true;
+  bool _isSyncing = false;
   bool _isTyping = false;
   bool _isKeyboardVisible = false;
   bool _otherUserTyping = false;
@@ -124,9 +127,37 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted && _partnerStatus != 'online') setState(() {});
     });
   }
+
+  Widget _buildChatShimmer() {
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: 6,
+      itemBuilder: (_, index) {
+        final isMe = index % 2 == 0;
+        return Align(
+          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Shimmer.fromColors(
+              baseColor: const Color(0xFF3A3A4F),
+              highlightColor: const Color(0xFF4A4A60),
+              child: Container(
+                width: 180,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
   
   /// Listen to scroll position to show/hide scroll-to-bottom button
-  void _onScroll() {
+  Future<void> _onScroll() async {
     // Since list is reversed, position 0 means we're at the bottom (newest messages)
     // We're "at bottom" if scroll offset is near 0
     final isAtBottom = _scrollController.offset < 100;
@@ -140,6 +171,14 @@ class _ChatScreenState extends State<ChatScreen> {
           _markVisibleMessagesAsRead();
         }
       });
+      final currentUserId = await StorageService.getUserId();
+      if (currentUserId != null) {
+        await ChatCacheService.saveConversationMessages(
+          currentUserId,
+          widget.otherUser.id,
+          _messages.reversed.toList(),
+        );
+      }
     }
   }
 
@@ -187,6 +226,7 @@ class _ChatScreenState extends State<ChatScreen> {
     await _loadSavedChatColor();
     
     await _loadTimestampPreference();
+    await _loadCachedMessages();
     await _loadMessages();
     _joinChatRoom();
     _setupRealtimeListeners();
@@ -1305,8 +1345,24 @@ class _ChatScreenState extends State<ChatScreen> {
     debugPrint('✅ Messages cleared for room: $currentRoomId');
   }
 
+  Future<void> _loadCachedMessages() async {
+    final currentUserId = await StorageService.getUserId();
+    if (currentUserId == null) return;
+    final cached = await ChatCacheService.loadConversationMessages(currentUserId, widget.otherUser.id);
+    if (cached.isNotEmpty && mounted) {
+      setState(() {
+        _messages = cached.reversed.toList();
+        _isLoading = false;
+      });
+    }
+  }
+
   Future<void> _loadMessages() async {
-    setState(() => _isLoading = true);
+    if (!_isLoading) {
+      setState(() => _isSyncing = true);
+    } else {
+      setState(() => _isLoading = true);
+    }
     try {
       final messages = await MessageService.getConversationMessages(
         userId: widget.otherUser.id,
@@ -1315,6 +1371,7 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _messages = messages.reversed.toList(); // Reverse to show newest at bottom
         _isLoading = false;
+        _isSyncing = false;
         
         // Populate _messageReactions from loaded messages
         _messageReactions.clear();
@@ -1380,7 +1437,10 @@ class _ChatScreenState extends State<ChatScreen> {
       
       _scrollToBottom();
     } catch (e) {
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _isSyncing = false;
+      });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading messages: $e'), backgroundColor: Colors.red),
@@ -3331,7 +3391,7 @@ class _ChatScreenState extends State<ChatScreen> {
               // Messages list
               Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? _buildChatShimmer()
                 : _messages.isEmpty
                     ? Center(
                         child: Column(

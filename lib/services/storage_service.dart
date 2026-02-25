@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'chat_cache_service.dart';
+
 /// Service for storing and retrieving data locally
 class StorageService {
   static const String _tokenKey = 'auth_token';
@@ -133,10 +135,14 @@ class StorageService {
   static Future<void> clearAll() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt(_userIdKey);
       await prefs.remove(_tokenKey);
       await prefs.remove(_userIdKey);
       await prefs.remove(_usernameKey);
       await prefs.remove(_isAdminKey);
+      if (userId != null) {
+        await ChatCacheService.clearUserCache(userId);
+      }
     } catch (e) {
       debugPrint('Error clearing storage: $e');
     }

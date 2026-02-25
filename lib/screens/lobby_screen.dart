@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shimmer/shimmer.dart';
 import '../models/lobby_user.dart';
 import '../services/lobby_service.dart';
 import '../services/auth_service.dart';
@@ -17,6 +18,7 @@ import '../services/app_update_service.dart';
 import '../services/storage_service.dart';
 import '../config/api_config.dart';
 import '../services/presence_service.dart';
+import '../services/chat_cache_service.dart';
 
 /// Lobby/Chat list screen
 class LobbyScreen extends StatefulWidget {
@@ -680,21 +682,40 @@ class _LobbyScreenState extends State<LobbyScreen> {
     super.dispose();
   }
 
-  Future<void> _loadLobby() async {
+  Future<void> _loadLobby({bool useCacheFirst = true}) async {
+    if (_isLoading && useCacheFirst) return;
     setState(() => _isLoading = true);
+    final userId = await StorageService.getUserId();
+    if (useCacheFirst && userId != null) {
+      final cached = await ChatCacheService.loadLobbyUsers(userId);
+      if (cached.isNotEmpty && mounted) {
+        setState(() {
+          _lobbyUsers = cached;
+          _filteredUsers = List.from(cached);
+          _isBackendAvailable = _socketService.isConnected;
+        });
+      }
+    }
     try {
       final users = await LobbyService.getLobbyUsers();
-      setState(() {
-        _lobbyUsers = users;
-        _isLoading = false;
-        _isBackendAvailable = true;
-      });
-      _filterUsers();
+      if (mounted) {
+        setState(() {
+          _lobbyUsers = users;
+          _isBackendAvailable = true;
+          _isLoading = false;
+        });
+        _filterUsers();
+      }
+      if (userId != null) {
+        await ChatCacheService.saveLobbyUsers(userId, users);
+      }
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _isBackendAvailable = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isBackendAvailable = false;
+        });
+      }
       debugPrint('Error loading lobby: $e');
     }
   }
@@ -1006,13 +1027,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   Widget _buildLoadingShimmer() {
     return ListView.builder(
-      physics: const NeverScrollableScrollPhysics(),
       itemCount: 8,
-      itemBuilder: (context, index) {
-        return AnimatedOpacity(
-          opacity: 1.0 - (index * 0.08),
-          duration: const Duration(milliseconds: 300),
-          child: _buildShimmerTile(),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemBuilder: (_, __) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Shimmer.fromColors(
+            baseColor: const Color(0xFF1F1F30),
+            highlightColor: const Color(0xFF2C2C45),
+            child: _buildShimmerTile(),
+          ),
         );
       },
     );
@@ -1051,7 +1075,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.white70),
-            onPressed: _loadLobby,
+            onPressed: () => _loadLobby(useCacheFirst: false),
           ),
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.white70),
@@ -1089,7 +1113,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     ),
                   ),
                   GestureDetector(
-                    onTap: _loadLobby,
+                    onTap: () => _loadLobby(useCacheFirst: false),
                     child: const Text(
                       'Retry',
                       style: TextStyle(
@@ -1175,7 +1199,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         ),
                       )
                     : RefreshIndicator(
-                        onRefresh: _loadLobby,
+                        onRefresh: () => _loadLobby(useCacheFirst: false),
                         color: const Color(0xFF00D9FF),
                         backgroundColor: const Color(0xFF252542),
                         child: _sortMode == LobbySortMode.allUsers
