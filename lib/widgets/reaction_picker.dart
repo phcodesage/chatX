@@ -227,72 +227,8 @@ class ReactionPicker extends StatefulWidget {
   }
 }
 
-class _ReactionPickerState extends State<ReactionPicker> with TickerProviderStateMixin {
-  late AnimationController _containerController;
-  late Animation<double> _containerScale;
-  late Animation<double> _containerFade;
-  
-  // Staggered animations for each emoji
-  late List<AnimationController> _emojiControllers;
-  late List<Animation<double>> _emojiAnimations;
-  
+class _ReactionPickerState extends State<ReactionPicker> {
   final Map<int, double> _emojiTapScales = {};
-
-  @override
-  void initState() {
-    super.initState();
-    
-    // Container animation
-    _containerController = AnimationController(
-      duration: const Duration(milliseconds: 200),
-      vsync: this,
-    );
-    _containerScale = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _containerController, curve: Curves.easeOutBack),
-    );
-    _containerFade = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _containerController, curve: Curves.easeOut),
-    );
-    
-    // Staggered emoji animations (7 = 6 emojis + 1 plus button)
-    final itemCount = ReactionPicker.emojis.length + 1;
-    _emojiControllers = List.generate(
-      itemCount,
-      (index) => AnimationController(
-        duration: const Duration(milliseconds: 300),
-        vsync: this,
-      ),
-    );
-    _emojiAnimations = _emojiControllers.map((controller) {
-      return Tween<double>(begin: 0.0, end: 1.0).animate(
-        CurvedAnimation(parent: controller, curve: Curves.easeOutBack),
-      );
-    }).toList();
-    
-    // Start animations with stagger
-    _startStaggeredAnimations();
-  }
-  
-  void _startStaggeredAnimations() async {
-    _containerController.forward();
-    
-    // Stagger each emoji with 40ms delay
-    for (int i = 0; i < _emojiControllers.length; i++) {
-      await Future.delayed(const Duration(milliseconds: 40));
-      if (mounted) {
-        _emojiControllers[i].forward();
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _containerController.dispose();
-    for (final controller in _emojiControllers) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
 
   void _onEmojiTapDown(int index) {
     setState(() => _emojiTapScales[index] = 1.4);
@@ -310,120 +246,86 @@ class _ReactionPickerState extends State<ReactionPicker> with TickerProviderStat
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final emojis = ReactionPicker.emojis;
-    final plusButtonIndex = emojis.length; // Index for the + button
-    
-    return AnimatedBuilder(
-      animation: _containerController,
-      builder: (context, child) => Transform.scale(
-        scale: _containerScale.value,
-        child: Opacity(
-          opacity: _containerFade.value.clamp(0.0, 1.0),
-          child: child,
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: screenWidth,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2C2C2E),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: Container(
-          width: screenWidth,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2C2C2E),
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.3),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              // Scrollable emoji list (takes remaining space)
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ...emojis.asMap().entries.map((entry) {
-                        final index = entry.key;
-                        final emoji = entry.value;
-                        final tapScale = _emojiTapScales[index] ?? 1.0;
-                        
-                        return AnimatedBuilder(
-                          animation: _emojiAnimations[index],
-                          builder: (context, child) {
-                            final staggerScale = _emojiAnimations[index].value;
-                            return Transform.scale(
-                              scale: staggerScale * tapScale,
-                              child: Opacity(
-                                opacity: staggerScale.clamp(0.0, 1.0),
-                                child: child,
-                              ),
-                            );
+        child: Row(
+          children: [
+            // Scrollable emoji list (takes remaining space)
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ...emojis.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final emoji = entry.value;
+                      final tapScale = _emojiTapScales[index] ?? 1.0;
+
+                      return Transform.scale(
+                        scale: tapScale,
+                        child: GestureDetector(
+                          onTapDown: (_) => _onEmojiTapDown(index),
+                          onTapUp: (_) => _onEmojiTapUp(index),
+                          onTapCancel: () => _onEmojiTapCancel(index),
+                          onTap: () {
+                            widget.onReactionSelected(emoji);
+                            widget.onClose();
                           },
-                          child: GestureDetector(
-                            onTapDown: (_) => _onEmojiTapDown(index),
-                            onTapUp: (_) => _onEmojiTapUp(index),
-                            onTapCancel: () => _onEmojiTapCancel(index),
-                            onTap: () {
-                              widget.onReactionSelected(emoji);
-                              widget.onClose();
-                            },
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 2),
-                              padding: const EdgeInsets.all(5),
-                              decoration: BoxDecoration(
-                                color: Colors.transparent,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                emoji,
-                                style: const TextStyle(fontSize: 24),
-                              ),
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 2),
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(
+                              color: Colors.transparent,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              emoji,
+                              style: const TextStyle(fontSize: 24),
                             ),
                           ),
-                        );
-                      }),
-                    ],
-                  ),
+                        ),
+                      );
+                    }),
+                  ],
                 ),
               ),
-              // Fixed "+" button on the right
-              AnimatedBuilder(
-                animation: _emojiAnimations[plusButtonIndex],
-                builder: (context, child) {
-                  final staggerScale = _emojiAnimations[plusButtonIndex].value;
-                  return Transform.scale(
-                    scale: staggerScale,
-                    child: Opacity(
-                      opacity: staggerScale.clamp(0.0, 1.0),
-                      child: child,
-                    ),
-                  );
-                },
-                child: GestureDetector(
-                  onTap: () {
-                    widget.onMorePressed?.call();
-                  },
-                  child: Container(
-                    margin: const EdgeInsets.only(left: 8),
-                    padding: const EdgeInsets.all(5),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF4A4A4C),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.add,
-                      color: Colors.white70,
-                      size: 22,
-                    ),
-                  ),
+            ),
+            // Fixed "+" button on the right
+            GestureDetector(
+              onTap: () {
+                widget.onMorePressed?.call();
+              },
+              child: Container(
+                margin: const EdgeInsets.only(left: 8),
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4A4A4C),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.add,
+                  color: Colors.white70,
+                  size: 22,
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -446,18 +348,13 @@ class _ExpandedReactionPicker extends StatefulWidget {
   State<_ExpandedReactionPicker> createState() => _ExpandedReactionPickerState();
 }
 
-class _ExpandedReactionPickerState extends State<_ExpandedReactionPicker>
-    with TickerProviderStateMixin {
+class _ExpandedReactionPickerState extends State<_ExpandedReactionPicker> {
   int _selectedCategory = 0;
-
-  // Animation key to force rebuild on category change
-  int _animationGeneration = 0;
 
   void _selectCategory(int index) {
     if (index == _selectedCategory) return;
     setState(() {
       _selectedCategory = index;
-      _animationGeneration++;
     });
   }
 
@@ -527,9 +424,7 @@ class _ExpandedReactionPickerState extends State<_ExpandedReactionPicker>
                     final isSelected = index == _selectedCategory;
                     return GestureDetector(
                       onTap: () => _selectCategory(index),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOut,
+                      child: Container(
                         margin: const EdgeInsets.symmetric(horizontal: 3),
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
@@ -553,105 +448,31 @@ class _ExpandedReactionPickerState extends State<_ExpandedReactionPicker>
               ),
             ),
             const SizedBox(height: 8),
-            // Animated emoji grid
+            // Emoji grid (no animation)
             Expanded(
-              child: _AnimatedEmojiGrid(
-                key: ValueKey(_animationGeneration),
-                emojis: currentEmojis,
-                onEmojiSelected: widget.onEmojiSelected,
+              child: GridView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 8,
+                  childAspectRatio: 1,
+                ),
+                itemCount: currentEmojis.length,
+                itemBuilder: (context, index) {
+                  return GestureDetector(
+                    onTap: () => widget.onEmojiSelected(currentEmojis[index]),
+                    child: Center(
+                      child: Text(
+                        currentEmojis[index],
+                        style: const TextStyle(fontSize: 26),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Grid of emojis with staggered pop-in animations.
-/// Rebuilds its animation state whenever [key] changes.
-class _AnimatedEmojiGrid extends StatefulWidget {
-  final List<String> emojis;
-  final Function(String emoji) onEmojiSelected;
-
-  const _AnimatedEmojiGrid({
-    super.key,
-    required this.emojis,
-    required this.onEmojiSelected,
-  });
-
-  @override
-  State<_AnimatedEmojiGrid> createState() => _AnimatedEmojiGridState();
-}
-
-class _AnimatedEmojiGridState extends State<_AnimatedEmojiGrid>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    )..forward();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final emojis = widget.emojis;
-    // Number of columns in the grid
-    const crossAxisCount = 8;
-
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        return GridView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            childAspectRatio: 1,
-          ),
-          itemCount: emojis.length,
-          itemBuilder: (context, index) {
-            // Stagger delay based on row + column for a diagonal wave
-            final row = index ~/ crossAxisCount;
-            final col = index % crossAxisCount;
-            final staggerIndex = row + col;
-            // Max stagger slots: (maxRows-1) + (crossAxisCount-1)
-            const maxStagger = 14.0;
-            final delay = (staggerIndex / maxStagger) * 0.5; // 0..0.5 of total
-            final interval = Interval(
-              delay.clamp(0.0, 0.7),
-              (delay + 0.3).clamp(0.3, 1.0),
-              curve: Curves.easeOutBack,
-            );
-            final t = interval.transform(_controller.value);
-
-            return Transform.scale(
-              scale: t,
-              child: Opacity(
-                opacity: t.clamp(0.0, 1.0),
-                child: GestureDetector(
-                  onTap: () => widget.onEmojiSelected(emojis[index]),
-                  child: Center(
-                    child: Text(
-                      emojis[index],
-                      style: const TextStyle(fontSize: 26),
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
     );
   }
 }

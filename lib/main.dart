@@ -76,7 +76,21 @@ class MessengerApp extends StatelessWidget {
       title: 'Flutter Messenger',
       debugShowCheckedModeBanner: false,
       navigatorKey: NotificationHandler.navigatorKey,
-      theme: baseTheme,
+      theme: baseTheme.copyWith(
+        // Kill all page-route transitions globally
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: _NoTransitionBuilder(),
+            TargetPlatform.iOS: _NoTransitionBuilder(),
+            TargetPlatform.windows: _NoTransitionBuilder(),
+            TargetPlatform.linux: _NoTransitionBuilder(),
+            TargetPlatform.macOS: _NoTransitionBuilder(),
+          },
+        ),
+        // Remove ink splash / ripple animations
+        splashFactory: NoSplash.splashFactory,
+        highlightColor: Colors.transparent,
+      ),
       home: const AuthCheckScreen(),
       routes: {
         SignInPage.route: (_) => const SignInPage(),
@@ -86,5 +100,21 @@ class MessengerApp extends StatelessWidget {
         LobbyScreen.route: (_) => const LobbyScreen(),
       },
     );
+  }
+}
+
+/// Zero-duration page transition — replaces slides/fades with instant swap.
+class _NoTransitionBuilder extends PageTransitionsBuilder {
+  const _NoTransitionBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    return child;
   }
 }

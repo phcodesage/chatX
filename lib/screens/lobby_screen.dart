@@ -35,10 +35,9 @@ enum LobbySortMode { recentChats, onlineFirst, allUsers }
 class _LobbyScreenState extends State<LobbyScreen> {
   List<LobbyUser> _lobbyUsers = [];
   List<LobbyUser> _filteredUsers = [];
-  bool _isLoading = true;
+  bool _isLoading = false;
   bool _isBackendAvailable = true;
   bool _isCurrentUserAdmin = false;
-  bool _isSyncing = false;
   LobbySortMode _sortMode = LobbySortMode.recentChats;
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
@@ -686,12 +685,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Future<void> _loadLobby({bool useCacheFirst = true}) async {
-    if (_isLoading) {
-      setState(() => _isLoading = true);
-    } else {
-      setState(() => _isSyncing = true);
-    }
-
+    if (_isLoading && useCacheFirst) return;
+    setState(() => _isLoading = true);
     final userId = await StorageService.getUserId();
     if (useCacheFirst && userId != null) {
       final cached = await ChatCacheService.loadLobbyUsers(userId);
@@ -700,8 +695,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _lobbyUsers = cached;
           _filteredUsers = List.from(cached);
           _isBackendAvailable = _socketService.isConnected;
-          _isLoading = false;
-          _isSyncing = true;
         });
       }
     }
@@ -712,7 +705,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _lobbyUsers = users;
           _isBackendAvailable = true;
           _isLoading = false;
-          _isSyncing = false;
           _connectivityBannerMessage = 'Server unavailable. Reconnecting...';
         });
         _filterUsers();
@@ -729,7 +721,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _isSyncing = false;
           _isBackendAvailable = false;
           _connectivityBannerMessage = friendly;
         });
@@ -1165,12 +1156,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 ],
               ),
             ),
-          if (_isSyncing && !_isLoading)
-            LinearProgressIndicator(
-              minHeight: 2,
-              backgroundColor: const Color(0xFF252542),
-              valueColor: const AlwaysStoppedAnimation(Color(0xFF00D9FF)),
-            ),
           // Search bar + sort button row
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -1231,7 +1216,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
           // User list
           Expanded(
-            child: _isLoading
+            child: (_isLoading && _lobbyUsers.isEmpty)
                 ? _buildLoadingShimmer()
                 : _filteredUsers.isEmpty
                     ? Center(
@@ -1590,82 +1575,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 }
 
-/// Animated WhatsApp-style typing indicator (3 bouncing dots + label)
-class _TypingIndicator extends StatefulWidget {
+/// Static typing indicator label
+class _TypingIndicator extends StatelessWidget {
   const _TypingIndicator();
 
   @override
-  State<_TypingIndicator> createState() => _TypingIndicatorState();
-}
-
-class _TypingIndicatorState extends State<_TypingIndicator>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late List<Animation<double>> _dotAnimations;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat();
-
-    // Stagger each dot by 200 ms
-    _dotAnimations = List.generate(3, (i) {
-      final start = i * 0.2;
-      final end = start + 0.4;
-      return Tween<double>(begin: 0.25, end: 1.0).animate(
-        CurvedAnimation(
-          parent: _controller,
-          curve: Interval(start, end, curve: Curves.easeInOut),
-        ),
-      );
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text(
-              'typing',
-              style: TextStyle(
-                color: const Color(0xFF00D9FF),
-                fontSize: 12,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-            const SizedBox(width: 3),
-            ...List.generate(3, (i) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 1.5),
-                child: Opacity(
-                  opacity: _dotAnimations[i].value,
-                  child: const Text(
-                    '●',
-                    style: TextStyle(
-                      color: Color(0xFF00D9FF),
-                      fontSize: 8,
-                    ),
-                  ),
-                ),
-              );
-            }),
-          ],
-        );
-      },
+    return const Text(
+      'typing...',
+      style: TextStyle(
+        color: Color(0xFF00D9FF),
+        fontSize: 12,
+        fontStyle: FontStyle.italic,
+      ),
     );
   }
 }

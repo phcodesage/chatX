@@ -53,6 +53,7 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Message> _messages = [];
   bool _isLoading = true;
   bool _isSyncing = false;
+  bool _isLoadingMessages = false; // Guard against concurrent message loads
   bool _isTyping = false;
   bool _isKeyboardVisible = false;
   bool _otherUserTyping = false;
@@ -1353,27 +1354,61 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _loadCachedMessages() async {
     final currentUserId = await StorageService.getUserId();
-    if (currentUserId == null) return;
-    final cached = await ChatCacheService.loadConversationMessages(currentUserId, widget.otherUser.id);
-    if (cached.isNotEmpty && mounted) {
-      setState(() {
-        _messages = cached.reversed.toList();
-        _isLoading = false;
-      });
+    if (currentUserId == null) {
+      debugPrint('⚠️ No user ID available for cache loading');
+      return;
+    }
+    
+    try {
+      final cached = await ChatCacheService.loadConversationMessages(
+        currentUserId,
+        widget.otherUser.id,
+      );
+      
+      if (cached.isNotEmpty && mounted) {
+        debugPrint('📦 Loaded ${cached.length} messages from cache');
+        setState(() {
+          _messages = cached.reversed.toList();
+          _isLoading = false; // Show cached messages immediately
+        });
+      } else {
+        if (cached.isEmpty) {
+          debugPrint('📦 No cached messages available');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading cached messages: $e');
+      // Don't modify loading state - let _loadMessages handle it
     }
   }
 
   Future<void> _loadMessages() async {
+    // Guard against concurrent calls
+    if (_isLoadingMessages) {
+      debugPrint('⚠️ _loadMessages already in progress, skipping duplicate call');
+      return;
+    }
+    
+    _isLoadingMessages = true;
     if (!_isLoading) {
       setState(() => _isSyncing = true);
     } else {
       setState(() => _isLoading = true);
     }
     try {
+      debugPrint('🔄 Loading messages for user ${widget.otherUser.id}...');
       final messages = await MessageService.getConversationMessages(
         userId: widget.otherUser.id,
         limit: 50,
       );
+      debugPrint('✅ Successfully loaded ${messages.length} messages');
+      
+      if (!mounted) {
+        debugPrint('⚠️ Widget unmounted before setState, skipping update');
+        _isLoadingMessages = false;
+        return;
+      }
+      
       setState(() {
         _messages = messages.reversed.toList(); // Reverse to show newest at bottom
         _isLoading = false;
@@ -1444,21 +1479,25 @@ class _ChatScreenState extends State<ChatScreen> {
       
       _scrollToBottom();
     } catch (e) {
+      debugPrint('❌ Error loading messages: $e');
       final friendly = _mapConnectivityError(
         e,
         offlineLabel: 'No internet connection. Showing cached messages.',
         backendLabel: 'Server unreachable. We\'ll retry shortly.',
       );
-      setState(() {
-        _isLoading = false;
-        _isSyncing = false;
-        _connectionIssueMessage = friendly;
-      });
       if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isSyncing = false;
+          _connectionIssueMessage = friendly;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(friendly), backgroundColor: Colors.red),
         );
       }
+    } finally {
+      _isLoadingMessages = false;
+      debugPrint('🏁 Message loading process completed');
     }
   }
 
@@ -3575,9 +3614,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
           ),
           // Typing preview - pinned at bottom, always visible
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            curve: Curves.easeOut,
+          Container(
             height: (_otherUserTyping && _typingPreview.isNotEmpty) ? null : 0,
             padding: (_otherUserTyping && _typingPreview.isNotEmpty)
                 ? const EdgeInsets.symmetric(horizontal: 16, vertical: 8)
@@ -3746,171 +3783,165 @@ class _ChatScreenState extends State<ChatScreen> {
                 // Only show when emoji picker is closed AND keyboard is not visible
                 if (!_showEmojiPicker && MediaQuery.of(context).viewInsets.bottom == 0) ...[
                   // All action buttons (shown/hidden by toggle)
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    alignment: Alignment.topCenter,
-                    child: _showActionButtons
-                      ? Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: [
-                              // Ring Doorbell
-                              ElevatedButton(
-                                onPressed: _ringDoorbell,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF8B5CF6),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                                child: const Text('Ring Doorbell'),
+                  if (_showActionButtons)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          // Ring Doorbell
+                          ElevatedButton(
+                            onPressed: _ringDoorbell,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF8B5CF6),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
                               ),
-                              // Change Color
-                              ElevatedButton(
-                                onPressed: _changeColor,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFA855F7),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                                child: const Text('Change Color'),
-                              ),
-                              // Reset Color button (only show when color has been changed)
-                              if (_showResetButton)
-                                ElevatedButton(
-                                  onPressed: _resetColor,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.white,
-                                    foregroundColor: Colors.black87,
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                    minimumSize: const Size(0, 0),
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                  ),
-                                  child: const Text('Reset Color'),
-                                ),
-                              // Send File
-                              ElevatedButton(
-                                onPressed: _pickFile,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF10B981),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                                child: const Text('Send File'),
-                              ),
-                              // Camera
-                              ElevatedButton(
-                                onPressed: _takePhoto,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF3B82F6),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                                child: const Text('Camera'),
-                              ),
-                              // Voice Message
-                              ElevatedButton(
-                                onPressed: _showVoiceRecordingModal,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFEF4444),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                                child: const Text('Voice Message'),
-                              ),
-                              // Auto-Translate
-                              ElevatedButton(
-                                onPressed: _toggleAutoTranslate,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _autoTranslate 
-                                      ? const Color(0xFF059669)
-                                      : const Color(0xFF0891B2),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                                child: Text(_autoTranslate ? 'Translate: ON' : 'Translate: OFF'),
-                              ),
-                              // Show Timestamps
-                              ElevatedButton(
-                                onPressed: _toggleTimestamps,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _showTimestamps 
-                                      ? const Color(0xFF4F46E5)
-                                      : const Color(0xFF8B5CF6),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                                child: Text(_showTimestamps ? 'Hide Timestamps' : 'Show Timestamps'),
-                              ),
-                              // Export Chat
-                              ElevatedButton(
-                                onPressed: _exportChat,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF6B7280),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  minimumSize: const Size(0, 0),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                                child: const Text('Export Chat'),
-                              ),
-                            ],
+                              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                            child: const Text('Ring Doorbell'),
                           ),
-                        )
-                      : const SizedBox.shrink(),
-                  ),
+                          // Change Color
+                          ElevatedButton(
+                            onPressed: _changeColor,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFA855F7),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                            child: const Text('Change Color'),
+                          ),
+                          // Reset Color button (only show when color has been changed)
+                          if (_showResetButton)
+                            ElevatedButton(
+                              onPressed: _resetColor,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: Colors.black87,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                minimumSize: const Size(0, 0),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                              ),
+                              child: const Text('Reset Color'),
+                            ),
+                          // Send File
+                          ElevatedButton(
+                            onPressed: _pickFile,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10B981),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                            child: const Text('Send File'),
+                          ),
+                          // Camera
+                          ElevatedButton(
+                            onPressed: _takePhoto,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF3B82F6),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                            child: const Text('Camera'),
+                          ),
+                          // Voice Message
+                          ElevatedButton(
+                            onPressed: _showVoiceRecordingModal,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFEF4444),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                            child: const Text('Voice Message'),
+                          ),
+                          // Auto-Translate
+                          ElevatedButton(
+                            onPressed: _toggleAutoTranslate,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _autoTranslate 
+                                  ? const Color(0xFF059669)
+                                  : const Color(0xFF0891B2),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                            child: Text(_autoTranslate ? 'Translate: ON' : 'Translate: OFF'),
+                          ),
+                          // Show Timestamps
+                          ElevatedButton(
+                            onPressed: _toggleTimestamps,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _showTimestamps 
+                                  ? const Color(0xFF4F46E5)
+                                  : const Color(0xFF8B5CF6),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                            child: Text(_showTimestamps ? 'Hide Timestamps' : 'Show Timestamps'),
+                          ),
+                          // Export Chat
+                          ElevatedButton(
+                            onPressed: _exportChat,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF6B7280),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                            child: const Text('Export Chat'),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ],
             ),
@@ -6157,191 +6188,192 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.45,
-      decoration: const BoxDecoration(
-        color: Color(0xFF2D2D2D),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          // Handle bar
-          Container(
-            margin: const EdgeInsets.only(top: 12),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey[600],
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 16),
-          
-          // Title
-          const Text(
-            'Voice Message',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 24),
-          
-          // Duration display
-          Text(
-            _formatDuration(_duration),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 48,
-              fontWeight: FontWeight.w300,
-              fontFamily: 'monospace',
-            ),
-          ),
-          const SizedBox(height: 24),
-          
-          // Waveform visualization
-          Container(
-            height: 60,
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+    final mq = MediaQuery.of(context);
+    // Tight vertical budget: keeps waveform, timer, controls and cancel all visible
+    final isCompact = mq.size.height < 600;
+
+    return SafeArea(
+      top: false, // bottom sheet — only apply bottom safe area
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF2D2D2D),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SingleChildScrollView(
+          padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                for (int i = 0; i < 50; i++)
-                  Container(
-                    width: 4,
-                    height: (i < _waveformData.length ? _waveformData[i] : 0.1) * 50,
-                    margin: const EdgeInsets.symmetric(horizontal: 1),
-                    decoration: BoxDecoration(
-                      color: _isRecording && !_isPaused
-                          ? const Color(0xFFEF4444)
-                          : (_hasRecording ? const Color(0xFF10B981) : Colors.grey[600]),
-                      borderRadius: BorderRadius.circular(2),
+                // Handle bar
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 10),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[600],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+
+                // Title
+                const Text(
+                  'Voice Message',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: isCompact ? 12 : 20),
+
+                // Duration display
+                Text(
+                  _formatDuration(_duration),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 44,
+                    fontWeight: FontWeight.w300,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+                SizedBox(height: isCompact ? 10 : 16),
+
+                // Waveform visualization
+                SizedBox(
+                  height: isCompact ? 40 : 56,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (int i = 0; i < 50; i++)
+                        Container(
+                          width: 4,
+                          height: (i < _waveformData.length ? _waveformData[i] : 0.1) *
+                              (isCompact ? 36 : 48),
+                          margin: const EdgeInsets.symmetric(horizontal: 1),
+                          decoration: BoxDecoration(
+                            color: _isRecording && !_isPaused
+                                ? const Color(0xFFEF4444)
+                                : (_hasRecording
+                                    ? const Color(0xFF10B981)
+                                    : Colors.grey[600]),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: isCompact ? 16 : 24),
+
+                // Controls
+                if (!_isRecording && !_hasRecording) ...[
+                  // Initial state — Start button
+                  ElevatedButton.icon(
+                    onPressed: _isRecorderInitialized ? _startRecording : null,
+                    icon: const Icon(Icons.mic, size: 24),
+                    label: Text(
+                      _isRecorderInitialized ? 'Start Recording' : 'Initializing...',
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFEF4444),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
                     ),
                   ),
+                ] else if (_isRecording) ...[
+                  // Recording state — Pause/Resume + Stop
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        onPressed: _isPaused ? _resumeRecording : _pauseRecording,
+                        icon: Icon(
+                          _isPaused ? Icons.play_arrow : Icons.pause,
+                          size: 32,
+                          color: Colors.white,
+                        ),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.grey[700],
+                          padding: const EdgeInsets.all(14),
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      IconButton(
+                        onPressed: _stopRecording,
+                        icon: const Icon(Icons.stop, size: 32, color: Colors.white),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFFEF4444),
+                          padding: const EdgeInsets.all(14),
+                        ),
+                      ),
+                    ],
+                  ),
+                ] else if (_hasRecording) ...[
+                  // Has recording — Discard / Play / Send
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      IconButton(
+                        onPressed: _discardRecording,
+                        icon: const Icon(Icons.delete, size: 26, color: Colors.white),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.grey[700],
+                          padding: const EdgeInsets.all(12),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _isPlaying ? _stopPlaying : _playRecording,
+                        icon: Icon(
+                          _isPlaying ? Icons.stop : Icons.play_arrow,
+                          size: 32,
+                          color: Colors.white,
+                        ),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFF3B82F6),
+                          padding: const EdgeInsets.all(14),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () {
+                          if (_recordingPath != null) {
+                            widget.onSend(_recordingPath!, _duration);
+                          }
+                        },
+                        icon: const Icon(Icons.send, size: 26, color: Colors.white),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          padding: const EdgeInsets.all(12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+
+                SizedBox(height: isCompact ? 12 : 20),
+
+                // Cancel button
+                TextButton(
+                  onPressed: () async {
+                    if (_isRecording) {
+                      await _recorder.stopRecorder();
+                    }
+                    widget.onCancel();
+                  },
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: Colors.grey, fontSize: 15),
+                  ),
+                ),
+
+                // Bottom safe-area padding (accounts for home indicator etc.)
+                SizedBox(height: mq.padding.bottom > 0 ? mq.padding.bottom : 8),
               ],
             ),
           ),
-          const SizedBox(height: 24),
-          
-          // Controls
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (!_isRecording && !_hasRecording) ...[
-                    // Initial state - Start button
-                    ElevatedButton.icon(
-                      onPressed: _isRecorderInitialized ? _startRecording : null,
-                      icon: const Icon(Icons.mic, size: 28),
-                      label: Text(
-                        _isRecorderInitialized ? 'Start Recording' : 'Initializing...',
-                        style: const TextStyle(fontSize: 18),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEF4444),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                      ),
-                    ),
-                  ] else if (_isRecording) ...[
-                    // Recording state - Pause/Resume and Stop
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        // Pause/Resume button
-                        IconButton(
-                          onPressed: _isPaused ? _resumeRecording : _pauseRecording,
-                          icon: Icon(
-                            _isPaused ? Icons.play_arrow : Icons.pause,
-                            size: 36,
-                            color: Colors.white,
-                          ),
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.grey[700],
-                            padding: const EdgeInsets.all(16),
-                          ),
-                        ),
-                        const SizedBox(width: 24),
-                        // Stop button
-                        IconButton(
-                          onPressed: _stopRecording,
-                          icon: const Icon(Icons.stop, size: 36, color: Colors.white),
-                          style: IconButton.styleFrom(
-                            backgroundColor: const Color(0xFFEF4444),
-                            padding: const EdgeInsets.all(16),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ] else if (_hasRecording) ...[
-                    // Has recording - Play, Discard, Send
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        // Discard button
-                        IconButton(
-                          onPressed: _discardRecording,
-                          icon: const Icon(Icons.delete, size: 28, color: Colors.white),
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.grey[700],
-                            padding: const EdgeInsets.all(12),
-                          ),
-                        ),
-                        // Play/Stop button
-                        IconButton(
-                          onPressed: _isPlaying ? _stopPlaying : _playRecording,
-                          icon: Icon(
-                            _isPlaying ? Icons.stop : Icons.play_arrow,
-                            size: 36,
-                            color: Colors.white,
-                          ),
-                          style: IconButton.styleFrom(
-                            backgroundColor: const Color(0xFF3B82F6),
-                            padding: const EdgeInsets.all(16),
-                          ),
-                        ),
-                        // Send button
-                        IconButton(
-                          onPressed: () {
-                            if (_recordingPath != null) {
-                              widget.onSend(_recordingPath!, _duration);
-                            }
-                          },
-                          icon: const Icon(Icons.send, size: 28, color: Colors.white),
-                          style: IconButton.styleFrom(
-                            backgroundColor: const Color(0xFF10B981),
-                            padding: const EdgeInsets.all(12),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          
-          // Cancel button
-          Padding(
-            padding: const EdgeInsets.only(bottom: 32),
-            child: TextButton(
-              onPressed: () async {
-                if (_isRecording) {
-                  await _recorder.stopRecorder();
-                }
-                widget.onCancel();
-              },
-              child: const Text(
-                'Cancel',
-                style: TextStyle(color: Colors.grey, fontSize: 16),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
