@@ -1637,80 +1637,130 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final lastMessageText = group.lastMessage?.content ?? 'No messages yet';
     final lastMessageTime = group.lastMessage?.formattedTime ?? '';
 
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      leading: Stack(
-        children: [
-          CircleAvatar(
-            radius: 28,
-            backgroundColor: const Color(0xFF00D9FF),
-            child: group.avatarUrl != null
-                ? ClipOval(
-                    child: Image.network(
-                      group.avatarUrl!,
-                      width: 56,
-                      height: 56,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.group,
-                        color: Colors.white,
-                        size: 28,
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF252542),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => GroupChatScreen(group: group),
+              ),
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                // Group avatar
+                CircleAvatar(
+                  radius: 26,
+                  backgroundColor: const Color(0xFF00D9FF),
+                  child: group.avatarUrl != null
+                      ? ClipOval(
+                          child: Image.network(
+                            group.avatarUrl!,
+                            width: 52,
+                            height: 52,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return const Icon(
+                                Icons.group,
+                                color: Colors.white,
+                                size: 26,
+                              );
+                            },
+                          ),
+                        )
+                      : const Icon(Icons.group, color: Colors.white, size: 26),
+                ),
+                const SizedBox(width: 12),
+                // Group info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Group name
+                      Text(
+                        group.name,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  )
-                : const Icon(Icons.group, color: Colors.white, size: 28),
-          ),
-        ],
-      ),
-      title: Row(
-        children: [
-          Expanded(
-            child: Text(
-              group.name,
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: hasUnread ? FontWeight.bold : FontWeight.w500,
-                fontSize: 16,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+                      const SizedBox(height: 2),
+                      // Member count
+                      Text(
+                        '${group.memberCount} members',
+                        style: TextStyle(color: Colors.grey[500], fontSize: 13),
+                      ),
+                      const SizedBox(height: 2),
+                      // Last message preview
+                      Text(
+                        lastMessageText,
+                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                // Time + Unread badge column
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Last message time
+                    if (lastMessageTime.isNotEmpty)
+                      Text(
+                        lastMessageTime,
+                        style: TextStyle(
+                          color: hasUnread
+                              ? const Color(0xFF00D9FF)
+                              : Colors.grey[500],
+                          fontSize: 11,
+                          fontWeight: hasUnread
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    // Unread badge (when implemented)
+                    if (hasUnread) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00D9FF),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text(
+                          '1', // TODO: Replace with actual unread count
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
             ),
           ),
-          if (lastMessageTime.isNotEmpty)
-            Text(
-              lastMessageTime,
-              style: TextStyle(
-                color: hasUnread ? const Color(0xFF00D9FF) : Colors.grey[500],
-                fontSize: 12,
-                fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-        ],
+        ),
       ),
-      subtitle: Row(
-        children: [
-          Expanded(
-            child: Text(
-              '${group.memberCount} members • $lastMessageText',
-              style: TextStyle(
-                color: hasUnread ? Colors.white70 : Colors.grey[400],
-                fontSize: 14,
-                fontWeight: hasUnread ? FontWeight.w500 : FontWeight.normal,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => GroupChatScreen(group: group),
-          ),
-        );
-      },
     );
   }
 

@@ -20,162 +20,425 @@ class SocketService {
   // ---------------------------------------------------------------------------
   // Multi-listener maps: each event type -> { listenerKey: callback }
   // ---------------------------------------------------------------------------
-  final Map<String, Function(Map<String, dynamic>)> _messageReceivedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _messageReceivedListeners =
+      {};
   final Map<String, Function(Map<String, dynamic>)> _messageSentListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _doorbellRingListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _userTypingListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _typingUpdateListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _presenceUpdateListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _presenceUpdateListeners =
+      {};
   final Map<String, Function(List<dynamic>)> _presenceSnapshotListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _joinedChatListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _leftChatListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _messageDeliveredListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _messageDeliveredListeners =
+      {};
   final Map<String, Function(Map<String, dynamic>)> _messageReadListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _messageStatusUpdatedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _messageStatusUpdatedListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _messagesReadListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _colorChangedListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _colorResetListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _allMessagesDeletedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _allMessagesDeletedListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _fileReceivedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _voiceMessageReceivedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _messageDeletedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _messageEditedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _voiceMessageReceivedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _messageDeletedListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)> _messageEditedListeners =
+      {};
   final Map<String, Function(Map<String, dynamic>)> _taskAddedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _taskCompletedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _taskUncompletedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _excalidrawPinnedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _excalidrawUnpinnedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _reactionUpdatedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _reactionClearedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _taskCompletedListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)> _taskUncompletedListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)> _excalidrawPinnedListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _excalidrawUnpinnedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _reactionUpdatedListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)> _reactionClearedListeners =
+      {};
   final Map<String, Function(Map<String, dynamic>)> _incomingCallListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _crossRoomCallOfferListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _callInitiatedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _crossRoomCallOfferListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _callInitiatedListeners =
+      {};
   final Map<String, Function(Map<String, dynamic>)> _callAnsweredListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _callDeclinedListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _callEndedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _connectionChangedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _connectionChangedListeners = {};
   final Map<String, Function()> _reconnectedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _screenShareStartedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _screenShareStoppedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _screenShareStartedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _screenShareStoppedListeners = {};
 
   // Group chat listeners
-  final Map<String, Function(Map<String, dynamic>)> _groupNewMessageListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _groupMessageSentListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _groupFileMessageListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _groupDoorbellListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _groupMessageDeletedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _groupMessageEditedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _groupReactionUpdatedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _groupReactionClearedListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _groupMemberLeftListeners = {};
-  final Map<String, Function(Map<String, dynamic>)> _groupMessageStatusUpdatedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupNewMessageListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)> _groupMessageSentListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)> _groupFileMessageListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)> _groupDoorbellListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _groupMessageDeletedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _groupMessageEditedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _groupReactionUpdatedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _groupReactionClearedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupMemberLeftListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _groupMessageStatusUpdatedListeners = {};
 
   // ---------------------------------------------------------------------------
   // Keyed listener registration / removal helpers
   // ---------------------------------------------------------------------------
   void addListener(String event, String key, Function callback) {
     switch (event) {
-      case 'messageReceived': _messageReceivedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'messageSent': _messageSentListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'doorbellRing': _doorbellRingListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'userTyping': _userTypingListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'typingUpdate': _typingUpdateListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'presenceUpdate': _presenceUpdateListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'presenceSnapshot': _presenceSnapshotListeners[key] = callback as Function(List<dynamic>); break;
-      case 'joinedChat': _joinedChatListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'leftChat': _leftChatListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'messageDelivered': _messageDeliveredListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'messageRead': _messageReadListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'messageStatusUpdated': _messageStatusUpdatedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'messagesRead': _messagesReadListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'colorChanged': _colorChangedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'colorReset': _colorResetListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'allMessagesDeleted': _allMessagesDeletedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'fileReceived': _fileReceivedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'voiceMessageReceived': _voiceMessageReceivedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'messageDeleted': _messageDeletedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'messageEdited': _messageEditedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'taskAdded': _taskAddedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'taskCompleted': _taskCompletedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'taskUncompleted': _taskUncompletedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'excalidrawPinned': _excalidrawPinnedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'excalidrawUnpinned': _excalidrawUnpinnedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'reactionUpdated': _reactionUpdatedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'reactionCleared': _reactionClearedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'incomingCall': _incomingCallListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'crossRoomCallOffer': _crossRoomCallOfferListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'callInitiated': _callInitiatedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'callAnswered': _callAnsweredListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'callDeclined': _callDeclinedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'callEnded': _callEndedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'connectionChanged': _connectionChangedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'reconnected': _reconnectedListeners[key] = callback as Function(); break;
-      case 'screenShareStarted': _screenShareStartedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'screenShareStopped': _screenShareStoppedListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'messageReceived':
+        _messageReceivedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'messageSent':
+        _messageSentListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
+      case 'doorbellRing':
+        _doorbellRingListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'userTyping':
+        _userTypingListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
+      case 'typingUpdate':
+        _typingUpdateListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'presenceUpdate':
+        _presenceUpdateListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'presenceSnapshot':
+        _presenceSnapshotListeners[key] = callback as Function(List<dynamic>);
+        break;
+      case 'joinedChat':
+        _joinedChatListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
+      case 'leftChat':
+        _leftChatListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
+      case 'messageDelivered':
+        _messageDeliveredListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'messageRead':
+        _messageReadListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
+      case 'messageStatusUpdated':
+        _messageStatusUpdatedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'messagesRead':
+        _messagesReadListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'colorChanged':
+        _colorChangedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'colorReset':
+        _colorResetListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
+      case 'allMessagesDeleted':
+        _allMessagesDeletedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'fileReceived':
+        _fileReceivedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'voiceMessageReceived':
+        _voiceMessageReceivedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'messageDeleted':
+        _messageDeletedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'messageEdited':
+        _messageEditedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'taskAdded':
+        _taskAddedListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
+      case 'taskCompleted':
+        _taskCompletedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'taskUncompleted':
+        _taskUncompletedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'excalidrawPinned':
+        _excalidrawPinnedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'excalidrawUnpinned':
+        _excalidrawUnpinnedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'reactionUpdated':
+        _reactionUpdatedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'reactionCleared':
+        _reactionClearedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'incomingCall':
+        _incomingCallListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'crossRoomCallOffer':
+        _crossRoomCallOfferListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'callInitiated':
+        _callInitiatedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'callAnswered':
+        _callAnsweredListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'callDeclined':
+        _callDeclinedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'callEnded':
+        _callEndedListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
+      case 'connectionChanged':
+        _connectionChangedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'reconnected':
+        _reconnectedListeners[key] = callback as Function();
+        break;
+      case 'screenShareStarted':
+        _screenShareStartedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'screenShareStopped':
+        _screenShareStoppedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
       // Group chat events
-      case 'groupNewMessage': _groupNewMessageListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'groupMessageSent': _groupMessageSentListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'groupFileMessage': _groupFileMessageListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'groupDoorbell': _groupDoorbellListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'groupMessageDeleted': _groupMessageDeletedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'groupMessageEdited': _groupMessageEditedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'groupReactionUpdated': _groupReactionUpdatedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'groupReactionCleared': _groupReactionClearedListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'groupMemberLeft': _groupMemberLeftListeners[key] = callback as Function(Map<String, dynamic>); break;
-      case 'groupMessageStatusUpdated': _groupMessageStatusUpdatedListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupNewMessage':
+        _groupNewMessageListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupMessageSent':
+        _groupMessageSentListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupFileMessage':
+        _groupFileMessageListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupDoorbell':
+        _groupDoorbellListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupMessageDeleted':
+        _groupMessageDeletedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupMessageEdited':
+        _groupMessageEditedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupReactionUpdated':
+        _groupReactionUpdatedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupReactionCleared':
+        _groupReactionClearedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupMemberLeft':
+        _groupMemberLeftListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupMessageStatusUpdated':
+        _groupMessageStatusUpdatedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'test_response':
+        // Add test_response listeners to group new message listeners for now
+        _groupNewMessageListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
     }
   }
 
   void removeListener(String event, String key) {
     switch (event) {
-      case 'messageReceived': _messageReceivedListeners.remove(key); break;
-      case 'messageSent': _messageSentListeners.remove(key); break;
-      case 'doorbellRing': _doorbellRingListeners.remove(key); break;
-      case 'userTyping': _userTypingListeners.remove(key); break;
-      case 'typingUpdate': _typingUpdateListeners.remove(key); break;
-      case 'presenceUpdate': _presenceUpdateListeners.remove(key); break;
-      case 'presenceSnapshot': _presenceSnapshotListeners.remove(key); break;
-      case 'joinedChat': _joinedChatListeners.remove(key); break;
-      case 'leftChat': _leftChatListeners.remove(key); break;
-      case 'messageDelivered': _messageDeliveredListeners.remove(key); break;
-      case 'messageRead': _messageReadListeners.remove(key); break;
-      case 'messageStatusUpdated': _messageStatusUpdatedListeners.remove(key); break;
-      case 'messagesRead': _messagesReadListeners.remove(key); break;
-      case 'colorChanged': _colorChangedListeners.remove(key); break;
-      case 'colorReset': _colorResetListeners.remove(key); break;
-      case 'allMessagesDeleted': _allMessagesDeletedListeners.remove(key); break;
-      case 'fileReceived': _fileReceivedListeners.remove(key); break;
-      case 'voiceMessageReceived': _voiceMessageReceivedListeners.remove(key); break;
-      case 'messageDeleted': _messageDeletedListeners.remove(key); break;
-      case 'messageEdited': _messageEditedListeners.remove(key); break;
-      case 'taskAdded': _taskAddedListeners.remove(key); break;
-      case 'taskCompleted': _taskCompletedListeners.remove(key); break;
-      case 'taskUncompleted': _taskUncompletedListeners.remove(key); break;
-      case 'excalidrawPinned': _excalidrawPinnedListeners.remove(key); break;
-      case 'excalidrawUnpinned': _excalidrawUnpinnedListeners.remove(key); break;
-      case 'reactionUpdated': _reactionUpdatedListeners.remove(key); break;
-      case 'reactionCleared': _reactionClearedListeners.remove(key); break;
-      case 'incomingCall': _incomingCallListeners.remove(key); break;
-      case 'crossRoomCallOffer': _crossRoomCallOfferListeners.remove(key); break;
-      case 'callInitiated': _callInitiatedListeners.remove(key); break;
-      case 'callAnswered': _callAnsweredListeners.remove(key); break;
-      case 'callDeclined': _callDeclinedListeners.remove(key); break;
-      case 'callEnded': _callEndedListeners.remove(key); break;
-      case 'connectionChanged': _connectionChangedListeners.remove(key); break;
-      case 'reconnected': _reconnectedListeners.remove(key); break;
-      case 'screenShareStarted': _screenShareStartedListeners.remove(key); break;
-      case 'screenShareStopped': _screenShareStoppedListeners.remove(key); break;
+      case 'messageReceived':
+        _messageReceivedListeners.remove(key);
+        break;
+      case 'messageSent':
+        _messageSentListeners.remove(key);
+        break;
+      case 'doorbellRing':
+        _doorbellRingListeners.remove(key);
+        break;
+      case 'userTyping':
+        _userTypingListeners.remove(key);
+        break;
+      case 'typingUpdate':
+        _typingUpdateListeners.remove(key);
+        break;
+      case 'presenceUpdate':
+        _presenceUpdateListeners.remove(key);
+        break;
+      case 'presenceSnapshot':
+        _presenceSnapshotListeners.remove(key);
+        break;
+      case 'joinedChat':
+        _joinedChatListeners.remove(key);
+        break;
+      case 'leftChat':
+        _leftChatListeners.remove(key);
+        break;
+      case 'messageDelivered':
+        _messageDeliveredListeners.remove(key);
+        break;
+      case 'messageRead':
+        _messageReadListeners.remove(key);
+        break;
+      case 'messageStatusUpdated':
+        _messageStatusUpdatedListeners.remove(key);
+        break;
+      case 'messagesRead':
+        _messagesReadListeners.remove(key);
+        break;
+      case 'colorChanged':
+        _colorChangedListeners.remove(key);
+        break;
+      case 'colorReset':
+        _colorResetListeners.remove(key);
+        break;
+      case 'allMessagesDeleted':
+        _allMessagesDeletedListeners.remove(key);
+        break;
+      case 'fileReceived':
+        _fileReceivedListeners.remove(key);
+        break;
+      case 'voiceMessageReceived':
+        _voiceMessageReceivedListeners.remove(key);
+        break;
+      case 'messageDeleted':
+        _messageDeletedListeners.remove(key);
+        break;
+      case 'messageEdited':
+        _messageEditedListeners.remove(key);
+        break;
+      case 'taskAdded':
+        _taskAddedListeners.remove(key);
+        break;
+      case 'taskCompleted':
+        _taskCompletedListeners.remove(key);
+        break;
+      case 'taskUncompleted':
+        _taskUncompletedListeners.remove(key);
+        break;
+      case 'excalidrawPinned':
+        _excalidrawPinnedListeners.remove(key);
+        break;
+      case 'excalidrawUnpinned':
+        _excalidrawUnpinnedListeners.remove(key);
+        break;
+      case 'reactionUpdated':
+        _reactionUpdatedListeners.remove(key);
+        break;
+      case 'reactionCleared':
+        _reactionClearedListeners.remove(key);
+        break;
+      case 'incomingCall':
+        _incomingCallListeners.remove(key);
+        break;
+      case 'crossRoomCallOffer':
+        _crossRoomCallOfferListeners.remove(key);
+        break;
+      case 'callInitiated':
+        _callInitiatedListeners.remove(key);
+        break;
+      case 'callAnswered':
+        _callAnsweredListeners.remove(key);
+        break;
+      case 'callDeclined':
+        _callDeclinedListeners.remove(key);
+        break;
+      case 'callEnded':
+        _callEndedListeners.remove(key);
+        break;
+      case 'connectionChanged':
+        _connectionChangedListeners.remove(key);
+        break;
+      case 'reconnected':
+        _reconnectedListeners.remove(key);
+        break;
+      case 'screenShareStarted':
+        _screenShareStartedListeners.remove(key);
+        break;
+      case 'screenShareStopped':
+        _screenShareStoppedListeners.remove(key);
+        break;
       // Group chat events
-      case 'groupNewMessage': _groupNewMessageListeners.remove(key); break;
-      case 'groupMessageSent': _groupMessageSentListeners.remove(key); break;
-      case 'groupFileMessage': _groupFileMessageListeners.remove(key); break;
-      case 'groupDoorbell': _groupDoorbellListeners.remove(key); break;
-      case 'groupMessageDeleted': _groupMessageDeletedListeners.remove(key); break;
-      case 'groupMessageEdited': _groupMessageEditedListeners.remove(key); break;
-      case 'groupReactionUpdated': _groupReactionUpdatedListeners.remove(key); break;
-      case 'groupReactionCleared': _groupReactionClearedListeners.remove(key); break;
-      case 'groupMemberLeft': _groupMemberLeftListeners.remove(key); break;
-      case 'groupMessageStatusUpdated': _groupMessageStatusUpdatedListeners.remove(key); break;
+      case 'groupNewMessage':
+        _groupNewMessageListeners.remove(key);
+        break;
+      case 'groupMessageSent':
+        _groupMessageSentListeners.remove(key);
+        break;
+      case 'groupFileMessage':
+        _groupFileMessageListeners.remove(key);
+        break;
+      case 'groupDoorbell':
+        _groupDoorbellListeners.remove(key);
+        break;
+      case 'groupMessageDeleted':
+        _groupMessageDeletedListeners.remove(key);
+        break;
+      case 'groupMessageEdited':
+        _groupMessageEditedListeners.remove(key);
+        break;
+      case 'groupReactionUpdated':
+        _groupReactionUpdatedListeners.remove(key);
+        break;
+      case 'groupReactionCleared':
+        _groupReactionClearedListeners.remove(key);
+        break;
+      case 'groupMemberLeft':
+        _groupMemberLeftListeners.remove(key);
+        break;
+      case 'groupMessageStatusUpdated':
+        _groupMessageStatusUpdatedListeners.remove(key);
+        break;
+      case 'test_response':
+        // Remove from group new message listeners
+        _groupNewMessageListeners.remove(key);
+        break;
     }
   }
 
@@ -232,12 +495,29 @@ class SocketService {
   }
 
   // Broadcast helpers
-  void _broadcast(Map<String, Function(Map<String, dynamic>)> listeners, Map<String, dynamic> data) {
+  void _broadcast(
+    Map<String, Function(Map<String, dynamic>)> listeners,
+    Map<String, dynamic> data,
+  ) {
+    debugPrint(
+      '🔍 [BROADCAST DEBUG] Broadcasting to ${listeners.length} listeners',
+    );
+    debugPrint('🔍 [BROADCAST DEBUG] Listener keys: ${listeners.keys}');
+    debugPrint('🔍 [BROADCAST DEBUG] Data: $data');
     for (final cb in listeners.values.toList()) {
-      cb(data);
+      try {
+        cb(data);
+        debugPrint('🔍 [BROADCAST DEBUG] Successfully called listener');
+      } catch (e) {
+        debugPrint('🔍 [BROADCAST DEBUG] Error calling listener: $e');
+      }
     }
   }
-  void _broadcastList(Map<String, Function(List<dynamic>)> listeners, List<dynamic> data) {
+
+  void _broadcastList(
+    Map<String, Function(List<dynamic>)> listeners,
+    List<dynamic> data,
+  ) {
     for (final cb in listeners.values.toList()) {
       cb(data);
     }
@@ -249,56 +529,130 @@ class SocketService {
   // ---------------------------------------------------------------------------
   static const _dk = '_default';
 
-  set onMessageReceived(Function(Map<String, dynamic>)? cb) => cb != null ? _messageReceivedListeners[_dk] = cb : _messageReceivedListeners.remove(_dk);
-  set onMessageSent(Function(Map<String, dynamic>)? cb) => cb != null ? _messageSentListeners[_dk] = cb : _messageSentListeners.remove(_dk);
-  set onDoorbellRing(Function(Map<String, dynamic>)? cb) => cb != null ? _doorbellRingListeners[_dk] = cb : _doorbellRingListeners.remove(_dk);
-  set onUserTyping(Function(Map<String, dynamic>)? cb) => cb != null ? _userTypingListeners[_dk] = cb : _userTypingListeners.remove(_dk);
-  set onTypingUpdate(Function(Map<String, dynamic>)? cb) => cb != null ? _typingUpdateListeners[_dk] = cb : _typingUpdateListeners.remove(_dk);
-  set onPresenceUpdate(Function(Map<String, dynamic>)? cb) => cb != null ? _presenceUpdateListeners[_dk] = cb : _presenceUpdateListeners.remove(_dk);
-  set onPresenceSnapshot(Function(List<dynamic>)? cb) => cb != null ? _presenceSnapshotListeners[_dk] = cb : _presenceSnapshotListeners.remove(_dk);
-  set onJoinedChat(Function(Map<String, dynamic>)? cb) => cb != null ? _joinedChatListeners[_dk] = cb : _joinedChatListeners.remove(_dk);
-  set onLeftChat(Function(Map<String, dynamic>)? cb) => cb != null ? _leftChatListeners[_dk] = cb : _leftChatListeners.remove(_dk);
-  set onMessageDelivered(Function(Map<String, dynamic>)? cb) => cb != null ? _messageDeliveredListeners[_dk] = cb : _messageDeliveredListeners.remove(_dk);
-  set onMessageRead(Function(Map<String, dynamic>)? cb) => cb != null ? _messageReadListeners[_dk] = cb : _messageReadListeners.remove(_dk);
-  set onMessageStatusUpdated(Function(Map<String, dynamic>)? cb) => cb != null ? _messageStatusUpdatedListeners[_dk] = cb : _messageStatusUpdatedListeners.remove(_dk);
-  set onMessagesRead(Function(Map<String, dynamic>)? cb) => cb != null ? _messagesReadListeners[_dk] = cb : _messagesReadListeners.remove(_dk);
-  set onColorChanged(Function(Map<String, dynamic>)? cb) => cb != null ? _colorChangedListeners[_dk] = cb : _colorChangedListeners.remove(_dk);
-  set onColorReset(Function(Map<String, dynamic>)? cb) => cb != null ? _colorResetListeners[_dk] = cb : _colorResetListeners.remove(_dk);
-  set onAllMessagesDeleted(Function(Map<String, dynamic>)? cb) => cb != null ? _allMessagesDeletedListeners[_dk] = cb : _allMessagesDeletedListeners.remove(_dk);
-  set onFileReceived(Function(Map<String, dynamic>)? cb) => cb != null ? _fileReceivedListeners[_dk] = cb : _fileReceivedListeners.remove(_dk);
-  set onVoiceMessageReceived(Function(Map<String, dynamic>)? cb) => cb != null ? _voiceMessageReceivedListeners[_dk] = cb : _voiceMessageReceivedListeners.remove(_dk);
-  set onMessageDeleted(Function(Map<String, dynamic>)? cb) => cb != null ? _messageDeletedListeners[_dk] = cb : _messageDeletedListeners.remove(_dk);
-  set onMessageEdited(Function(Map<String, dynamic>)? cb) => cb != null ? _messageEditedListeners[_dk] = cb : _messageEditedListeners.remove(_dk);
-  set onTaskAdded(Function(Map<String, dynamic>)? cb) => cb != null ? _taskAddedListeners[_dk] = cb : _taskAddedListeners.remove(_dk);
-  set onTaskCompleted(Function(Map<String, dynamic>)? cb) => cb != null ? _taskCompletedListeners[_dk] = cb : _taskCompletedListeners.remove(_dk);
-  set onTaskUncompleted(Function(Map<String, dynamic>)? cb) => cb != null ? _taskUncompletedListeners[_dk] = cb : _taskUncompletedListeners.remove(_dk);
-  set onExcalidrawPinned(Function(Map<String, dynamic>)? cb) => cb != null ? _excalidrawPinnedListeners[_dk] = cb : _excalidrawPinnedListeners.remove(_dk);
-  set onExcalidrawUnpinned(Function(Map<String, dynamic>)? cb) => cb != null ? _excalidrawUnpinnedListeners[_dk] = cb : _excalidrawUnpinnedListeners.remove(_dk);
-  set onReactionUpdated(Function(Map<String, dynamic>)? cb) => cb != null ? _reactionUpdatedListeners[_dk] = cb : _reactionUpdatedListeners.remove(_dk);
-  set onReactionCleared(Function(Map<String, dynamic>)? cb) => cb != null ? _reactionClearedListeners[_dk] = cb : _reactionClearedListeners.remove(_dk);
-  set onIncomingCall(Function(Map<String, dynamic>)? cb) => cb != null ? _incomingCallListeners[_dk] = cb : _incomingCallListeners.remove(_dk);
-  set onCrossRoomCallOffer(Function(Map<String, dynamic>)? cb) => cb != null ? _crossRoomCallOfferListeners[_dk] = cb : _crossRoomCallOfferListeners.remove(_dk);
-  set onCallInitiated(Function(Map<String, dynamic>)? cb) => cb != null ? _callInitiatedListeners[_dk] = cb : _callInitiatedListeners.remove(_dk);
-  set onCallAnswered(Function(Map<String, dynamic>)? cb) => cb != null ? _callAnsweredListeners[_dk] = cb : _callAnsweredListeners.remove(_dk);
-  set onCallDeclined(Function(Map<String, dynamic>)? cb) => cb != null ? _callDeclinedListeners[_dk] = cb : _callDeclinedListeners.remove(_dk);
-  set onCallEnded(Function(Map<String, dynamic>)? cb) => cb != null ? _callEndedListeners[_dk] = cb : _callEndedListeners.remove(_dk);
+  set onMessageReceived(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _messageReceivedListeners[_dk] = cb
+      : _messageReceivedListeners.remove(_dk);
+  set onMessageSent(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _messageSentListeners[_dk] = cb
+      : _messageSentListeners.remove(_dk);
+  set onDoorbellRing(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _doorbellRingListeners[_dk] = cb
+      : _doorbellRingListeners.remove(_dk);
+  set onUserTyping(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _userTypingListeners[_dk] = cb
+      : _userTypingListeners.remove(_dk);
+  set onTypingUpdate(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _typingUpdateListeners[_dk] = cb
+      : _typingUpdateListeners.remove(_dk);
+  set onPresenceUpdate(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _presenceUpdateListeners[_dk] = cb
+      : _presenceUpdateListeners.remove(_dk);
+  set onPresenceSnapshot(Function(List<dynamic>)? cb) => cb != null
+      ? _presenceSnapshotListeners[_dk] = cb
+      : _presenceSnapshotListeners.remove(_dk);
+  set onJoinedChat(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _joinedChatListeners[_dk] = cb
+      : _joinedChatListeners.remove(_dk);
+  set onLeftChat(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _leftChatListeners[_dk] = cb
+      : _leftChatListeners.remove(_dk);
+  set onMessageDelivered(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _messageDeliveredListeners[_dk] = cb
+      : _messageDeliveredListeners.remove(_dk);
+  set onMessageRead(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _messageReadListeners[_dk] = cb
+      : _messageReadListeners.remove(_dk);
+  set onMessageStatusUpdated(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _messageStatusUpdatedListeners[_dk] = cb
+      : _messageStatusUpdatedListeners.remove(_dk);
+  set onMessagesRead(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _messagesReadListeners[_dk] = cb
+      : _messagesReadListeners.remove(_dk);
+  set onColorChanged(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _colorChangedListeners[_dk] = cb
+      : _colorChangedListeners.remove(_dk);
+  set onColorReset(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _colorResetListeners[_dk] = cb
+      : _colorResetListeners.remove(_dk);
+  set onAllMessagesDeleted(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _allMessagesDeletedListeners[_dk] = cb
+      : _allMessagesDeletedListeners.remove(_dk);
+  set onFileReceived(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _fileReceivedListeners[_dk] = cb
+      : _fileReceivedListeners.remove(_dk);
+  set onVoiceMessageReceived(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _voiceMessageReceivedListeners[_dk] = cb
+      : _voiceMessageReceivedListeners.remove(_dk);
+  set onMessageDeleted(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _messageDeletedListeners[_dk] = cb
+      : _messageDeletedListeners.remove(_dk);
+  set onMessageEdited(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _messageEditedListeners[_dk] = cb
+      : _messageEditedListeners.remove(_dk);
+  set onTaskAdded(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _taskAddedListeners[_dk] = cb
+      : _taskAddedListeners.remove(_dk);
+  set onTaskCompleted(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _taskCompletedListeners[_dk] = cb
+      : _taskCompletedListeners.remove(_dk);
+  set onTaskUncompleted(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _taskUncompletedListeners[_dk] = cb
+      : _taskUncompletedListeners.remove(_dk);
+  set onExcalidrawPinned(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _excalidrawPinnedListeners[_dk] = cb
+      : _excalidrawPinnedListeners.remove(_dk);
+  set onExcalidrawUnpinned(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _excalidrawUnpinnedListeners[_dk] = cb
+      : _excalidrawUnpinnedListeners.remove(_dk);
+  set onReactionUpdated(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _reactionUpdatedListeners[_dk] = cb
+      : _reactionUpdatedListeners.remove(_dk);
+  set onReactionCleared(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _reactionClearedListeners[_dk] = cb
+      : _reactionClearedListeners.remove(_dk);
+  set onIncomingCall(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _incomingCallListeners[_dk] = cb
+      : _incomingCallListeners.remove(_dk);
+  set onCrossRoomCallOffer(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _crossRoomCallOfferListeners[_dk] = cb
+      : _crossRoomCallOfferListeners.remove(_dk);
+  set onCallInitiated(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _callInitiatedListeners[_dk] = cb
+      : _callInitiatedListeners.remove(_dk);
+  set onCallAnswered(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _callAnsweredListeners[_dk] = cb
+      : _callAnsweredListeners.remove(_dk);
+  set onCallDeclined(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _callDeclinedListeners[_dk] = cb
+      : _callDeclinedListeners.remove(_dk);
+  set onCallEnded(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _callEndedListeners[_dk] = cb
+      : _callEndedListeners.remove(_dk);
   set onConnectionChanged(Function(bool isConnected)? cb) {
     if (cb != null) {
-      _connectionChangedListeners[_dk] = (data) => cb(data['connected'] as bool);
+      _connectionChangedListeners[_dk] = (data) =>
+          cb(data['connected'] as bool);
     } else {
       _connectionChangedListeners.remove(_dk);
     }
   }
-  set onReconnected(Function()? cb) => cb != null ? _reconnectedListeners[_dk] = cb : _reconnectedListeners.remove(_dk);
-  set onScreenShareStarted(Function(Map<String, dynamic>)? cb) => cb != null ? _screenShareStartedListeners[_dk] = cb : _screenShareStartedListeners.remove(_dk);
-  set onScreenShareStopped(Function(Map<String, dynamic>)? cb) => cb != null ? _screenShareStoppedListeners[_dk] = cb : _screenShareStoppedListeners.remove(_dk);
+
+  set onReconnected(Function()? cb) => cb != null
+      ? _reconnectedListeners[_dk] = cb
+      : _reconnectedListeners.remove(_dk);
+  set onScreenShareStarted(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _screenShareStartedListeners[_dk] = cb
+      : _screenShareStartedListeners.remove(_dk);
+  set onScreenShareStopped(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _screenShareStoppedListeners[_dk] = cb
+      : _screenShareStoppedListeners.remove(_dk);
 
   Function(Map<String, dynamic>)? _onSignal;
-  
+
   // Signal buffering for cross-room calls
   final List<Map<String, dynamic>> _signalBuffer = [];
   bool _bufferSignals = false;
-  
+
   // Getter/setter for onSignal with buffer replay
   Function(Map<String, dynamic>)? get onSignal => _onSignal;
   set onSignal(Function(Map<String, dynamic>)? handler) {
@@ -312,14 +666,16 @@ class SocketService {
       _signalBuffer.clear();
     }
   }
-  
+
   /// Start buffering signals (call before expecting cross-room call).
   /// If auto-buffering already kicked in (signals arrived before handler was
   /// set) the existing buffer is PRESERVED so no ICE candidates are lost.
   void startSignalBuffering() {
     if (_bufferSignals) {
       // Auto-buffer already running — don't wipe any pre-buffered signals.
-      debugPrint('📡 Signal buffering already active (${_signalBuffer.length} signals preserved)');
+      debugPrint(
+        '📡 Signal buffering already active (${_signalBuffer.length} signals preserved)',
+      );
       return;
     }
     _bufferSignals = true;
@@ -327,7 +683,7 @@ class SocketService {
     _signalBuffer.clear();
     debugPrint('📡 Started signal buffering');
   }
-  
+
   /// Stop buffering signals
   void stopSignalBuffering() {
     _bufferSignals = false;
@@ -337,8 +693,7 @@ class SocketService {
 
   bool get isConnected => _socket?.connected ?? false;
   int? get currentUserId => _currentUserId;
-  
-  
+
   /// Test connection status
   void testConnection() {
     debugPrint('=== Socket Connection Test ===');
@@ -372,32 +727,26 @@ class SocketService {
     debugPrint('User ID: $_currentUserId');
 
     try {
-      // Use older configuration style for better compatibility
-      _socket = IO.io(
-        serverUrl,
-        <String, dynamic>{
-          'transports': ['websocket', 'polling'],
-          'autoConnect': true,
-          'query': {
-            'token': _authToken,
-          },
-          'extraHeaders': {
-            'Authorization': 'Bearer $_authToken',
-          },
-        },
-      );
+      // Use simple configuration that should work with most servers
+      _socket = IO.io(serverUrl, <String, dynamic>{
+        'transports': ['websocket', 'polling'],
+        'autoConnect': false,
+        'query': {'token': _authToken},
+        'extraHeaders': {'Authorization': 'Bearer $_authToken'},
+        'forceNew': true,
+        'reconnection': true,
+        'timeout': 20000,
+      });
 
-      debugPrint('Socket.IO client created');
+      debugPrint('Socket.IO client created with simple config');
       _setupEventListeners();
-      
-      // Manually connect if not auto-connecting
-      if (!(_socket?.connected ?? false)) {
-        debugPrint('Manually connecting socket...');
-        _socket?.connect();
-      }
-      
-      // Test connection after a short delay
-      Future.delayed(const Duration(seconds: 2), () {
+
+      // Connect manually
+      debugPrint('Manually connecting socket...');
+      _socket?.connect();
+
+      // Test connection after a delay
+      Future.delayed(const Duration(seconds: 3), () {
         testConnection();
       });
     } catch (e) {
@@ -408,12 +757,20 @@ class SocketService {
   void _setupEventListeners() {
     if (_socket == null) return;
 
+    // Add a catch-all event listener for debugging
+    _socket!.onAny((event, data) {
+      debugPrint('🔍 [SOCKET DEBUG] Received event: $event with data: $data');
+    });
+
     // Connection events
     _socket!.on('connect', (_) {
       debugPrint('✅ Socket connected - ID: ${_socket!.id}');
+      debugPrint('🔍 [SOCKET DEBUG] Connect event received');
       // Notify all connection listeners that connection is restored
       _broadcast(_connectionChangedListeners, {'connected': true});
-      for (final cb in _reconnectedListeners.values.toList()) { cb(); }
+      for (final cb in _reconnectedListeners.values.toList()) {
+        cb();
+      }
       // Join user's personal room for direct notifications
       if (_currentUserId != null) {
         debugPrint('Joining personal room: user_$_currentUserId');
@@ -482,12 +839,14 @@ class SocketService {
     _socket!.on('new_message', (data) {
       debugPrint('💬 New message: $data');
       _broadcast(_messageReceivedListeners, data as Map<String, dynamic>);
-      
+
       // Auto-acknowledge delivery when we receive a message
       final messageData = data as Map<String, dynamic>;
       if (messageData['id'] != null) {
         emit('message_delivered', {'message_id': messageData['id']});
-        debugPrint('📧 Auto-sent delivery confirmation for message ${messageData['id']}');
+        debugPrint(
+          '📧 Auto-sent delivery confirmation for message ${messageData['id']}',
+        );
       }
     });
 
@@ -578,7 +937,9 @@ class SocketService {
 
     // Voice message event (receiving voice messages from web)
     _socket!.on('voice_message', (data) {
-      debugPrint('🎤 Voice message received (${_voiceMessageReceivedListeners.length} listeners): $data');
+      debugPrint(
+        '🎤 Voice message received (${_voiceMessageReceivedListeners.length} listeners): $data',
+      );
       _broadcast(_voiceMessageReceivedListeners, data as Map<String, dynamic>);
     });
 
@@ -636,13 +997,13 @@ class SocketService {
     });
 
     // === Call-related events ===
-    
+
     // Incoming call notification (from initiate_call event)
     _socket!.on('incoming_call', (data) {
       debugPrint('📲 Incoming call: $data');
       _broadcast(_incomingCallListeners, data as Map<String, dynamic>);
     });
-    
+
     // Cross-room call offer (from web client signaling)
     _socket!.on('cross_room_call_offer', (data) {
       debugPrint('📲 Cross-room call offer: $data');
@@ -687,20 +1048,23 @@ class SocketService {
     });
 
     // === Group chat events ===
-    
+
     // New group message from another member
     _socket!.on('group_new_message', (data) {
       debugPrint('💬 Group new message: $data');
       _broadcast(_groupNewMessageListeners, data as Map<String, dynamic>);
-      
+
       // Auto-acknowledge delivery
       final messageData = data as Map<String, dynamic>;
-      if (messageData['message_id'] != null && messageData['group_id'] != null) {
+      if (messageData['message_id'] != null &&
+          messageData['group_id'] != null) {
         emit('group_message_delivered', {
           'message_id': messageData['message_id'],
           'group_id': messageData['group_id'],
         });
-        debugPrint('📧 Auto-sent group delivery confirmation for message ${messageData['message_id']}');
+        debugPrint(
+          '📧 Auto-sent group delivery confirmation for message ${messageData['message_id']}',
+        );
       }
     });
 
@@ -755,7 +1119,26 @@ class SocketService {
     // Group message status updated (delivered/seen)
     _socket!.on('message_status_updated', (data) {
       debugPrint('✓ Group message status updated: $data');
-      _broadcast(_groupMessageStatusUpdatedListeners, data as Map<String, dynamic>);
+      _broadcast(
+        _groupMessageStatusUpdatedListeners,
+        data as Map<String, dynamic>,
+      );
+    });
+
+    // Debug: Test response event - handle it properly
+    _socket!.on('test_response', (data) {
+      debugPrint(
+        '🧪 [SOCKET DEBUG] Test response received in socket service: $data',
+      );
+      debugPrint(
+        '🧪 [SOCKET DEBUG] Group new message listeners count: ${_groupNewMessageListeners.length}',
+      );
+      debugPrint(
+        '🧪 [SOCKET DEBUG] Group new message listener keys: ${_groupNewMessageListeners.keys}',
+      );
+      // Broadcast to group new message listeners since that's where test_response listeners are registered
+      _broadcast(_groupNewMessageListeners, data as Map<String, dynamic>);
+      debugPrint('🧪 [SOCKET DEBUG] Test response broadcast completed');
     });
 
     // WebRTC signaling (offer/answer/ICE candidates)
@@ -773,13 +1156,14 @@ class SocketService {
         // → ICE negotiation fails → PeerConnectionFailed.
         if (!_bufferSignals) {
           _bufferSignals = true;
-          debugPrint('📡 Auto-started signal buffering (pre-offer trickle ICE)');
+          debugPrint(
+            '📡 Auto-started signal buffering (pre-offer trickle ICE)',
+          );
         }
         _signalBuffer.add(signalData);
         debugPrint('📡 Buffered signal (total: ${_signalBuffer.length})');
       }
     });
-
   }
 
   /// Disconnect from Socket.IO server
@@ -845,10 +1229,7 @@ class SocketService {
   /// Send typing update with message preview
   void sendTypingUpdate(int recipientId, String message) {
     final preview = message.length > 120 ? message.substring(0, 120) : message;
-    emit('typing_update', {
-      'recipient_id': recipientId,
-      'message': preview,
-    });
+    emit('typing_update', {'recipient_id': recipientId, 'message': preview});
   }
 
   /// Confirm message delivery
@@ -878,10 +1259,7 @@ class SocketService {
 
   /// Edit a message
   void editMessage(int messageId, String newContent) {
-    emit('edit_message', {
-      'message_id': messageId,
-      'content': newContent,
-    });
+    emit('edit_message', {'message_id': messageId, 'content': newContent});
   }
 
   /// Add message as task
@@ -891,10 +1269,7 @@ class SocketService {
 
   /// Set a reaction on a message
   void setReaction(int messageId, String emoji) {
-    emit('set_reaction', {
-      'message_id': messageId,
-      'reaction': emoji,
-    });
+    emit('set_reaction', {'message_id': messageId, 'reaction': emoji});
     debugPrint('👍 Sending reaction: emoji=$emoji, messageId=$messageId');
   }
 
@@ -925,7 +1300,7 @@ class SocketService {
   }
 
   // === Group chat methods ===
-  
+
   /// Join a group chat room
   void joinGroupChat(int groupId) {
     emit('join_group', {'group_id': groupId});
@@ -956,6 +1331,12 @@ class SocketService {
     emit('ring_group_doorbell', {'group_id': groupId});
   }
 
+  /// Send typing indicator in a group
+  void sendGroupTyping(int groupId, String message) {
+    final preview = message.length > 120 ? message.substring(0, 120) : message;
+    emit('group_typing', {'group_id': groupId, 'message': preview});
+  }
+
   /// Confirm group message delivery
   void confirmGroupDelivery(int messageId, int groupId) {
     emit('group_message_delivered', {
@@ -965,7 +1346,11 @@ class SocketService {
   }
 
   /// Mark group messages as viewed
-  void markGroupMessagesViewed(int groupId, List<int> messageIds, int senderId) {
+  void markGroupMessagesViewed(
+    int groupId,
+    List<int> messageIds,
+    int senderId,
+  ) {
     emit('group_messages_viewed', {
       'group_id': groupId,
       'message_ids': messageIds,
@@ -997,7 +1382,9 @@ class SocketService {
       'group_id': groupId,
       'emoji': emoji,
     });
-    debugPrint('👍 Sending group reaction: emoji=$emoji, messageId=$messageId, groupId=$groupId');
+    debugPrint(
+      '👍 Sending group reaction: emoji=$emoji, messageId=$messageId, groupId=$groupId',
+    );
   }
 
   /// Clear reaction from a group message
@@ -1007,7 +1394,9 @@ class SocketService {
       'group_id': groupId,
       'emoji': emoji,
     });
-    debugPrint('❌ Clearing group reaction for messageId=$messageId, groupId=$groupId');
+    debugPrint(
+      '❌ Clearing group reaction for messageId=$messageId, groupId=$groupId',
+    );
   }
 
   /// Clear all callbacks

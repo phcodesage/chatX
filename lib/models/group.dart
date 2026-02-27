@@ -1,4 +1,6 @@
 /// Group model for group chats
+import 'package:flutter/foundation.dart';
+
 class Group {
   final int id;
   final String name;
@@ -244,8 +246,11 @@ class GroupMessage {
   /// Format timestamp for display
   String get formattedTime {
     try {
+      debugPrint('🕐 [TIMESTAMP DEBUG] Raw timestamp: "$timestamp"');
       final dateTime = DateTime.parse(timestamp).toLocal();
+      debugPrint('🕐 [TIMESTAMP DEBUG] Parsed dateTime: $dateTime');
       final now = DateTime.now();
+      debugPrint('🕐 [TIMESTAMP DEBUG] Current time: $now');
       final difference = now.difference(dateTime);
 
       if (difference.inDays == 0) {
@@ -253,7 +258,9 @@ class GroupMessage {
         final minute = dateTime.minute.toString().padLeft(2, '0');
         final period = hour >= 12 ? 'PM' : 'AM';
         final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-        return '$displayHour:$minute $period';
+        final result = '$displayHour:$minute $period';
+        debugPrint('🕐 [TIMESTAMP DEBUG] Formatted result: "$result"');
+        return result;
       } else if (difference.inDays == 1) {
         return 'Yesterday';
       } else if (difference.inDays < 7) {
@@ -262,6 +269,9 @@ class GroupMessage {
         return '${dateTime.month}/${dateTime.day}/${dateTime.year}';
       }
     } catch (e) {
+      debugPrint(
+        '🕐 [TIMESTAMP DEBUG] Error parsing timestamp "$timestamp": $e',
+      );
       return '';
     }
   }

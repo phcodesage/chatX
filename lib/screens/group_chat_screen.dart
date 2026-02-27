@@ -52,11 +52,44 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   bool _showEmojiPicker = false;
   int _emojiCategoryIndex = 0;
 
+  // Keyboard visibility state
+  bool _isKeyboardVisible = false;
+
+  // Timestamp visibility toggle
+  bool _showTimestamps = false;
+
+  // Auto-translate toggle
+  bool _autoTranslate = false;
+
+  // Color customization (for group chat theme)
+  bool _showResetButton = false;
+
+  // Admin status
+  bool _currentUserIsAdmin = false;
+
+  // Typing indicator state
+  String _typingUserName = '';
+  String _typingMessage = '';
+  Timer? _typingHideTimer;
+  Timer? _typingEmitTimer;
+
   @override
   void initState() {
     super.initState();
+    _inputFocusNode.addListener(_onFocusChange);
     _scrollController.addListener(_onScroll);
     _initialize();
+
+    // Debug: Periodic connection check
+    Timer.periodic(const Duration(seconds: 10), (timer) {
+      if (mounted) {
+        debugPrint(
+          '🔌 [GROUP CHAT] Socket connected: ${_socketService.isConnected}',
+        );
+      } else {
+        timer.cancel();
+      }
+    });
   }
 
   Future<void> _initialize() async {
@@ -64,15 +97,66 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     await _loadMessages();
     _setupRealtimeListeners();
     _socketService.joinGroupChat(widget.group.id);
+
+    // Debug: Test socket connection with multiple approaches
+    debugPrint('🧪 [GROUP CHAT] Testing socket connection...');
+    _socketService.emit('test_connection', {'test': 'mobile_group_chat'});
+
+    // Also test with a simple ping
+    Future.delayed(const Duration(seconds: 2), () {
+      debugPrint('🧪 [GROUP CHAT] Testing with ping...');
+      _socketService.emit('ping', {
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      });
+    });
+  }
+
+  void _onFocusChange() {
+    // Only update if keyboard visibility actually changed
+    final isVisible = _inputFocusNode.hasFocus;
+    if (_isKeyboardVisible != isVisible) {
+      setState(() {
+        _isKeyboardVisible = isVisible;
+        // Auto-close emoji picker when keyboard opens (user tapped text field)
+        if (isVisible && _showEmojiPicker) {
+          _showEmojiPicker = false;
+        }
+      });
+    }
   }
 
   void _setupRealtimeListeners() {
     final key = 'group_chat_${widget.group.id}';
 
+    // Debug: Check socket connection status
+    debugPrint(
+      '🔌 [GROUP CHAT] Setting up listeners, socket connected: ${_socketService.isConnected}',
+    );
+
+    // Debug: Test response listener
+    _socketService.addListener('test_response', key, (data) {
+      debugPrint('🧪 [TEST RESPONSE] Received in group chat screen: $data');
+      debugPrint(
+        '🧪 [TEST RESPONSE] This confirms mobile can receive Socket.IO events!',
+      );
+    });
+
+    // Debug: Connection change listener
+    _socketService.addListener('connectionChanged', key, (data) {
+      debugPrint('🔌 [GROUP CHAT] Connection changed: $data');
+    });
+
     // New message from another member
     _socketService.addListener('group_new_message', key, (data) {
+      debugPrint(
+        '💬 [GROUP NEW MESSAGE] Event received for group ${widget.group.id}',
+      );
       if (data['group_id'] == widget.group.id) {
         _handleNewMessage(data);
+      } else {
+        debugPrint(
+          '💬 [GROUP NEW MESSAGE] Ignoring message for different group: ${data['group_id']}',
+        );
       }
     });
 
@@ -115,6 +199,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _socketService.addListener('group_reaction_cleared', key, (data) {
       if (data['group_id'] == widget.group.id) {
         _handleReactionCleared(data);
+      }
+    });
+
+    // Doorbell notification
+    _socketService.addListener('group_doorbell', key, (data) {
+      if (data['group_id'] == widget.group.id) {
+        _handleGroupDoorbell(data);
+      }
+    });
+
+    // Typing indicator
+    _socketService.addListener('group_user_typing', key, (data) {
+      if (data['group_id'] == widget.group.id) {
+        _handleGroupUserTyping(data);
       }
     });
   }
@@ -163,6 +261,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _handleNewMessage(Map<String, dynamic> data) {
+    debugPrint('📨 [GROUP NEW MESSAGE] Received: data=$data');
     final message = GroupMessage.fromJson(data);
 
     if (mounted) {
@@ -194,8 +293,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _handleMessageSent(Map<String, dynamic> data) {
-    // Message sent confirmation - update optimistic message
+    // Message sent confirmation - update optimistic message OR add new message from another device
     final messageId = data['message_id'] as int?;
+    debugPrint(
+      '📨 [GROUP MESSAGE SENT] Received: messageId=$messageId, data=$data',
+    );
+
     if (messageId == null) return;
 
     if (mounted) {
@@ -203,7 +306,31 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         // Find and update the message
         final index = _messages.indexWhere((m) => m.id == messageId);
         if (index != -1) {
+          // Update existing optimistic message
+          debugPrint(
+            '📨 [GROUP MESSAGE SENT] Updating existing message at index $index',
+          );
           _messages[index] = GroupMessage.fromJson(data);
+        } else {
+          // Add new message (sent from another device of the same user)
+          debugPrint(
+            '📨 [GROUP MESSAGE SENT] Adding new message from another device',
+          );
+          final message = GroupMessage.fromJson(data);
+          _messages.add(message);
+
+          // Scroll to bottom if at bottom
+          if (_isAtBottom) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (_scrollController.hasClients) {
+                _scrollController.animateTo(
+                  _scrollController.position.maxScrollExtent,
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                );
+              }
+            });
+          }
         }
       });
     }
@@ -258,6 +385,121 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   void _handleReactionCleared(Map<String, dynamic> data) {
     _handleReactionUpdated(data);
+  }
+
+  void _handleGroupDoorbell(Map<String, dynamic> data) {
+    final senderName = data['sender_name'] as String?;
+    final senderId = data['sender_id'] as int?;
+    final timestampMs =
+        data['timestamp_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch;
+
+    // Don't show notification if we sent it
+    if (senderId == _currentUserId) {
+      debugPrint('Ignoring own doorbell notification');
+      return;
+    }
+
+    // Check if we already have this doorbell notification to prevent duplicates
+    final alreadyExists = _messages.any(
+      (msg) =>
+          msg.messageType == 'system' &&
+          msg.timestampMs == timestampMs &&
+          msg.content.contains('rang the doorbell'),
+    );
+
+    if (alreadyExists) {
+      debugPrint('Doorbell notification already exists, skipping duplicate');
+      return;
+    }
+
+    // Play doorbell notification sound
+    try {
+      _audioPlayer.play(AssetSource('sounds/notif-sound.wav'));
+    } catch (e) {
+      debugPrint('Error playing doorbell sound: $e');
+    }
+
+    // Create doorbell system message
+    final doorbellMessage = GroupMessage(
+      id: timestampMs,
+      messageId: timestampMs,
+      groupId: widget.group.id,
+      senderId: senderId ?? 0,
+      sender: GroupMessageSender(
+        id: senderId ?? 0,
+        username: senderName ?? 'Someone',
+        firstName: senderName ?? 'Someone',
+        lastName: '',
+        fullName: senderName ?? 'Someone',
+      ),
+      content: '${senderName ?? "Someone"} rang the doorbell 🔔',
+      messageType: 'system',
+      timestamp: DateTime.fromMillisecondsSinceEpoch(
+        timestampMs,
+      ).toIso8601String(),
+      timestampMs: timestampMs,
+      reactions: {},
+    );
+
+    setState(() {
+      _messages.add(doorbellMessage);
+    });
+
+    // Scroll to bottom to show the notification
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+
+    // Show snackbar notification
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('🔔 ${senderName ?? "Someone"} rang the doorbell'),
+          duration: const Duration(seconds: 3),
+          backgroundColor: const Color(0xFF4C1D95),
+        ),
+      );
+    }
+  }
+
+  void _handleGroupUserTyping(Map<String, dynamic> data) {
+    final userId = data['user_id'] as int?;
+    final username = data['username'] as String?;
+    final fullName = data['full_name'] as String?;
+    final message = data['message'] as String? ?? '';
+
+    // Don't show typing indicator for own messages
+    if (userId == _currentUserId) {
+      return;
+    }
+
+    final displayName = fullName ?? username ?? 'Someone';
+
+    // Cancel previous hide timer
+    _typingHideTimer?.cancel();
+
+    if (mounted) {
+      setState(() {
+        _typingUserName = displayName;
+        _typingMessage = message;
+      });
+
+      // Auto-hide after 3 seconds
+      _typingHideTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) {
+          setState(() {
+            _typingUserName = '';
+            _typingMessage = '';
+          });
+        }
+      });
+    }
   }
 
   void _markMessagesAsViewed() {
@@ -315,22 +557,29 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final content = _messageController.text.trim();
     if (content.isEmpty) return;
 
+    // Capture reply info before clearing
+    final replyToId = _replyingToMessage?.id;
+
+    // Clear input and reply state immediately for better UX
     _messageController.clear();
+    setState(() {
+      _replyingToMessage = null;
+      _showActionButtons = false; // Hide action buttons after sending
+    });
 
     try {
       final message = await GroupService.sendMessage(
         groupId: widget.group.id,
         content: content,
-        replyToId: _replyingToMessage?.id,
+        replyToId: replyToId,
       );
 
       if (mounted) {
         setState(() {
           _messages.add(message);
-          _replyingToMessage = null;
         });
 
-        // Scroll to bottom
+        // Scroll to bottom after sending
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scrollController.hasClients) {
             _scrollController.animateTo(
@@ -456,6 +705,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _scrollController.dispose();
     _audioPlayer.dispose();
     _inputFocusNode.dispose();
+    _typingHideTimer?.cancel();
+    _typingEmitTimer?.cancel();
     super.dispose();
   }
 
@@ -464,36 +715,43 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A2E),
       appBar: _buildAppBar(),
-      body: Column(
-        children: [
-          // Messages list
-          Expanded(
-            child: _isLoading
-                ? _buildLoadingShimmer()
-                : _messages.isEmpty
-                ? const Center(
-                    child: Text(
-                      'No messages yet\nBe the first to send a message!',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey, fontSize: 16),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        behavior: HitTestBehavior.translucent,
+        child: Column(
+          children: [
+            // Messages list
+            Expanded(
+              child: _isLoading
+                  ? _buildLoadingShimmer()
+                  : _messages.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No messages yet\nBe the first to send a message!',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey, fontSize: 16),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        return _buildMessageBubble(_messages[index]);
+                      },
                     ),
-                  )
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
-                      return _buildMessageBubble(_messages[index]);
-                    },
-                  ),
-          ),
+            ),
 
-          // Reply preview
-          if (_replyingToMessage != null) _buildReplyPreview(),
+            // Typing indicator
+            if (_typingUserName.isNotEmpty) _buildTypingIndicator(),
 
-          // Input area
-          _buildInputArea(),
-        ],
+            // Reply preview
+            if (_replyingToMessage != null) _buildReplyPreview(),
+
+            // Input area
+            _buildInputArea(),
+          ],
+        ),
       ),
     );
   }
@@ -555,9 +813,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         // Doorbell button
         IconButton(
           icon: const Icon(Icons.notifications, color: Colors.white),
-          onPressed: () async {
+          onPressed: () {
             try {
-              await GroupService.ringDoorbell(widget.group.id);
+              // Use Socket.IO instead of REST API
+              _socketService.ringGroupDoorbell(widget.group.id);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -645,6 +904,29 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   Widget _buildMessageBubble(GroupMessage message) {
+    // Handle system messages (doorbell, etc.)
+    if (message.messageType == 'system') {
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF4C1D95).withOpacity(0.3),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            message.content,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+              fontStyle: FontStyle.italic,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
     final isSentByMe = message.senderId == _currentUserId;
     final bool isImage =
         message.messageType == 'image' ||
@@ -1019,6 +1301,55 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// Build audio player widget
   Widget _buildAudioPlayer(String audioUrl) {
     return _AudioMessagePlayer(audioUrl: audioUrl);
+  }
+
+  Widget _buildTypingIndicator() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: const Color(0xFF1E293B).withOpacity(0.5),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF8B5CF6)),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                children: [
+                  TextSpan(
+                    text: '$_typingUserName: ',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF8B5CF6),
+                    ),
+                  ),
+                  TextSpan(
+                    text: _typingMessage.isEmpty ? 'typing...' : _typingMessage,
+                    style: TextStyle(
+                      color: _typingMessage.isEmpty
+                          ? Colors.white54
+                          : Colors.white70,
+                      fontStyle: _typingMessage.isEmpty
+                          ? FontStyle.italic
+                          : FontStyle.normal,
+                    ),
+                  ),
+                ],
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildReplyPreview() {
@@ -2027,7 +2358,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// Ring doorbell for group (notify all members)
   void _ringDoorbell() async {
     try {
-      await GroupService.ringDoorbell(widget.group.id);
+      // Use Socket.IO instead of REST API (backend doesn't have REST endpoint yet)
+      _socketService.ringGroupDoorbell(widget.group.id);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -2090,6 +2423,107 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         duration: Duration(seconds: 2),
       ),
     );
+  }
+
+  /// Toggle timestamp visibility
+  void _toggleTimestamps() {
+    setState(() {
+      _showTimestamps = !_showTimestamps;
+    });
+  }
+
+  /// Toggle auto-translate
+  void _toggleAutoTranslate() {
+    setState(() {
+      _autoTranslate = !_autoTranslate;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _autoTranslate ? 'Auto-translate enabled' : 'Auto-translate disabled',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Change group chat color (placeholder)
+  void _changeColor() {
+    // TODO: Implement color picker for group chat
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Color customization coming soon for group chats'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Reset group chat color (placeholder)
+  void _resetColor() {
+    setState(() {
+      _showResetButton = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Color reset'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Export chat history
+  Future<void> _exportChat() async {
+    // TODO: Implement chat export for group chat
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Chat export coming soon for group chats'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Admin: Delete all messages in group
+  Future<void> _adminDeleteAllMessages() async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete All Messages'),
+        content: const Text(
+          'Are you sure you want to delete all messages in this group? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // TODO: Implement delete all messages API call
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Delete all messages coming soon'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error deleting all messages: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete messages: $e')),
+        );
+      }
+    }
   }
 
   Widget _buildInputArea() {
@@ -2195,7 +2629,26 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                               ),
                               isDense: true,
                             ),
-                            onChanged: (text) => setState(() {}),
+                            onChanged: (text) {
+                              setState(() {
+                                // Hide action buttons when typing
+                                if (text.isNotEmpty && _showActionButtons) {
+                                  _showActionButtons = false;
+                                }
+                              });
+
+                              // Emit typing indicator (throttled)
+                              _typingEmitTimer?.cancel();
+                              _typingEmitTimer = Timer(
+                                const Duration(milliseconds: 150),
+                                () {
+                                  _socketService.sendGroupTyping(
+                                    widget.group.id,
+                                    text,
+                                  );
+                                },
+                              );
+                            },
                             minLines: 1,
                             maxLines: 5,
                             textInputAction: TextInputAction.newline,
@@ -2224,7 +2677,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                         ElevatedButton(
                           onPressed: () {
                             _messageController.clear();
-                            setState(() {});
+                            setState(() {
+                              _replyingToMessage = null;
+                            });
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFEF4444),
@@ -2309,6 +2764,51 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                       ),
                       child: const Text('Ring Doorbell'),
                     ),
+                    // Change Color
+                    ElevatedButton(
+                      onPressed: _changeColor,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFA855F7),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        minimumSize: const Size(0, 0),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      child: const Text('Change Color'),
+                    ),
+                    // Reset Color button (only show when color has been changed)
+                    if (_showResetButton)
+                      ElevatedButton(
+                        onPressed: _resetColor,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black87,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          minimumSize: const Size(0, 0),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        child: const Text('Reset Color'),
+                      ),
                     // Send File
                     ElevatedButton(
                       onPressed: _pickFile,
@@ -2375,6 +2875,106 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                       ),
                       child: const Text('Voice Message'),
                     ),
+                    // Auto-Translate
+                    ElevatedButton(
+                      onPressed: _toggleAutoTranslate,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _autoTranslate
+                            ? const Color(0xFF059669)
+                            : const Color(0xFF0891B2),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        minimumSize: const Size(0, 0),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      child: Text(
+                        _autoTranslate ? 'Translate: ON' : 'Translate: OFF',
+                      ),
+                    ),
+                    // Show Timestamps
+                    ElevatedButton(
+                      onPressed: _toggleTimestamps,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _showTimestamps
+                            ? const Color(0xFF4F46E5)
+                            : const Color(0xFF8B5CF6),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        minimumSize: const Size(0, 0),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      child: Text(
+                        _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
+                      ),
+                    ),
+                    // Export Chat
+                    ElevatedButton(
+                      onPressed: _exportChat,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6B7280),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        minimumSize: const Size(0, 0),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      child: const Text('Export Chat'),
+                    ),
+                    // Delete All Messages (admin only)
+                    if (_currentUserIsAdmin)
+                      ElevatedButton(
+                        onPressed: _adminDeleteAllMessages,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFDC2626),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          minimumSize: const Size(0, 0),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [SizedBox(width: 4), Text('Delete All')],
+                        ),
+                      ),
                   ],
                 ),
               ),
