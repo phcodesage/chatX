@@ -1,0 +1,301 @@
+import 'package:flutter/material.dart';
+import '../models/lobby_user.dart';
+import '../services/lobby_service.dart';
+import '../services/group_service.dart';
+
+/// Create group screen - select members and create group
+class CreateGroupScreen extends StatefulWidget {
+  const CreateGroupScreen({super.key});
+
+  @override
+  State<CreateGroupScreen> createState() => _CreateGroupScreenState();
+}
+
+class _CreateGroupScreenState extends State<CreateGroupScreen> {
+  final TextEditingController _groupNameController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  
+  List<LobbyUser> _allUsers = [];
+  List<LobbyUser> _filteredUsers = [];
+  final Set<int> _selectedUserIds = {};
+  bool _isLoading = true;
+  bool _isCreating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUsers();
+    _searchController.addListener(_filterUsers);
+  }
+
+  Future<void> _loadUsers() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      final users = await LobbyService.getLobbyUsers();
+      
+      if (mounted) {
+        setState(() {
+          _allUsers = users;
+          _filteredUsers = users;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading users: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load users: $e')),
+        );
+      }
+    }
+  }
+
+  void _filterUsers() {
+    final query = _searchController.text.toLowerCase();
+    
+    setState(() {
+      if (query.isEmpty) {
+        _filteredUsers = _allUsers;
+      } else {
+        _filteredUsers = _allUsers.where((user) {
+          return user.username.toLowerCase().contains(query) ||
+                 user.fullName.toLowerCase().contains(query);
+        }).toList();
+      }
+    });
+  }
+
+  Future<void> _createGroup() async {
+    final groupName = _groupNameController.text.trim();
+    
+    if (groupName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a group name')),
+      );
+      return;
+    }
+    
+    if (_selectedUserIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select at least one member')),
+      );
+      return;
+    }
+    
+    setState(() => _isCreating = true);
+    
+    try {
+      await GroupService.createGroup(
+        name: groupName,
+        description: _descriptionController.text.trim(),
+        memberIds: _selectedUserIds.toList(),
+      );
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Group created successfully')),
+        );
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      debugPrint('Error creating group: $e');
+      if (mounted) {
+        setState(() => _isCreating = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to create group: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _groupNameController.dispose();
+    _descriptionController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0F172A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text('Create Group', style: TextStyle(color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: Column(
+        children: [
+          // Group info section
+          Container(
+            padding: const EdgeInsets.all(16),
+            color: const Color(0xFF1E293B),
+            child: Column(
+              children: [
+                TextField(
+                  controller: _groupNameController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Group name',
+                    hintStyle: TextStyle(color: Colors.grey[400]),
+                    filled: true,
+                    fillColor: const Color(0xFF334155),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _descriptionController,
+                  style: const TextStyle(color: Colors.white),
+                  maxLines: 2,
+                  decoration: InputDecoration(
+                    hintText: 'Description (optional)',
+                    hintStyle: TextStyle(color: Colors.grey[400]),
+                    filled: true,
+                    fillColor: const Color(0xFF334155),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // Selected members count
+          if (_selectedUserIds.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: const Color(0xFF1E293B),
+              child: Row(
+                children: [
+                  Text(
+                    '${_selectedUserIds.length} member${_selectedUserIds.length == 1 ? '' : 's'} selected',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+          
+          // Search bar
+          Container(
+            padding: const EdgeInsets.all(16),
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Search users...',
+                hintStyle: TextStyle(color: Colors.grey[400]),
+                prefixIcon: Icon(Icons.search, color: Colors.grey[400]),
+                filled: true,
+                fillColor: const Color(0xFF1E293B),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+            ),
+          ),
+          
+          // Users list
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _filteredUsers.isEmpty
+                    ? Center(
+                        child: Text(
+                          'No users found',
+                          style: TextStyle(color: Colors.grey[400]),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: _filteredUsers.length,
+                        itemBuilder: (context, index) {
+                          final user = _filteredUsers[index];
+                          final isSelected = _selectedUserIds.contains(user.id);
+                          
+                          return CheckboxListTile(
+                            value: isSelected,
+                            onChanged: (value) {
+                              setState(() {
+                                if (value == true) {
+                                  _selectedUserIds.add(user.id);
+                                } else {
+                                  _selectedUserIds.remove(user.id);
+                                }
+                              });
+                            },
+                            title: Text(
+                              user.fullName,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              '@${user.username}',
+                              style: TextStyle(color: Colors.grey[400]),
+                            ),
+                            secondary: CircleAvatar(
+                              backgroundColor: const Color(0xFF8B5CF6),
+                              child: Text(
+                                user.fullName[0].toUpperCase(),
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            activeColor: const Color(0xFF8B5CF6),
+                            checkColor: Colors.white,
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 8,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        child: ElevatedButton(
+          onPressed: _isCreating ? null : _createGroup,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF8B5CF6),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          child: _isCreating
+              ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text(
+                  'Create Group',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+        ),
+      ),
+    );
+  }
+}

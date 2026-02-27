@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shimmer/shimmer.dart';
 import '../models/lobby_user.dart';
+import '../models/group.dart';
 import '../services/lobby_service.dart';
+import '../services/group_service.dart';
 import '../services/auth_service.dart';
 import '../services/socket_service.dart';
 import '../widgets/app_version_text.dart';
@@ -15,6 +17,8 @@ import 'sign_in_page.dart';
 import 'chat_screen.dart';
 import 'connected_call_screen.dart';
 import 'task_list_screen.dart';
+import 'group_chat_screen.dart';
+import 'create_group_screen.dart';
 import '../services/app_update_service.dart';
 import '../services/storage_service.dart';
 import '../config/api_config.dart';
@@ -35,6 +39,8 @@ enum LobbySortMode { recentChats, onlineFirst, allUsers }
 class _LobbyScreenState extends State<LobbyScreen> {
   List<LobbyUser> _lobbyUsers = [];
   List<LobbyUser> _filteredUsers = [];
+  List<Group> _groups = []; // Group chats
+  List<Group> _filteredGroups = []; // Filtered group chats
   bool _isLoading = false;
   bool _isBackendAvailable = true;
   bool _isCurrentUserAdmin = false;
@@ -92,14 +98,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
     const key = 'lobby';
 
     // Listen for doorbell rings (only incoming — ignore self-sent for cross-device sync)
-    _socketService.addListener('doorbellRing', key, (Map<String, dynamic> data) {
+    _socketService.addListener('doorbellRing', key, (
+      Map<String, dynamic> data,
+    ) {
       final senderId = data['sender_id'] as int?;
       if (senderId == _socketService.currentUserId) return;
       _handleDoorbellRing(data);
     });
 
     // Listen for new messages (incoming)
-    _socketService.addListener('messageReceived', key, (Map<String, dynamic> data) {
+    _socketService.addListener('messageReceived', key, (
+      Map<String, dynamic> data,
+    ) {
       _handleNewMessage(data);
     });
 
@@ -109,22 +119,30 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
 
     // Listen for file messages (incoming files from web)
-    _socketService.addListener('fileReceived', key, (Map<String, dynamic> data) {
+    _socketService.addListener('fileReceived', key, (
+      Map<String, dynamic> data,
+    ) {
       _handleFileMessage(data);
     });
 
     // Listen for voice messages (incoming voice from web)
-    _socketService.addListener('voiceMessageReceived', key, (Map<String, dynamic> data) {
+    _socketService.addListener('voiceMessageReceived', key, (
+      Map<String, dynamic> data,
+    ) {
       _handleVoiceMessage(data);
     });
 
     // Listen for presence updates
-    _socketService.addListener('presenceUpdate', key, (Map<String, dynamic> data) {
+    _socketService.addListener('presenceUpdate', key, (
+      Map<String, dynamic> data,
+    ) {
       _updateUserPresence(data);
     });
 
     // Listen for presence snapshot (initial state on connect)
-    _socketService.addListener('presenceSnapshot', key, (List<dynamic> contacts) {
+    _socketService.addListener('presenceSnapshot', key, (
+      List<dynamic> contacts,
+    ) {
       _handlePresenceSnapshot(contacts);
     });
 
@@ -133,12 +151,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // server sends BOTH events to the callee for the same call. 'incomingCall' contains
     // full call data (call_id, call_room_id) and is sufficient for mobile clients.
     // Listening to both would open two modals for the same call.
-    _socketService.addListener('incomingCall', key, (Map<String, dynamic> data) {
+    _socketService.addListener('incomingCall', key, (
+      Map<String, dynamic> data,
+    ) {
       _handleIncomingCall(data);
     });
 
     // Listen for backend connection state changes
-    _socketService.addListener('connectionChanged', key, (Map<String, dynamic> data) {
+    _socketService.addListener('connectionChanged', key, (
+      Map<String, dynamic> data,
+    ) {
       final isConnected = data['connected'] as bool;
       if (mounted) {
         setState(() => _isBackendAvailable = isConnected);
@@ -155,6 +177,80 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     // Set initial state from current socket status
     _isBackendAvailable = _socketService.isConnected;
+
+    // Listen for group events
+    _socketService.addListener('group_created', key, (dynamic data) {
+      debugPrint('🎉 Group created event received: $data');
+      if (data is Map<String, dynamic>) {
+        try {
+          final group = Group.fromJson(data);
+          if (mounted) {
+            setState(() {
+              _groups.insert(0, group);
+            });
+            _filterUsers(); // Refresh filtered lists
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('New group: ${group.name}'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        } catch (e) {
+          debugPrint('❌ Error parsing group_created event: $e');
+        }
+      }
+    });
+
+    _socketService.addListener('group_updated', key, (dynamic data) {
+      debugPrint('🔄 Group updated event received: $data');
+      if (data is Map<String, dynamic>) {
+        try {
+          final updatedGroup = Group.fromJson(data);
+          if (mounted) {
+            setState(() {
+              final index = _groups.indexWhere((g) => g.id == updatedGroup.id);
+              if (index != -1) {
+                _groups[index] = updatedGroup;
+              }
+            });
+            _filterUsers(); // Refresh filtered lists
+          }
+        } catch (e) {
+          debugPrint('❌ Error parsing group_updated event: $e');
+        }
+      }
+    });
+
+    _socketService.addListener('group_member_removed', key, (dynamic data) {
+      debugPrint('👋 Group member removed event received: $data');
+      if (data is Map<String, dynamic>) {
+        final groupId = data['group_id'] as int?;
+        final removedUserId = data['removed_user_id'] as int?;
+        final currentUserId = StorageService.getUserId();
+
+        if (groupId != null && removedUserId != null && mounted) {
+          currentUserId.then((userId) {
+            if (userId == removedUserId) {
+              // Current user was removed, remove group from list
+              setState(() {
+                _groups.removeWhere((g) => g.id == groupId);
+              });
+              _filterUsers();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('You were removed from a group'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            } else {
+              // Another member was removed, reload group details
+              _loadLobby(useCacheFirst: false);
+            }
+          });
+        }
+      }
+    });
 
     // Listen for typing events from peers
     _socketService.addListener('userTyping', key, (Map<String, dynamic> data) {
@@ -175,7 +271,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       });
     });
 
-    _socketService.addListener('typingUpdate', key, (Map<String, dynamic> data) {
+    _socketService.addListener('typingUpdate', key, (
+      Map<String, dynamic> data,
+    ) {
       final userId = (data['user_id'] ?? data['sender_id']) as int?;
       if (userId == null) return;
       if (!mounted) return;
@@ -187,42 +285,44 @@ class _LobbyScreenState extends State<LobbyScreen> {
       });
     });
   }
-  
+
   /// Handle cross-room call offer from web client
   Future<void> _handleCrossRoomCallOffer(Map<String, dynamic> data) async {
     if (!mounted) return;
-    
+
     // Guard against duplicate/rapid incoming call events (global flag shared with chat screen)
     if (PresenceService().isHandlingIncomingCall) {
-      debugPrint('⚠️ Already handling an incoming call, ignoring cross-room duplicate');
+      debugPrint(
+        '⚠️ Already handling an incoming call, ignoring cross-room duplicate',
+      );
       return;
     }
     PresenceService().isHandlingIncomingCall = true;
-    
+
     debugPrint('📲 Cross-room call offer received in lobby: $data');
-    
+
     final callerId = data['caller_id'] as int?;
     final callerUsername = data['caller_username'] as String? ?? 'Unknown';
     final callType = data['call_type'] as String? ?? 'video';
     final room = data['room'] as String?;
-    
+
     if (callerId == null || room == null) {
       debugPrint('⚠️ Invalid cross-room call offer data');
       PresenceService().isHandlingIncomingCall = false;
       return;
     }
-    
+
     // Initialize call service FIRST
     final callService = CallService();
     await callService.initialize();
-    
+
     // Set up signal handler IMMEDIATELY - before handleIncomingCall
     // This ensures we capture any signals that arrive while setting up
     _socketService.onSignal = (signalData) {
       debugPrint('📡 Signal received for cross-room call: $signalData');
       callService.handleSignal(signalData);
     };
-    
+
     // Create synthetic incoming call data for the call service
     final syntheticCallData = {
       'id': DateTime.now().millisecondsSinceEpoch, // Temporary ID
@@ -236,171 +336,201 @@ class _LobbyScreenState extends State<LobbyScreen> {
       },
     };
     callService.handleIncomingCall(syntheticCallData);
-    
+
     // Use keyed listeners for call ended/declined handlers
     const crossRoomListenerKey = 'lobby_cross_room_call';
-    _socketService.addListener('callEnded', crossRoomListenerKey, (Map<String, dynamic> endData) {
+    _socketService.addListener('callEnded', crossRoomListenerKey, (
+      Map<String, dynamic> endData,
+    ) {
       debugPrint('📴 Call ended by remote user (lobby cross-room)');
       _socketService.stopSignalBuffering();
       callService.handleCallEnded();
     });
-    
-    _socketService.addListener('callDeclined', crossRoomListenerKey, (Map<String, dynamic> declineData) {
+
+    _socketService.addListener('callDeclined', crossRoomListenerKey, (
+      Map<String, dynamic> declineData,
+    ) {
       debugPrint('❌ Call declined (lobby cross-room)');
       _socketService.stopSignalBuffering();
       callService.handleCallDeclined();
     });
-    
+
     // Show incoming call setup modal with device selection
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (context) => IncomingCallSetupModal(
-          callerName: callerUsername,
-          callerId: callerId,
-          callType: callType,
-          callService: callService,
-          onDecline: () {
-            debugPrint('📞 Call declined by user');
-            _socketService.stopSignalBuffering();
-            _socketService.removeListener('callEnded', crossRoomListenerKey);
-            _socketService.removeListener('callDeclined', crossRoomListenerKey);
-          },
-        ),
-      ),
-    ).then((result) {
-      // Clean up listeners when modal closes
-      _socketService.removeListener('callEnded', crossRoomListenerKey);
-      _socketService.removeListener('callDeclined', crossRoomListenerKey);
-      
-      if (result is Map && (result['result'] == 'accepted' || result['result'] == 'connected')) {
-        final localStream = result['localStream'];
-        Navigator.of(context).push(
+    Navigator.of(context)
+        .push(
           MaterialPageRoute(
             fullscreenDialog: true,
-            builder: (context) => ConnectedCallScreen(
-              remoteName: callerUsername,
+            builder: (context) => IncomingCallSetupModal(
+              callerName: callerUsername,
+              callerId: callerId,
               callType: callType,
               callService: callService,
-              localStream: localStream ?? callService.localStream,
+              onDecline: () {
+                debugPrint('📞 Call declined by user');
+                _socketService.stopSignalBuffering();
+                _socketService.removeListener(
+                  'callEnded',
+                  crossRoomListenerKey,
+                );
+                _socketService.removeListener(
+                  'callDeclined',
+                  crossRoomListenerKey,
+                );
+              },
             ),
           ),
-        ).then((_) {
+        )
+        .then((result) {
+          // Clean up listeners when modal closes
+          _socketService.removeListener('callEnded', crossRoomListenerKey);
+          _socketService.removeListener('callDeclined', crossRoomListenerKey);
+
+          if (result is Map &&
+              (result['result'] == 'accepted' ||
+                  result['result'] == 'connected')) {
+            final localStream = result['localStream'];
+            Navigator.of(context)
+                .push(
+                  MaterialPageRoute(
+                    fullscreenDialog: true,
+                    builder: (context) => ConnectedCallScreen(
+                      remoteName: callerUsername,
+                      callType: callType,
+                      callService: callService,
+                      localStream: localStream ?? callService.localStream,
+                    ),
+                  ),
+                )
+                .then((_) {
+                  _setupRealtimeListeners();
+                });
+          }
+          PresenceService().isHandlingIncomingCall = false;
           _setupRealtimeListeners();
         });
-      }
-      PresenceService().isHandlingIncomingCall = false;
-      _setupRealtimeListeners();
-    });
   }
 
   /// Handle incoming call from another user
   Future<void> _handleIncomingCall(Map<String, dynamic> data) async {
     if (!mounted) return;
-    
+
     // Guard: ignore if already in an active call (e.g. screen-share renegotiation
     // sends a new incoming_call event while ConnectedCallScreen is open)
     if (PresenceService().isCallInProgress) {
-      debugPrint('⚠️ Ignoring incoming_call — call already in progress (screen share or renegotiation?)');
+      debugPrint(
+        '⚠️ Ignoring incoming_call — call already in progress (screen share or renegotiation?)',
+      );
       return;
     }
-    
+
     // Guard against duplicate/rapid incoming call events (global flag shared with chat screen)
     if (PresenceService().isHandlingIncomingCall) {
-      debugPrint('⚠️ Already handling an incoming call, ignoring duplicate event');
+      debugPrint(
+        '⚠️ Already handling an incoming call, ignoring duplicate event',
+      );
       return;
     }
     PresenceService().isHandlingIncomingCall = true;
-    
+
     debugPrint('📲 Incoming call received in lobby: $data');
-    
+
     final callId = data['id'] as int?;
     final callRoomId = data['call_room_id'] as String?;
     final callType = data['call_type'] as String? ?? 'video';
     final callerData = data['caller'] as Map<String, dynamic>?;
     final callerId = callerData?['id'] as int? ?? data['caller_id'] as int?;
-    final callerName = callerData?['full_name'] as String? ?? 
-                       callerData?['username'] as String? ?? 
-                       'Unknown';
-    
+    final callerName =
+        callerData?['full_name'] as String? ??
+        callerData?['username'] as String? ??
+        'Unknown';
+
     if (callId == null || callRoomId == null || callerId == null) {
       debugPrint('⚠️ Invalid incoming call data');
       PresenceService().isHandlingIncomingCall = false;
       return;
     }
-    
+
     // START buffering WebRTC signals immediately — before the async callService.initialize().
     // Previously this was triggered by the crossRoomCallOffer socket event, but we no longer
     // listen for that in the lobby. Without buffering, any offer signal that arrives during
     // the async gap would be silently dropped (_bufferSignals=false, _onSignal=null → noop).
     _socketService.startSignalBuffering();
-    
+
     // Initialize call service (fetches ICE servers) and set up the call state
     final callService = CallService();
     await callService.initialize();
     callService.handleIncomingCall(data);
-    
+
     // Set up signal handler for WebRTC — buffered signals are replayed immediately
     _socketService.onSignal = (signalData) {
       debugPrint('📡 Signal received for incoming call: $signalData');
       callService.handleSignal(signalData);
     };
 
-    
     // Use keyed listeners for call ended/declined handlers to avoid overwriting
     const callListenerKey = 'lobby_incoming_call';
-    _socketService.addListener('callEnded', callListenerKey, (Map<String, dynamic> endData) {
+    _socketService.addListener('callEnded', callListenerKey, (
+      Map<String, dynamic> endData,
+    ) {
       debugPrint('📴 Call ended by remote user (lobby)');
       callService.handleCallEnded();
     });
-    
-    _socketService.addListener('callDeclined', callListenerKey, (Map<String, dynamic> declineData) {
+
+    _socketService.addListener('callDeclined', callListenerKey, (
+      Map<String, dynamic> declineData,
+    ) {
       debugPrint('❌ Call declined (lobby)');
       callService.handleCallDeclined();
     });
-    
+
     // Show incoming call setup modal with device selection
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (context) => IncomingCallSetupModal(
-          callerName: callerName,
-          callerId: callerId,
-          callType: callType,
-          callService: callService,
-          onDecline: () {
-            debugPrint('📞 Call declined by user');
-            // Clean up listeners
-            _socketService.removeListener('callEnded', callListenerKey);
-            _socketService.removeListener('callDeclined', callListenerKey);
-          },
-        ),
-      ),
-    ).then((result) {
-      // Clean up listeners when modal closes
-      _socketService.removeListener('callEnded', callListenerKey);
-      _socketService.removeListener('callDeclined', callListenerKey);
-      
-      if (result is Map && (result['result'] == 'accepted' || result['result'] == 'connected')) {
-        // Navigate to connected call screen with the local stream from setup
-        final localStream = result['localStream'];
-        Navigator.of(context).push(
+    Navigator.of(context)
+        .push(
           MaterialPageRoute(
             fullscreenDialog: true,
-            builder: (context) => ConnectedCallScreen(
-              remoteName: callerName,
+            builder: (context) => IncomingCallSetupModal(
+              callerName: callerName,
+              callerId: callerId,
               callType: callType,
               callService: callService,
-              localStream: localStream ?? callService.localStream,
+              onDecline: () {
+                debugPrint('📞 Call declined by user');
+                // Clean up listeners
+                _socketService.removeListener('callEnded', callListenerKey);
+                _socketService.removeListener('callDeclined', callListenerKey);
+              },
             ),
           ),
-        ).then((_) {
+        )
+        .then((result) {
+          // Clean up listeners when modal closes
+          _socketService.removeListener('callEnded', callListenerKey);
+          _socketService.removeListener('callDeclined', callListenerKey);
+
+          if (result is Map &&
+              (result['result'] == 'accepted' ||
+                  result['result'] == 'connected')) {
+            // Navigate to connected call screen with the local stream from setup
+            final localStream = result['localStream'];
+            Navigator.of(context)
+                .push(
+                  MaterialPageRoute(
+                    fullscreenDialog: true,
+                    builder: (context) => ConnectedCallScreen(
+                      remoteName: callerName,
+                      callType: callType,
+                      callService: callService,
+                      localStream: localStream ?? callService.localStream,
+                    ),
+                  ),
+                )
+                .then((_) {
+                  _setupRealtimeListeners();
+                });
+          }
+          PresenceService().isHandlingIncomingCall = false;
           _setupRealtimeListeners();
         });
-      }
-      PresenceService().isHandlingIncomingCall = false;
-      _setupRealtimeListeners();
-    });
   }
 
   void _handleDoorbellRing(Map<String, dynamic> data) {
@@ -413,7 +543,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final senderId = data['sender_id'] as int;
     final content = data['content'] as String?;
     final createdAt = data['created_at'] as String?;
-    
+
     // Update unread count and last message info for sender
     setState(() {
       final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
@@ -441,15 +571,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
           // 🆕 NEW: Update last message info
           lastMessage: content ?? user.lastMessage,
           lastMessageTime: createdAt ?? user.lastMessageTime,
-          lastMessageIsFromMe: false, // Message is from the sender, not from current user
+          lastMessageIsFromMe:
+              false, // Message is from the sender, not from current user
         );
-        
+
         _lobbyUsers[userIndex] = updatedUser;
-        
+
         // Move to top of list (most recent message first)
         _lobbyUsers.removeAt(userIndex);
         _lobbyUsers.insert(0, updatedUser);
-        
+
         // Update filtered list
         _filterUsers();
       }
@@ -460,7 +591,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final recipientId = data['recipient_id'] as int;
     final content = data['content'] as String?;
     final createdAt = data['created_at'] as String?;
-    
+
     // Update last message info for recipient (showing our sent message)
     setState(() {
       final userIndex = _lobbyUsers.indexWhere((u) => u.id == recipientId);
@@ -482,7 +613,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
           isOnline: user.isOnline,
           isAdmin: user.isAdmin,
           timezone: user.timezone,
-          unreadCount: 0, // Reset unread count since we're in the conversation context
+          unreadCount:
+              0, // Reset unread count since we're in the conversation context
           isContact: user.isContact,
           isAdminUser: user.isAdminUser,
           // 🆕 NEW: Update last message info (sent by current user)
@@ -490,13 +622,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
           lastMessageTime: createdAt ?? user.lastMessageTime,
           lastMessageIsFromMe: true, // Message is from current user
         );
-        
+
         _lobbyUsers[userIndex] = updatedUser;
-        
+
         // Move to top of list (most recent message first)
         _lobbyUsers.removeAt(userIndex);
         _lobbyUsers.insert(0, updatedUser);
-        
+
         // Update filtered list
         _filterUsers();
       }
@@ -506,13 +638,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void _handleFileMessage(Map<String, dynamic> data) {
     final senderId = data['sender_id'] as int;
     final fileName = data['file_name'] as String?;
-    final createdAt = data['timestamp_ms'] != null 
-        ? DateTime.fromMillisecondsSinceEpoch(data['timestamp_ms'] as int).toIso8601String()
+    final createdAt = data['timestamp_ms'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(
+            data['timestamp_ms'] as int,
+          ).toIso8601String()
         : null;
-    
+
     // Show file name as last message preview
     final filePreview = fileName != null ? "📎 $fileName" : "📎 File";
-    
+
     setState(() {
       final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
       if (userIndex != -1) {
@@ -539,7 +673,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           lastMessageTime: createdAt ?? user.lastMessageTime,
           lastMessageIsFromMe: false,
         );
-        
+
         _lobbyUsers[userIndex] = updatedUser;
         _lobbyUsers.removeAt(userIndex);
         _lobbyUsers.insert(0, updatedUser);
@@ -551,13 +685,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void _handleVoiceMessage(Map<String, dynamic> data) {
     final senderId = data['sender_id'] as int;
     final duration = data['duration'] as int?;
-    final createdAt = data['timestamp_ms'] != null 
-        ? DateTime.fromMillisecondsSinceEpoch(data['timestamp_ms'] as int).toIso8601String()
+    final createdAt = data['timestamp_ms'] != null
+        ? DateTime.fromMillisecondsSinceEpoch(
+            data['timestamp_ms'] as int,
+          ).toIso8601String()
         : null;
-    
+
     // Show voice message with duration as last message preview
-    final voicePreview = duration != null ? "🎤 Voice ${duration}s" : "🎤 Voice message";
-    
+    final voicePreview = duration != null
+        ? "🎤 Voice ${duration}s"
+        : "🎤 Voice message";
+
     setState(() {
       final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
       if (userIndex != -1) {
@@ -584,7 +722,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           lastMessageTime: createdAt ?? user.lastMessageTime,
           lastMessageIsFromMe: false,
         );
-        
+
         _lobbyUsers[userIndex] = updatedUser;
         _lobbyUsers.removeAt(userIndex);
         _lobbyUsers.insert(0, updatedUser);
@@ -598,7 +736,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final status = data['status'] as String;
     final isOnline = data['is_online'] as bool? ?? (status == 'online');
     final timestamp = data['timestamp'] as String?;
-    
+
     setState(() {
       final userIndex = _lobbyUsers.indexWhere((u) => u.id == userId);
       if (userIndex != -1) {
@@ -622,7 +760,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           isContact: user.isContact,
           isAdminUser: user.isAdminUser,
         );
-        
+
         _lobbyUsers[userIndex] = updatedUser;
         _filterUsers();
       }
@@ -637,7 +775,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           final userId = contact['user_id'] as int?;
           final status = contact['status'] as String?;
           final timestamp = contact['timestamp'] as String?;
-          
+
           if (userId != null && status != null) {
             final userIndex = _lobbyUsers.indexWhere((u) => u.id == userId);
             if (userIndex != -1) {
@@ -699,10 +837,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
       }
     }
     try {
-      final users = await LobbyService.getLobbyUsers();
+      // Load both users and groups in parallel
+      final results = await Future.wait([
+        LobbyService.getLobbyUsers(),
+        GroupService.getGroups().catchError((e) {
+          debugPrint('Groups not available yet: $e');
+          return <Group>[];
+        }),
+      ]);
+
+      final users = results[0] as List<LobbyUser>;
+      final groups = results[1] as List<Group>;
+
       if (mounted) {
         setState(() {
           _lobbyUsers = users;
+          _groups = groups;
           _isBackendAvailable = true;
           _isLoading = false;
           _connectivityBannerMessage = 'Server unavailable. Reconnecting...';
@@ -716,7 +866,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
       final friendly = _mapConnectivityError(
         e,
         offlineLabel: 'No internet connection. Showing cached contacts.',
-        backendLabel: 'Server unreachable. Showing cached contacts if available.',
+        backendLabel:
+            'Server unreachable. Showing cached contacts if available.',
       );
       if (mounted) {
         setState(() {
@@ -740,10 +891,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
     required String backendLabel,
   }) {
     final message = error.toString();
-    if (error is SocketException || message.contains('SocketException') || message.contains('Failed host lookup')) {
+    if (error is SocketException ||
+        message.contains('SocketException') ||
+        message.contains('Failed host lookup')) {
       return offlineLabel;
     }
-    if (error is TimeoutException || message.contains('TimeoutException') || message.contains('Connection timed out')) {
+    if (error is TimeoutException ||
+        message.contains('TimeoutException') ||
+        message.contains('Connection timed out')) {
       return backendLabel;
     }
     return 'Something went wrong. Please try again in a bit.';
@@ -780,7 +935,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   /// Parse lastMessageTime to DateTime for sorting (returns epoch 0 if null)
   DateTime _parseMessageTime(LobbyUser user) {
-    if (user.lastMessageTime == null) return DateTime.fromMillisecondsSinceEpoch(0);
+    if (user.lastMessageTime == null)
+      return DateTime.fromMillisecondsSinceEpoch(0);
     try {
       return _parseUtcTimestamp(user.lastMessageTime!);
     } catch (_) {
@@ -791,6 +947,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void _filterUsers() {
     final query = _searchController.text.toLowerCase();
     setState(() {
+      // Filter users
       List<LobbyUser> filtered;
       if (query.isEmpty) {
         filtered = List.from(_lobbyUsers);
@@ -798,6 +955,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
         filtered = _lobbyUsers.where((user) {
           return user.fullName.toLowerCase().contains(query) ||
               user.username.toLowerCase().contains(query);
+        }).toList();
+      }
+
+      // Filter groups
+      List<Group> filteredGroups;
+      if (query.isEmpty) {
+        filteredGroups = List.from(_groups);
+      } else {
+        filteredGroups = _groups.where((group) {
+          return group.name.toLowerCase().contains(query) ||
+              (group.description?.toLowerCase().contains(query) ?? false);
         }).toList();
       }
 
@@ -813,6 +981,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
             final timeB = _parseMessageTime(b);
             return timeB.compareTo(timeA);
           });
+          // Sort groups by last message time
+          filteredGroups.sort((a, b) {
+            final timeA = a.lastMessage?.timestampMs ?? 0;
+            final timeB = b.lastMessage?.timestampMs ?? 0;
+            return timeB.compareTo(timeA);
+          });
           break;
         case LobbySortMode.onlineFirst:
           // Sort purely by status tier, then alphabetically
@@ -822,14 +996,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
             if (tierA != tierB) return tierA.compareTo(tierB);
             return a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase());
           });
+          // Sort groups alphabetically
+          filteredGroups.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
           break;
         case LobbySortMode.allUsers:
           // Alphabetical only
-          filtered.sort((a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()));
+          filtered.sort(
+            (a, b) =>
+                a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
+          );
+          filteredGroups.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
           break;
       }
 
       _filteredUsers = filtered;
+      _filteredGroups = filteredGroups;
     });
   }
 
@@ -839,7 +1024,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF2D2D2D),
         title: const Text('Logout', style: TextStyle(color: Colors.white)),
-        content: const Text('Are you sure you want to logout?', style: TextStyle(color: Colors.white70)),
+        content: const Text(
+          'Are you sure you want to logout?',
+          style: TextStyle(color: Colors.white70),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -968,10 +1156,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           Container(
             width: 8,
             height: 8,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 8),
           Text(
@@ -986,9 +1171,87 @@ class _LobbyScreenState extends State<LobbyScreen> {
           const SizedBox(width: 6),
           Text(
             '($count)',
+            style: TextStyle(color: Colors.grey[600], fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGroupsSectionHeader() {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 6),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              color: Color(0xFF00D9FF),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'GROUPS',
             style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: 11,
+              color: Colors.grey[400],
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '(${_filteredGroups.length})',
+            style: TextStyle(color: Colors.grey[600], fontSize: 11),
+          ),
+          const Spacer(),
+          // Create group button
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const CreateGroupScreen(),
+                  ),
+                );
+                if (result == true) {
+                  _loadLobby(useCacheFirst: false);
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00D9FF).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFF00D9FF).withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.add, color: Color(0xFF00D9FF), size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Create',
+                      style: const TextStyle(
+                        color: Color(0xFF00D9FF),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ],
@@ -1074,10 +1337,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   Widget build(BuildContext context) {
     // Separate into 3 tiers
-    final onlineUsers = _filteredUsers.where((u) => _getStatusTier(u) == 0).toList();
-    final lastSeenUsers = _filteredUsers.where((u) => _getStatusTier(u) == 1).toList();
-    final offlineUsers = _filteredUsers.where((u) => _getStatusTier(u) == 2).toList();
-    
+    final onlineUsers = _filteredUsers
+        .where((u) => _getStatusTier(u) == 0)
+        .toList();
+    final lastSeenUsers = _filteredUsers
+        .where((u) => _getStatusTier(u) == 1)
+        .toList();
+    final offlineUsers = _filteredUsers
+        .where((u) => _getStatusTier(u) == 2)
+        .toList();
+
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A2E),
       appBar: AppBar(
@@ -1158,7 +1427,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           // Search bar + sort button row
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 8.0,
+            ),
             child: Row(
               children: [
                 Expanded(
@@ -1175,7 +1447,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         borderRadius: BorderRadius.circular(8),
                         borderSide: BorderSide.none,
                       ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                   ),
                 ),
@@ -1188,7 +1463,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     borderRadius: BorderRadius.circular(8),
                     onTap: _cycleSortMode,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -1216,49 +1494,94 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
           // User list
           Expanded(
-            child: (_isLoading && _lobbyUsers.isEmpty)
+            child: (_isLoading && _lobbyUsers.isEmpty && _groups.isEmpty)
                 ? _buildLoadingShimmer()
-                : _filteredUsers.isEmpty
-                    ? Center(
-                        child: Text(
-                          _searchController.text.isEmpty
-                              ? 'No conversations yet'
-                              : 'No results found',
-                          style: TextStyle(color: Colors.grey[500], fontSize: 16),
-                        ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: () => _loadLobby(useCacheFirst: false),
-                        color: const Color(0xFF00D9FF),
-                        backgroundColor: const Color(0xFF252542),
-                        child: _sortMode == LobbySortMode.allUsers
-                            // A-Z mode: flat list, no section headers
-                            ? ListView(
-                                children: [
-                                  ..._filteredUsers.map((user) => _buildUserTile(user, isOnlineSection: _getStatusTier(user) == 0)),
-                                ],
-                              )
-                            // Grouped mode: 3-tier sections
-                            : ListView(
-                                children: [
-                                  // Online section
-                                  if (onlineUsers.isNotEmpty) ...[
-                                    _buildSectionHeader('ONLINE', onlineUsers.length, const Color(0xFF00E676)),
-                                    ...onlineUsers.map((user) => _buildUserTile(user, isOnlineSection: true)),
-                                  ],
-                                  // Last Seen section
-                                  if (lastSeenUsers.isNotEmpty) ...[
-                                    _buildSectionHeader('LAST SEEN', lastSeenUsers.length, const Color(0xFFFFC107)),
-                                    ...lastSeenUsers.map((user) => _buildUserTile(user, isOnlineSection: false)),
-                                  ],
-                                  // Offline section
-                                  if (offlineUsers.isNotEmpty) ...[
-                                    _buildSectionHeader('OFFLINE', offlineUsers.length, Colors.grey),
-                                    ...offlineUsers.map((user) => _buildUserTile(user, isOnlineSection: false)),
-                                  ],
-                                ],
+                : (_filteredUsers.isEmpty && _filteredGroups.isEmpty)
+                ? Center(
+                    child: Text(
+                      _searchController.text.isEmpty
+                          ? 'No conversations yet'
+                          : 'No results found',
+                      style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                    ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: () => _loadLobby(useCacheFirst: false),
+                    color: const Color(0xFF00D9FF),
+                    backgroundColor: const Color(0xFF252542),
+                    child: _sortMode == LobbySortMode.allUsers
+                        // A-Z mode: groups first, then flat list of users
+                        ? ListView(
+                            children: [
+                              // Groups section (always at top)
+                              _buildGroupsSectionHeader(),
+                              if (_filteredGroups.isNotEmpty)
+                                ..._filteredGroups.map(
+                                  (group) => _buildGroupTile(group),
+                                ),
+                              // Users
+                              ..._filteredUsers.map(
+                                (user) => _buildUserTile(
+                                  user,
+                                  isOnlineSection: _getStatusTier(user) == 0,
+                                ),
                               ),
-                      ),
+                            ],
+                          )
+                        // Grouped mode: groups first, then 3-tier sections
+                        : ListView(
+                            children: [
+                              // Groups section (always at top)
+                              _buildGroupsSectionHeader(),
+                              if (_filteredGroups.isNotEmpty)
+                                ..._filteredGroups.map(
+                                  (group) => _buildGroupTile(group),
+                                ),
+                              // Online section
+                              if (onlineUsers.isNotEmpty) ...[
+                                _buildSectionHeader(
+                                  'ONLINE',
+                                  onlineUsers.length,
+                                  const Color(0xFF00E676),
+                                ),
+                                ...onlineUsers.map(
+                                  (user) => _buildUserTile(
+                                    user,
+                                    isOnlineSection: true,
+                                  ),
+                                ),
+                              ],
+                              // Last Seen section
+                              if (lastSeenUsers.isNotEmpty) ...[
+                                _buildSectionHeader(
+                                  'LAST SEEN',
+                                  lastSeenUsers.length,
+                                  const Color(0xFFFFC107),
+                                ),
+                                ...lastSeenUsers.map(
+                                  (user) => _buildUserTile(
+                                    user,
+                                    isOnlineSection: false,
+                                  ),
+                                ),
+                              ],
+                              // Offline section
+                              if (offlineUsers.isNotEmpty) ...[
+                                _buildSectionHeader(
+                                  'OFFLINE',
+                                  offlineUsers.length,
+                                  Colors.grey,
+                                ),
+                                ...offlineUsers.map(
+                                  (user) => _buildUserTile(
+                                    user,
+                                    isOnlineSection: false,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                  ),
           ),
           const AppVersionText(),
         ],
@@ -1309,10 +1632,92 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
+  Widget _buildGroupTile(Group group) {
+    final hasUnread = false; // TODO: Implement unread count for groups
+    final lastMessageText = group.lastMessage?.content ?? 'No messages yet';
+    final lastMessageTime = group.lastMessage?.formattedTime ?? '';
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      leading: Stack(
+        children: [
+          CircleAvatar(
+            radius: 28,
+            backgroundColor: const Color(0xFF00D9FF),
+            child: group.avatarUrl != null
+                ? ClipOval(
+                    child: Image.network(
+                      group.avatarUrl!,
+                      width: 56,
+                      height: 56,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.group,
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                    ),
+                  )
+                : const Icon(Icons.group, color: Colors.white, size: 28),
+          ),
+        ],
+      ),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              group.name,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: hasUnread ? FontWeight.bold : FontWeight.w500,
+                fontSize: 16,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (lastMessageTime.isNotEmpty)
+            Text(
+              lastMessageTime,
+              style: TextStyle(
+                color: hasUnread ? const Color(0xFF00D9FF) : Colors.grey[500],
+                fontSize: 12,
+                fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+        ],
+      ),
+      subtitle: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${group.memberCount} members • $lastMessageText',
+              style: TextStyle(
+                color: hasUnread ? Colors.white70 : Colors.grey[400],
+                fontSize: 14,
+                fontWeight: hasUnread ? FontWeight.w500 : FontWeight.normal,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => GroupChatScreen(group: group),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildUserTile(LobbyUser user, {bool isOnlineSection = false}) {
     final avatarColor = _getAvatarColor(user.avatarColorIndex);
     final effectiveStatus = _getEffectiveStatus(user);
-    
+
     // Format last seen date for offline users
     String _formatLastSeenDate(String? lastSeen) {
       if (lastSeen == null) return '';
@@ -1323,20 +1728,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
         return '';
       }
     }
-    
+
     // Get last message preview
     String _getLastMessagePreview() {
       if (user.lastMessage != null && user.lastMessage!.isNotEmpty) {
         final prefix = user.lastMessageIsFromMe == true ? 'You: ' : '';
-        final message = user.lastMessage!.length > 25 
-            ? '${user.lastMessage!.substring(0, 25)}...' 
+        final message = user.lastMessage!.length > 25
+            ? '${user.lastMessage!.substring(0, 25)}...'
             : user.lastMessage!;
         final checkmark = user.lastMessageIsFromMe == true ? ' ✓' : '';
         return '$prefix$message$checkmark';
       }
       return 'No messages yet';
     }
-    
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
@@ -1378,7 +1783,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 _filterUsers();
               }
             });
-            
+
             // Navigate to chat screen
             Navigator.push(
               context,
@@ -1400,7 +1805,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     },
                     body: jsonEncode({
                       'sender_id': user.id,
-                      'last_message_id': 2147483647, // INT_MAX — marks ALL messages
+                      'last_message_id':
+                          2147483647, // INT_MAX — marks ALL messages
                     }),
                   );
                 }
@@ -1501,14 +1907,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         effectiveStatus == 'online'
                             ? 'Online'
                             : effectiveStatus == 'away'
-                                ? _formatRelativeTime(user.lastSeen)
-                                : _formatRelativeTime(user.lastSeen),
+                            ? _formatRelativeTime(user.lastSeen)
+                            : _formatRelativeTime(user.lastSeen),
                         style: TextStyle(
                           color: effectiveStatus == 'online'
                               ? const Color(0xFF00E676)
                               : effectiveStatus == 'away'
-                                  ? const Color(0xFFFFC107)
-                                  : Colors.grey[500],
+                              ? const Color(0xFFFFC107)
+                              : Colors.grey[500],
                           fontSize: 13,
                         ),
                       ),
@@ -1549,7 +1955,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     if (user.unreadCount > 0) ...[
                       const SizedBox(height: 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFFE91E63),
                           borderRadius: BorderRadius.circular(12),

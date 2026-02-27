@@ -12,10 +12,33 @@ class StorageService {
   static const String _rememberMeKey = 'remember_me';
   static const String _rememberedUsernameKey = 'remembered_username';
 
+  static SharedPreferences? _prefs;
+
+  /// Warm up the SharedPreferences instance so the first write doesn't
+  /// block a frame later during app usage.
+  static Future<void> init() async {
+    try {
+      _prefs ??= await SharedPreferences.getInstance();
+    } catch (e) {
+      debugPrint('Error initializing storage: $e');
+    }
+  }
+
+  static Future<SharedPreferences> _getPrefs() async {
+    if (_prefs != null) {
+      return _prefs!;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    _prefs = prefs;
+    return prefs;
+  }
+
   /// Save authentication token
   static Future<void> saveToken(String token) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
+      if (prefs.getString(_tokenKey) == token) return;
       await prefs.setString(_tokenKey, token);
     } catch (e) {
       debugPrint('Error saving token: $e');
@@ -25,7 +48,7 @@ class StorageService {
   /// Get authentication token
   static Future<String?> getToken() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       return prefs.getString(_tokenKey);
     } catch (e) {
       debugPrint('Error getting token: $e');
@@ -36,7 +59,8 @@ class StorageService {
   /// Save user ID
   static Future<void> saveUserId(int userId) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
+      if (prefs.getInt(_userIdKey) == userId) return;
       await prefs.setInt(_userIdKey, userId);
     } catch (e) {
       debugPrint('Error saving user ID: $e');
@@ -46,7 +70,7 @@ class StorageService {
   /// Get user ID
   static Future<int?> getUserId() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       return prefs.getInt(_userIdKey);
     } catch (e) {
       debugPrint('Error getting user ID: $e');
@@ -57,7 +81,8 @@ class StorageService {
   /// Save username
   static Future<void> saveUsername(String username) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
+      if (prefs.getString(_usernameKey) == username) return;
       await prefs.setString(_usernameKey, username);
     } catch (e) {
       debugPrint('Error saving username: $e');
@@ -67,7 +92,7 @@ class StorageService {
   /// Get username
   static Future<String?> getUsername() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       return prefs.getString(_usernameKey);
     } catch (e) {
       debugPrint('Error getting username: $e');
@@ -78,7 +103,8 @@ class StorageService {
   /// Save admin status
   static Future<void> saveIsAdmin(bool isAdmin) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
+      if (prefs.getBool(_isAdminKey) == isAdmin) return;
       await prefs.setBool(_isAdminKey, isAdmin);
     } catch (e) {
       debugPrint('Error saving admin status: $e');
@@ -88,7 +114,7 @@ class StorageService {
   /// Get admin status
   static Future<bool> getIsAdmin() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       return prefs.getBool(_isAdminKey) ?? false;
     } catch (e) {
       debugPrint('Error getting admin status: $e');
@@ -99,7 +125,11 @@ class StorageService {
   /// Save remembered username (no password is ever persisted)
   static Future<void> saveRememberedUsername(String username) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
+      final rememberMe = prefs.getBool(_rememberMeKey) ?? false;
+      final storedUsername = prefs.getString(_rememberedUsernameKey);
+      if (rememberMe && storedUsername == username) return;
+
       await prefs.setBool(_rememberMeKey, true);
       await prefs.setString(_rememberedUsernameKey, username);
     } catch (e) {
@@ -110,7 +140,7 @@ class StorageService {
   /// Get remembered username (returns null if not set)
   static Future<String?> getRememberedUsername() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       final rememberMe = prefs.getBool(_rememberMeKey) ?? false;
       if (!rememberMe) return null;
       return prefs.getString(_rememberedUsernameKey);
@@ -123,7 +153,7 @@ class StorageService {
   /// Clear remembered credentials
   static Future<void> clearRememberedCredentials() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       await prefs.remove(_rememberMeKey);
       await prefs.remove(_rememberedUsernameKey);
     } catch (e) {
@@ -134,7 +164,7 @@ class StorageService {
   /// Clear all stored data (logout) — preserves remembered credentials
   static Future<void> clearAll() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _getPrefs();
       final userId = prefs.getInt(_userIdKey);
       await prefs.remove(_tokenKey);
       await prefs.remove(_userIdKey);
@@ -148,9 +178,48 @@ class StorageService {
     }
   }
 
+  /// Retrieve the persisted auth session in one disk read. Returns null if
+  /// any of the required fields are missing.
+  static Future<StoredSession?> getUserSession() async {
+    try {
+      final prefs = await _getPrefs();
+      final token = prefs.getString(_tokenKey);
+      final userId = prefs.getInt(_userIdKey);
+
+      if (token == null || token.isEmpty || userId == null) {
+        return null;
+      }
+
+      return StoredSession(
+        token: token,
+        userId: userId,
+        username: prefs.getString(_usernameKey),
+        isAdmin: prefs.getBool(_isAdminKey) ?? false,
+      );
+    } catch (e) {
+      debugPrint('Error getting user session: $e');
+      return null;
+    }
+  }
+
   /// Check if user is logged in
   static Future<bool> isLoggedIn() async {
     final token = await getToken();
     return token != null && token.isNotEmpty;
   }
+}
+
+/// Lightweight container for the persisted auth session.
+class StoredSession {
+  final String token;
+  final int userId;
+  final String? username;
+  final bool isAdmin;
+
+  const StoredSession({
+    required this.token,
+    required this.userId,
+    this.username,
+    this.isAdmin = false,
+  });
 }

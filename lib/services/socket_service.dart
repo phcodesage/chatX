@@ -58,6 +58,18 @@ class SocketService {
   final Map<String, Function(Map<String, dynamic>)> _screenShareStartedListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _screenShareStoppedListeners = {};
 
+  // Group chat listeners
+  final Map<String, Function(Map<String, dynamic>)> _groupNewMessageListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupMessageSentListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupFileMessageListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupDoorbellListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupMessageDeletedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupMessageEditedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupReactionUpdatedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupReactionClearedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupMemberLeftListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupMessageStatusUpdatedListeners = {};
+
   // ---------------------------------------------------------------------------
   // Keyed listener registration / removal helpers
   // ---------------------------------------------------------------------------
@@ -100,6 +112,17 @@ class SocketService {
       case 'reconnected': _reconnectedListeners[key] = callback as Function(); break;
       case 'screenShareStarted': _screenShareStartedListeners[key] = callback as Function(Map<String, dynamic>); break;
       case 'screenShareStopped': _screenShareStoppedListeners[key] = callback as Function(Map<String, dynamic>); break;
+      // Group chat events
+      case 'groupNewMessage': _groupNewMessageListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupMessageSent': _groupMessageSentListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupFileMessage': _groupFileMessageListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupDoorbell': _groupDoorbellListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupMessageDeleted': _groupMessageDeletedListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupMessageEdited': _groupMessageEditedListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupReactionUpdated': _groupReactionUpdatedListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupReactionCleared': _groupReactionClearedListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupMemberLeft': _groupMemberLeftListeners[key] = callback as Function(Map<String, dynamic>); break;
+      case 'groupMessageStatusUpdated': _groupMessageStatusUpdatedListeners[key] = callback as Function(Map<String, dynamic>); break;
     }
   }
 
@@ -142,6 +165,17 @@ class SocketService {
       case 'reconnected': _reconnectedListeners.remove(key); break;
       case 'screenShareStarted': _screenShareStartedListeners.remove(key); break;
       case 'screenShareStopped': _screenShareStoppedListeners.remove(key); break;
+      // Group chat events
+      case 'groupNewMessage': _groupNewMessageListeners.remove(key); break;
+      case 'groupMessageSent': _groupMessageSentListeners.remove(key); break;
+      case 'groupFileMessage': _groupFileMessageListeners.remove(key); break;
+      case 'groupDoorbell': _groupDoorbellListeners.remove(key); break;
+      case 'groupMessageDeleted': _groupMessageDeletedListeners.remove(key); break;
+      case 'groupMessageEdited': _groupMessageEditedListeners.remove(key); break;
+      case 'groupReactionUpdated': _groupReactionUpdatedListeners.remove(key); break;
+      case 'groupReactionCleared': _groupReactionClearedListeners.remove(key); break;
+      case 'groupMemberLeft': _groupMemberLeftListeners.remove(key); break;
+      case 'groupMessageStatusUpdated': _groupMessageStatusUpdatedListeners.remove(key); break;
     }
   }
 
@@ -184,6 +218,17 @@ class SocketService {
     _reconnectedListeners.remove(key);
     _screenShareStartedListeners.remove(key);
     _screenShareStoppedListeners.remove(key);
+    // Group chat listeners
+    _groupNewMessageListeners.remove(key);
+    _groupMessageSentListeners.remove(key);
+    _groupFileMessageListeners.remove(key);
+    _groupDoorbellListeners.remove(key);
+    _groupMessageDeletedListeners.remove(key);
+    _groupMessageEditedListeners.remove(key);
+    _groupReactionUpdatedListeners.remove(key);
+    _groupReactionClearedListeners.remove(key);
+    _groupMemberLeftListeners.remove(key);
+    _groupMessageStatusUpdatedListeners.remove(key);
   }
 
   // Broadcast helpers
@@ -641,6 +686,78 @@ class SocketService {
       _broadcast(_screenShareStoppedListeners, data as Map<String, dynamic>);
     });
 
+    // === Group chat events ===
+    
+    // New group message from another member
+    _socket!.on('group_new_message', (data) {
+      debugPrint('💬 Group new message: $data');
+      _broadcast(_groupNewMessageListeners, data as Map<String, dynamic>);
+      
+      // Auto-acknowledge delivery
+      final messageData = data as Map<String, dynamic>;
+      if (messageData['message_id'] != null && messageData['group_id'] != null) {
+        emit('group_message_delivered', {
+          'message_id': messageData['message_id'],
+          'group_id': messageData['group_id'],
+        });
+        debugPrint('📧 Auto-sent group delivery confirmation for message ${messageData['message_id']}');
+      }
+    });
+
+    // Group message sent confirmation (your own message)
+    _socket!.on('group_message_sent', (data) {
+      debugPrint('📤 Group message sent: $data');
+      _broadcast(_groupMessageSentListeners, data as Map<String, dynamic>);
+    });
+
+    // Group file message received
+    _socket!.on('group_file_message', (data) {
+      debugPrint('📎 Group file received: $data');
+      _broadcast(_groupFileMessageListeners, data as Map<String, dynamic>);
+    });
+
+    // Group doorbell notification
+    _socket!.on('group_doorbell', (data) {
+      debugPrint('🔔 Group doorbell: $data');
+      _broadcast(_groupDoorbellListeners, data as Map<String, dynamic>);
+    });
+
+    // Group message deleted
+    _socket!.on('group_message_deleted', (data) {
+      debugPrint('🗑️ Group message deleted: $data');
+      _broadcast(_groupMessageDeletedListeners, data as Map<String, dynamic>);
+    });
+
+    // Group message edited
+    _socket!.on('group_message_edited', (data) {
+      debugPrint('✏️ Group message edited: $data');
+      _broadcast(_groupMessageEditedListeners, data as Map<String, dynamic>);
+    });
+
+    // Group reaction updated
+    _socket!.on('group_reaction_updated', (data) {
+      debugPrint('👍 Group reaction updated: $data');
+      _broadcast(_groupReactionUpdatedListeners, data as Map<String, dynamic>);
+    });
+
+    // Group reaction cleared
+    _socket!.on('group_reaction_cleared', (data) {
+      debugPrint('❌ Group reaction cleared: $data');
+      _broadcast(_groupReactionClearedListeners, data as Map<String, dynamic>);
+    });
+
+    // Group member left
+    _socket!.on('group_member_left', (data) {
+      debugPrint('👋 Group member left: $data');
+      _broadcast(_groupMemberLeftListeners, data as Map<String, dynamic>);
+    });
+
+    // Group message status updated (delivered/seen)
+    _socket!.on('message_status_updated', (data) {
+      debugPrint('✓ Group message status updated: $data');
+      _broadcast(_groupMessageStatusUpdatedListeners, data as Map<String, dynamic>);
+    });
+
     // WebRTC signaling (offer/answer/ICE candidates)
     _socket!.on('signal', (data) {
       debugPrint('📡 Signal received: $data');
@@ -807,6 +924,92 @@ class SocketService {
     emit('unpin_excalidraw', {'message_id': messageId});
   }
 
+  // === Group chat methods ===
+  
+  /// Join a group chat room
+  void joinGroupChat(int groupId) {
+    emit('join_group', {'group_id': groupId});
+  }
+
+  /// Leave a group chat room
+  void leaveGroupChat(int groupId) {
+    emit('leave_group', {'group_id': groupId});
+  }
+
+  /// Send a message to a group via Socket.IO
+  void sendGroupMessage({
+    required int groupId,
+    required String content,
+    String messageType = 'text',
+    int? replyToId,
+  }) {
+    emit('send_group_message', {
+      'group_id': groupId,
+      'content': content,
+      'message_type': messageType,
+      if (replyToId != null) 'reply_to_id': replyToId,
+    });
+  }
+
+  /// Ring doorbell in a group
+  void ringGroupDoorbell(int groupId) {
+    emit('ring_group_doorbell', {'group_id': groupId});
+  }
+
+  /// Confirm group message delivery
+  void confirmGroupDelivery(int messageId, int groupId) {
+    emit('group_message_delivered', {
+      'message_id': messageId,
+      'group_id': groupId,
+    });
+  }
+
+  /// Mark group messages as viewed
+  void markGroupMessagesViewed(int groupId, List<int> messageIds, int senderId) {
+    emit('group_messages_viewed', {
+      'group_id': groupId,
+      'message_ids': messageIds,
+      'sender_id': senderId,
+    });
+  }
+
+  /// Delete a group message
+  void deleteGroupMessage(int messageId, int groupId) {
+    emit('delete_group_message', {
+      'message_id': messageId,
+      'group_id': groupId,
+    });
+  }
+
+  /// Edit a group message
+  void editGroupMessage(int messageId, int groupId, String newContent) {
+    emit('edit_group_message', {
+      'message_id': messageId,
+      'group_id': groupId,
+      'content': newContent,
+    });
+  }
+
+  /// Set a reaction on a group message
+  void setGroupReaction(int messageId, int groupId, String emoji) {
+    emit('set_group_reaction', {
+      'message_id': messageId,
+      'group_id': groupId,
+      'emoji': emoji,
+    });
+    debugPrint('👍 Sending group reaction: emoji=$emoji, messageId=$messageId, groupId=$groupId');
+  }
+
+  /// Clear reaction from a group message
+  void clearGroupReaction(int messageId, int groupId, String emoji) {
+    emit('clear_group_reaction', {
+      'message_id': messageId,
+      'group_id': groupId,
+      'emoji': emoji,
+    });
+    debugPrint('❌ Clearing group reaction for messageId=$messageId, groupId=$groupId');
+  }
+
   /// Clear all callbacks
   void clearCallbacks() {
     _messageReceivedListeners.clear();
@@ -844,6 +1047,17 @@ class SocketService {
     _callEndedListeners.clear();
     _connectionChangedListeners.clear();
     _reconnectedListeners.clear();
+    // Group chat listeners
+    _groupNewMessageListeners.clear();
+    _groupMessageSentListeners.clear();
+    _groupFileMessageListeners.clear();
+    _groupDoorbellListeners.clear();
+    _groupMessageDeletedListeners.clear();
+    _groupMessageEditedListeners.clear();
+    _groupReactionUpdatedListeners.clear();
+    _groupReactionClearedListeners.clear();
+    _groupMemberLeftListeners.clear();
+    _groupMessageStatusUpdatedListeners.clear();
     onSignal = null;
   }
 }

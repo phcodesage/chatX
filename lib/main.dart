@@ -11,12 +11,14 @@ import 'screens/lobby_screen.dart';
 import 'services/firebase_messaging_service.dart';
 import 'services/auth_error_handler.dart';
 import 'services/chat_cache_service.dart';
+import 'services/storage_service.dart';
 import 'utils/notification_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await ChatCacheService.init();
+  await StorageService.init();
   
   // Initialize Firebase
   await Firebase.initializeApp(
