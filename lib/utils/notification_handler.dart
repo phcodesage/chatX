@@ -5,6 +5,7 @@ import '../widgets/incoming_call_setup_modal.dart';
 import '../models/lobby_user.dart';
 import '../services/call_service.dart';
 import '../services/socket_service.dart';
+import '../services/presence_service.dart';
 
 /// Helper class to handle notification taps and navigate to appropriate screens
 class NotificationHandler {
@@ -47,6 +48,7 @@ class NotificationHandler {
         _navigateToChat(senderId, senderName ?? 'User');
         break;
       case 'call':
+        debugPrint('📞 FCM notification tapped - handling incoming call');
         _handleIncomingCallNotification(data);
         break;
       case 'color_change':
@@ -65,6 +67,16 @@ class NotificationHandler {
   ) async {
     debugPrint('📞 Handling incoming call notification: $data');
 
+    // Guard against duplicate call setups (same as lobby/chat screens)
+    // This prevents conflicts when both socket events and FCM notifications arrive
+    if (PresenceService().isHandlingIncomingCall) {
+      debugPrint(
+        '⚠️ Already handling an incoming call, ignoring FCM duplicate',
+      );
+      return;
+    }
+    PresenceService().isHandlingIncomingCall = true;
+
     final senderId = int.tryParse(data['sender_id']?.toString() ?? '');
     final senderName = data['sender_name'] as String? ?? 'Unknown';
     final callType = data['call_type'] as String? ?? 'video';
@@ -73,12 +85,14 @@ class NotificationHandler {
 
     if (senderId == null) {
       debugPrint('❌ Invalid sender_id for call notification');
+      PresenceService().isHandlingIncomingCall = false;
       return;
     }
 
     final context = navigatorKey.currentContext;
     if (context == null) {
       debugPrint('❌ No context available for showing call modal');
+      PresenceService().isHandlingIncomingCall = false;
       return;
     }
 
@@ -102,6 +116,26 @@ class NotificationHandler {
       debugPrint('📡 Signal received for FCM call: $signalData');
       callService.handleSignal(signalData);
     };
+
+    // For FCM notifications, request pending offer since the original offer
+    // may have been sent while the app was in background
+    if (callRoomId != null) {
+      debugPrint('📞 Requesting pending offer for FCM call: $callRoomId');
+      // Add a small delay to ensure socket connection is stable
+      Future.delayed(const Duration(milliseconds: 500), () {
+        socketService.emit('request_pending_offer', {'room': callRoomId});
+        debugPrint('📞 Pending offer request sent for room: $callRoomId');
+      });
+
+      // Also request a fresh offer as backup
+      Future.delayed(const Duration(milliseconds: 800), () {
+        debugPrint('📡 Requesting fresh WebRTC offer for FCM call (backup)');
+        socketService.emit('request_call_offer', {
+          'call_room_id': callRoomId,
+          'caller_id': senderId,
+        });
+      });
+    }
 
     // Create call data for the call service
     final callData = {
@@ -152,6 +186,8 @@ class NotificationHandler {
                 // Clean up listeners
                 socketService.removeListener('callEnded', listenerKey);
                 socketService.removeListener('callDeclined', listenerKey);
+                // Reset the handling flag
+                PresenceService().isHandlingIncomingCall = false;
               },
             ),
           ),
@@ -161,6 +197,8 @@ class NotificationHandler {
           // Clean up listeners when modal closes
           socketService.removeListener('callEnded', listenerKey);
           socketService.removeListener('callDeclined', listenerKey);
+          // Reset the handling flag
+          PresenceService().isHandlingIncomingCall = false;
 
           if (result is Map &&
               (result['result'] == 'accepted' ||

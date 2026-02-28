@@ -533,6 +533,7 @@ class CallService {
       debugPrint(
         '📥 Current call state when storing offer: $_callState, direction: $_callDirection',
       );
+      debugPrint('📥 Offer SDP length: ${incomingSdp?.length ?? 0} characters');
       _pendingOffer = signal;
       // If direction not set, this is likely a cross-room call - set it now
       if (_callDirection == null) {
@@ -770,6 +771,28 @@ class CallService {
       _pendingOffer = null;
     } else {
       debugPrint('⚠️ No pending offer to process');
+
+      // FALLBACK: Request pending offer from backend if we don't have one
+      // This handles the case where FCM notification was received while app was in background
+      // and the original WebRTC offer wasn't properly stored or received
+      if (_callRoomId != null) {
+        debugPrint(
+          '📞 Requesting pending offer as fallback before answering...',
+        );
+        _socketService.emit('request_pending_offer', {'room': _callRoomId});
+
+        // Wait a moment for the offer to arrive, then check again
+        await Future.delayed(const Duration(milliseconds: 1500));
+
+        if (_pendingOffer != null) {
+          debugPrint('📥 Processing fallback pending offer after delay');
+          await _processOffer(_pendingOffer!);
+          _pendingOffer = null;
+        } else {
+          debugPrint('❌ Still no pending offer after fallback request');
+          // The call might still work if the offer arrives later via signal handler
+        }
+      }
     }
   }
 
