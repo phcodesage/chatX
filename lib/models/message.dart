@@ -68,19 +68,20 @@ class Message {
   /// Also handles HTML content for file messages
   static String? _parseReplyPreview(dynamic value) {
     if (value == null) return null;
-    
+
     String? rawContent;
     String? sender;
-    
+
     if (value is String) {
       rawContent = value;
     } else if (value is Map) {
       sender = value['sender']?.toString() ?? value['sender_id']?.toString();
-      rawContent = value['content']?.toString() ?? value['message']?.toString() ?? '';
+      rawContent =
+          value['content']?.toString() ?? value['message']?.toString() ?? '';
     }
-    
+
     if (rawContent == null || rawContent.isEmpty) return null;
-    
+
     // Detect file type from HTML and replace with emoji
     String cleanContent = rawContent;
     if (rawContent.contains('<audio') || rawContent.contains('audio/')) {
@@ -94,7 +95,7 @@ class Message {
       cleanContent = rawContent.replaceAll(RegExp(r'<[^>]*>'), '').trim();
       if (cleanContent.isEmpty) cleanContent = '📎 File';
     }
-    
+
     // Only add sender prefix if we had a Map with sender info
     if (sender != null && sender.isNotEmpty) {
       return '$sender: $cleanContent';
@@ -103,6 +104,18 @@ class Message {
   }
 
   factory Message.fromJson(Map<String, dynamic> json) {
+    // Helper to safely convert Map<dynamic, dynamic> to Map<String, dynamic>
+    Map<String, dynamic> _safeReactionsMap(dynamic value) {
+      if (value == null) return {};
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) {
+        return Map<String, dynamic>.from(
+          value.map((k, v) => MapEntry(k.toString(), v)),
+        );
+      }
+      return {};
+    }
+
     return Message(
       id: json['id'] as int,
       senderId: json['sender_id'] as int,
@@ -120,7 +133,7 @@ class Message {
       threadId: json['thread_id'] as String,
       replyToId: json['reply_to_id'] as int?,
       replyPreview: _parseReplyPreview(json['reply_preview']),
-      reactions: json['reactions'] as Map<String, dynamic>? ?? {},
+      reactions: _safeReactionsMap(json['reactions']),
       fileUrl: json['file_url'] as String?,
       fileName: json['file_name'] as String?,
       fileSize: json['file_size'] as int?,
@@ -128,7 +141,9 @@ class Message {
       isDeleted: json['is_deleted'] as bool? ?? false,
       isTask: json['is_task'] as bool? ?? false,
       taskCreatedAt: json['task_created_at'] as String?,
-      taskCompletedAt: json['task_completed_at'] as String? ?? json['completed_at'] as String?,
+      taskCompletedAt:
+          json['task_completed_at'] as String? ??
+          json['completed_at'] as String?,
       isExcalidrawLink: json['is_excalidraw_link'] as bool? ?? false,
       excalidrawPinnedAt: json['excalidraw_pinned_at'] as String?,
       isPinned: json['is_pinned'] as bool? ?? false,
@@ -210,22 +225,22 @@ class Message {
   String get formattedTimestampFull {
     try {
       final dateTime = _parseUtcTimestamp(timestamp);
-      
+
       // Format date parts
       final month = dateTime.month.toString().padLeft(2, '0');
       final day = dateTime.day.toString().padLeft(2, '0');
       final year = dateTime.year;
-      
+
       // Format time parts
       final hour = dateTime.hour.toString().padLeft(2, '0');
       final minute = dateTime.minute.toString().padLeft(2, '0');
       final second = dateTime.second.toString().padLeft(2, '0');
-      
+
       // Get timezone offset
       final offset = dateTime.timeZoneOffset;
       final offsetHours = offset.inHours.abs();
       final offsetSign = offset.isNegative ? '-' : '+';
-      
+
       return '[$month/$day/$year, $hour:$minute:$second GMT$offsetSign$offsetHours]';
     } catch (e) {
       return '';

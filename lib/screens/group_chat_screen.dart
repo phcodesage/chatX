@@ -13,6 +13,7 @@ import '../services/group_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
 import '../services/chat_cache_service.dart';
+import '../services/translation_service.dart';
 import '../widgets/reaction_picker.dart';
 
 /// Group chat screen for messaging in a group
@@ -61,6 +62,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   // Auto-translate toggle
   bool _autoTranslate = false;
+
+  // Translation state: { messageId: translatedText }
+  final Map<int, String> _messageTranslations = {};
 
   // Color customization (for group chat theme)
   bool _showResetButton = false;
@@ -269,6 +273,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       setState(() {
         _messages.add(message);
       });
+
+      // Auto-translate incoming message if enabled and it's a text message from another user
+      if (_autoTranslate &&
+          message.senderId != _currentUserId &&
+          message.messageType == 'text' &&
+          message.content.isNotEmpty) {
+        _autoTranslateGroupMessage(message);
+      }
 
       // Save to cache for offline access
       await ChatCacheService.addGroupMessageToCache(widget.group.id, message);
@@ -1141,11 +1153,62 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   !isAudio))
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Text(
-                isMedia
-                    ? (message.fileName ?? message.content)
-                    : message.content,
-                style: const TextStyle(color: Colors.white, fontSize: 15),
+              child: IntrinsicWidth(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Original message text
+                    Text(
+                      isMedia
+                          ? (message.fileName ?? message.content)
+                          : message.content,
+                      style: const TextStyle(color: Colors.white, fontSize: 15),
+                    ),
+                    // Translation (if available)
+                    if (_messageTranslations.containsKey(message.id)) ...[
+                      const SizedBox(height: 8),
+                      // Separator line
+                      Container(
+                        height: 1,
+                        color: Colors.white.withOpacity(0.3),
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                      ),
+                      // Translated text with language indicator
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Globe icon
+                          Icon(
+                            Icons.language,
+                            size: 14,
+                            color: Colors.white.withOpacity(0.7),
+                          ),
+                          const SizedBox(width: 4),
+                          // Language indicator (placeholder for now)
+                          Text(
+                            'auto → en',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      // Translated text in italic
+                      Text(
+                        _messageTranslations[message.id]!,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.9),
+                          fontSize: 14,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             )
           else if (isMedia || isAudio)
@@ -1196,7 +1259,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ),
             ),
           // The bubble
-          bubbleWidget,
+          GestureDetector(
+            onLongPress: () =>
+                _showGroupMessageContextMenu(message, isSentByMe),
+            child: bubbleWidget,
+          ),
           // Reaction pills below bubble
           if (hasReactions)
             Padding(
@@ -2438,16 +2505,331 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   /// Toggle auto-translate
-  void _toggleAutoTranslate() {
+  Future<void> _toggleAutoTranslate() async {
+    final newValue = !_autoTranslate;
     setState(() {
-      _autoTranslate = !_autoTranslate;
+      _autoTranslate = newValue;
     });
+
+    // Save to SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('autoTranslate_group_${widget.group.id}', newValue);
+
+    // Show feedback snackbar
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          _autoTranslate ? 'Auto-translate enabled' : 'Auto-translate disabled',
+          newValue ? 'Auto-translate enabled' : 'Auto-translate disabled',
         ),
         duration: const Duration(seconds: 2),
+      ),
+    );
+
+    // If enabling, translate existing messages
+    if (newValue) {
+      await _translateExistingMessages();
+    }
+  }
+
+  /// Translate all existing messages for this group
+  Future<void> _translateExistingMessages() async {
+    if (!mounted) return;
+
+    final targetLang = await TranslationService.getUserLanguage();
+    debugPrint('Translating group messages to: $targetLang');
+
+    // Get current messages from cache
+    final currentUserId = await StorageService.getUserId();
+    if (currentUserId == null) return;
+
+    final messages = await ChatCacheService.loadGroupMessages(widget.group.id);
+
+    if (messages.isEmpty) return;
+
+    // Translate each message
+    final translatedMessages = <GroupMessage>[];
+    for (final message in messages) {
+      if (message.content.isNotEmpty && !message.isDeleted) {
+        final translated = await TranslationService.translateGroupMessageObject(
+          message: message,
+          targetLang: targetLang,
+        );
+        if (translated != null) {
+          translatedMessages.add(translated);
+        } else {
+          // Keep original if translation fails
+          translatedMessages.add(message);
+        }
+      } else {
+        translatedMessages.add(message);
+      }
+    }
+
+    // Update cache with translated messages
+    await ChatCacheService.saveGroupMessages(
+      widget.group.id,
+      translatedMessages,
+    );
+
+    // Refresh the UI
+    if (mounted) {
+      setState(() {
+        _messages = translatedMessages;
+      });
+    }
+  }
+
+  /// Show context menu for group message
+  void _showGroupMessageContextMenu(GroupMessage message, bool isSentByMe) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[600],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Copy option (for text messages)
+              if (message.messageType == 'text' && !message.isDeleted)
+                ListTile(
+                  leading: const Icon(Icons.copy, color: Colors.white),
+                  title: const Text(
+                    'Copy',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _copyGroupMessageToClipboard(message);
+                  },
+                ),
+              // Translate option (for incoming text messages)
+              if (!isSentByMe &&
+                  message.messageType == 'text' &&
+                  !message.isDeleted &&
+                  message.content.isNotEmpty)
+                ListTile(
+                  leading: Icon(
+                    _messageTranslations.containsKey(message.id)
+                        ? Icons.translate_outlined
+                        : Icons.translate,
+                    color: Colors.blue,
+                  ),
+                  title: Text(
+                    _messageTranslations.containsKey(message.id)
+                        ? 'Hide Translation'
+                        : 'Translate',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _translateGroupMessage(message);
+                  },
+                ),
+              // Delete option (for own messages)
+              if (isSentByMe && !message.isDeleted)
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text(
+                    'Delete',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showGroupDeleteConfirmation(message);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Copy group message to clipboard
+  void _copyGroupMessageToClipboard(GroupMessage message) {
+    Clipboard.setData(ClipboardData(text: message.content));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Message copied to clipboard'),
+        duration: Duration(seconds: 2),
+        backgroundColor: Color(0xFF4CAF50),
+      ),
+    );
+  }
+
+  /// Auto-translate incoming group message (silent, no loading indicators)
+  Future<void> _autoTranslateGroupMessage(GroupMessage message) async {
+    try {
+      final targetLang = await TranslationService.getUserLanguage();
+      final translatedText = await TranslationService.translateMessage(
+        text: message.content,
+        targetLang: targetLang,
+      );
+
+      if (translatedText != null &&
+          translatedText != message.content &&
+          mounted) {
+        setState(() {
+          _messageTranslations[message.id] = translatedText;
+        });
+        debugPrint(
+          '🌐 Auto-translated group message ${message.id}: "${message.content}" → "$translatedText"',
+        );
+      }
+    } catch (e) {
+      debugPrint('Auto-translation failed for group message ${message.id}: $e');
+      // Fail silently for auto-translation
+    }
+  }
+
+  /// Translate a group message manually
+  Future<void> _translateGroupMessage(GroupMessage message) async {
+    try {
+      // Check if already translated - toggle off if so
+      if (_messageTranslations.containsKey(message.id)) {
+        setState(() {
+          _messageTranslations.remove(message.id);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Translation hidden'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Color(0xFF6B7280),
+          ),
+        );
+        return;
+      }
+
+      // Show loading indicator
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 12),
+              Text('Translating...'),
+            ],
+          ),
+          duration: Duration(seconds: 30),
+          backgroundColor: Color(0xFF4F46E5),
+        ),
+      );
+
+      final targetLang = await TranslationService.getUserLanguage();
+      final translatedText = await TranslationService.translateMessage(
+        text: message.content,
+        targetLang: targetLang,
+      );
+
+      // Hide loading indicator
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+      if (translatedText != null && translatedText != message.content) {
+        // Store translation and update UI
+        setState(() {
+          _messageTranslations[message.id] = translatedText;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Message translated'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Color(0xFF4CAF50),
+          ),
+        );
+      } else if (translatedText == message.content) {
+        // Same text, no translation needed
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Message is already in your language'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Color(0xFF6B7280),
+          ),
+        );
+      } else {
+        // Translation failed
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Translation failed. Please try again.'),
+            duration: Duration(seconds: 3),
+            backgroundColor: Color(0xFFEF4444),
+          ),
+        );
+      }
+    } catch (e) {
+      // Hide loading indicator
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+      debugPrint('Translation error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Translation failed. Please try again.'),
+          duration: Duration(seconds: 3),
+          backgroundColor: Color(0xFFEF4444),
+        ),
+      );
+    }
+  }
+
+  /// Show delete confirmation for group message
+  void _showGroupDeleteConfirmation(GroupMessage message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text(
+          'Delete Message',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'Are you sure you want to delete this message?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteGroupMessage(message);
+            },
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Delete group message (placeholder)
+  void _deleteGroupMessage(GroupMessage message) {
+    // TODO: Implement group message deletion
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Message deletion coming soon for group chats'),
+        duration: Duration(seconds: 2),
       ),
     );
   }

@@ -207,6 +207,11 @@ class StorageService {
     final token = await getToken();
     return token != null && token.isNotEmpty;
   }
+
+  /// Get SharedPreferences instance for direct access
+  static Future<SharedPreferences> getPreferences() async {
+    return await _getPrefs();
+  }
 }
 
 /// Lightweight container for the persisted auth session.

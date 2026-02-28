@@ -73,4 +73,8 @@ class ApiConfig {
       '$baseUrl$mobilePrefix/groups/$groupId/messages/$messageId/reactions';
   static String getGroupDoorbellUrl(int groupId) =>
       '$baseUrl$mobilePrefix/groups/$groupId/doorbell';
+
+  // Translation endpoints
+  static String get translateMessageUrl =>
+      '$baseUrl/api/mobile/translate_message';
 }

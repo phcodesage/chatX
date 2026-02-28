@@ -206,6 +206,18 @@ class GroupMessage {
   });
 
   factory GroupMessage.fromJson(Map<String, dynamic> json) {
+    // Helper to safely convert Map<dynamic, dynamic> to Map<String, dynamic>
+    Map<String, dynamic> _safeReactionsMap(dynamic value) {
+      if (value == null) return {};
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) {
+        return Map<String, dynamic>.from(
+          value.map((k, v) => MapEntry(k.toString(), v)),
+        );
+      }
+      return {};
+    }
+
     try {
       // Handle reply_preview which can be either a String or a Map
       String? replyPreviewText;
@@ -226,7 +238,7 @@ class GroupMessage {
         senderId: json['sender_id'] as int,
         sender: json['sender'] != null
             ? GroupMessageSender.fromJson(
-                json['sender'] as Map<String, dynamic>,
+                Map<String, dynamic>.from(json['sender'] as Map),
               )
             : null,
         content: json['content'] as String? ?? '',
@@ -240,7 +252,7 @@ class GroupMessage {
         fileType: json['file_type'] as String?,
         replyToId: json['reply_to_id'] as int?,
         replyPreview: replyPreviewText,
-        reactions: (json['reactions'] as Map<String, dynamic>?) ?? {},
+        reactions: _safeReactionsMap(json['reactions']),
       );
     } catch (e, stackTrace) {
       debugPrint('❌ Error parsing GroupMessage: $e');
