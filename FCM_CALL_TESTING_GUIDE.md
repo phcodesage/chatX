@@ -34,6 +34,12 @@ This guide helps test incoming call notifications via FCM (Firebase Cloud Messag
    - **Socket Guard**: Socket event handlers also check flag to prevent conflicts
    - **Proper Cleanup**: Flag is reset when call setup completes or fails
 
+6. **🆕 Navigation Stack Management**
+   - **Base Screen Guarantee**: FCM calls ensure lobby screen is in navigation stack
+   - **Proper Navigation**: Prevents black screen when app opened from terminated state
+   - **Decline Safety**: Ensures proper screen after declining FCM calls
+   - **Modal Cleanup**: Proper navigation restoration when call modals close
+
 ## Test Scenarios
 
 ### Scenario 1: App in Foreground (Lobby Screen)
@@ -243,6 +249,23 @@ grep "📞 Call details:" logs.txt
    grep "isHandlingIncomingCall.*false" logs.txt
    ```
 
+#### Issue: Black screen after declining FCM call
+**Status: ✅ FIXED**
+
+**Root Cause:** 
+When FCM notification opens app from terminated state, the app would navigate to lobby screen before showing call modal. When user declines, modal closes but navigation stack could be inconsistent.
+
+**Solution Implemented:**
+- Removed lobby navigation setup code before showing call modal
+- When declining FCM calls, navigate directly to chat with caller using proper navigation stack setup
+- This provides better UX - user can see the chat context with the person who called
+
+**Expected Flow:**
+```
+FCM notification tapped → Show call modal directly → User declines → Navigate to chat with caller
+Result: User lands in chat screen with caller, can see conversation context
+```
+
 **Expected Fix Flow:**
 ```
 Socket event arrives → Sets isHandlingIncomingCall = true → Shows call modal
@@ -289,6 +312,7 @@ Call ends → Cleanup runs → Resets isHandlingIncomingCall = false
 - [ ] Scenario 4: Terminated - FCM launches app
 - [ ] Answer button works in all scenarios
 - [ ] Decline button works in all scenarios
+- [ ] ✅ No black screen when declining FCM calls (navigates to chat)
 - [ ] Call quality good in all scenarios
 - [ ] Proper cleanup when call ends
 

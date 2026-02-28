@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../screens/chat_screen.dart';
 import '../screens/connected_call_screen.dart';
+import '../screens/lobby_screen.dart';
 import '../widgets/incoming_call_setup_modal.dart';
 import '../models/lobby_user.dart';
 import '../services/call_service.dart';
@@ -188,6 +189,11 @@ class NotificationHandler {
                 socketService.removeListener('callDeclined', listenerKey);
                 // Reset the handling flag
                 PresenceService().isHandlingIncomingCall = false;
+
+                // Navigate to chat with the caller when call is declined
+                // This provides better UX - user can see the chat context
+                debugPrint('📱 Navigating to chat with caller after decline');
+                _navigateToChat(senderId, senderName);
               },
             ),
           ),
@@ -216,6 +222,13 @@ class NotificationHandler {
                 ),
               ),
             );
+          } else {
+            // Call was declined or modal closed without accepting
+            // Navigate to chat with the caller for better UX
+            debugPrint(
+              '📱 Call declined/dismissed, navigating to chat with caller',
+            );
+            _navigateToChat(senderId, senderName);
           }
         });
   }
@@ -262,9 +275,18 @@ class NotificationHandler {
       isAdminUser: false,
     );
 
-    // Navigate to chat screen, pushing on top of current stack
-    navigatorKey.currentState?.push(
-      MaterialPageRoute(builder: (context) => ChatScreen(otherUser: user)),
+    // Ensure proper navigation stack by going to lobby first, then chat
+    // This prevents black screen issues when app is opened from terminated state
+    navigatorKey.currentState?.pushNamedAndRemoveUntil(
+      LobbyScreen.route,
+      (route) => false, // Clear all previous routes
     );
+
+    // Small delay to ensure lobby screen is loaded, then navigate to chat
+    Future.delayed(const Duration(milliseconds: 300), () {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (context) => ChatScreen(otherUser: user)),
+      );
+    });
   }
 }
