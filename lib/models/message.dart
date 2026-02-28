@@ -116,12 +116,33 @@ class Message {
       return {};
     }
 
+    // Parse HTML content to extract file information
+    String content = json['content'] as String;
+    String messageType = json['message_type'] as String;
+    String? fileUrl = json['file_url'] as String?;
+    String? fileName = json['file_name'] as String?;
+    String? fileType = json['file_type'] as String?;
+    int? fileSize = json['file_size'] as int?;
+
+    // If content contains HTML and no file info is provided, parse it
+    if (content.contains('<') && content.contains('>') && fileUrl == null) {
+      final htmlParseResult = _parseHtmlContent(content);
+      if (htmlParseResult != null) {
+        messageType = htmlParseResult['messageType'] ?? messageType;
+        fileUrl = htmlParseResult['fileUrl'];
+        fileName = htmlParseResult['fileName'];
+        fileType = htmlParseResult['fileType'];
+        fileSize = htmlParseResult['fileSize'];
+        // Keep original content for display purposes, but mark as file message
+      }
+    }
+
     return Message(
       id: json['id'] as int,
       senderId: json['sender_id'] as int,
       recipientId: json['recipient_id'] as int,
-      content: json['content'] as String,
-      messageType: json['message_type'] as String,
+      content: content,
+      messageType: messageType,
       timestamp: json['timestamp'] as String,
       timestampMs: json['timestamp_ms'] as int,
       isRead: json['is_read'] as bool,
@@ -134,10 +155,10 @@ class Message {
       replyToId: json['reply_to_id'] as int?,
       replyPreview: _parseReplyPreview(json['reply_preview']),
       reactions: _safeReactionsMap(json['reactions']),
-      fileUrl: json['file_url'] as String?,
-      fileName: json['file_name'] as String?,
-      fileSize: json['file_size'] as int?,
-      fileType: json['file_type'] as String?,
+      fileUrl: fileUrl,
+      fileName: fileName,
+      fileSize: fileSize,
+      fileType: fileType,
       isDeleted: json['is_deleted'] as bool? ?? false,
       isTask: json['is_task'] as bool? ?? false,
       taskCreatedAt: json['task_created_at'] as String?,
@@ -150,6 +171,117 @@ class Message {
       pinnedAt: json['pinned_at'] as String?,
       pinnedByUserId: json['pinned_by_user_id'] as int?,
     );
+  }
+
+  /// Parse HTML content to extract file information
+  static Map<String, dynamic>? _parseHtmlContent(String htmlContent) {
+    // Image pattern: <img src="..." alt="..." data-filename="..." data-filesize="...">
+    final imgRegex = RegExp(
+      r'<img[^>]*src="([^"]*)"[^>]*>',
+      caseSensitive: false,
+    );
+    final imgMatch = imgRegex.firstMatch(htmlContent);
+
+    if (imgMatch != null) {
+      final src = imgMatch.group(1);
+      final fileName =
+          _extractAttributeFromHtml(htmlContent, 'data-filename') ??
+          _extractAttributeFromHtml(htmlContent, 'alt') ??
+          'image.jpg';
+      final fileSize = int.tryParse(
+        _extractAttributeFromHtml(htmlContent, 'data-filesize') ?? '0',
+      );
+
+      return {
+        'messageType': 'image',
+        'fileUrl': src,
+        'fileName': fileName,
+        'fileType': 'image/jpeg',
+        'fileSize': fileSize,
+      };
+    }
+
+    // Video pattern: <video src="..." controls>...</video>
+    final videoRegex = RegExp(
+      r'<video[^>]*src="([^"]*)"[^>]*>',
+      caseSensitive: false,
+    );
+    final videoMatch = videoRegex.firstMatch(htmlContent);
+
+    if (videoMatch != null) {
+      final src = videoMatch.group(1);
+      final fileName =
+          _extractAttributeFromHtml(htmlContent, 'data-filename') ??
+          'video.mp4';
+      final fileSize = int.tryParse(
+        _extractAttributeFromHtml(htmlContent, 'data-filesize') ?? '0',
+      );
+
+      return {
+        'messageType': 'video',
+        'fileUrl': src,
+        'fileName': fileName,
+        'fileType': 'video/mp4',
+        'fileSize': fileSize,
+      };
+    }
+
+    // Audio pattern: <audio src="..." controls>...</audio>
+    final audioRegex = RegExp(
+      r'<audio[^>]*src="([^"]*)"[^>]*>',
+      caseSensitive: false,
+    );
+    final audioMatch = audioRegex.firstMatch(htmlContent);
+
+    if (audioMatch != null) {
+      final src = audioMatch.group(1);
+      final fileName =
+          _extractAttributeFromHtml(htmlContent, 'data-filename') ??
+          'audio.mp3';
+      final fileSize = int.tryParse(
+        _extractAttributeFromHtml(htmlContent, 'data-filesize') ?? '0',
+      );
+
+      return {
+        'messageType': 'audio',
+        'fileUrl': src,
+        'fileName': fileName,
+        'fileType': 'audio/mpeg',
+        'fileSize': fileSize,
+      };
+    }
+
+    // Generic file link pattern: <a href="..." download="...">...</a>
+    final linkRegex = RegExp(
+      r'<a[^>]*href="([^"]*)"[^>]*download[^>]*>([^<]*)</a>',
+      caseSensitive: false,
+    );
+    final linkMatch = linkRegex.firstMatch(htmlContent);
+
+    if (linkMatch != null) {
+      final src = linkMatch.group(1);
+      final fileName = linkMatch.group(2) ?? 'file';
+      final fileSize = int.tryParse(
+        _extractAttributeFromHtml(htmlContent, 'data-filesize') ?? '0',
+      );
+
+      return {
+        'messageType': 'file',
+        'fileUrl': src,
+        'fileName': fileName,
+        'fileType': 'application/octet-stream',
+        'fileSize': fileSize,
+      };
+    }
+
+    return null;
+  }
+
+  /// Extract attribute value from HTML string
+  static String? _extractAttributeFromHtml(String html, String attribute) {
+    final regex = RegExp('$attribute="([^"]*)"', caseSensitive: false);
+    final match = regex.firstMatch(html);
+    return match?.group(1);
   }
 
   Map<String, dynamic> toJson() {
