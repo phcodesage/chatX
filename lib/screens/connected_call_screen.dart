@@ -30,14 +30,15 @@ class ConnectedCallScreen extends StatefulWidget {
   State<ConnectedCallScreen> createState() => _ConnectedCallScreenState();
 }
 
-class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsBindingObserver {
+class _ConnectedCallScreenState extends State<ConnectedCallScreen>
+    with WidgetsBindingObserver {
   // Video renderers
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
-  
+
   // Local video position for draggable PiP
   Offset _localVideoPosition = const Offset(16, 100);
-  
+
   // Control states
   bool _isMicMuted = false;
   bool _isVideoHidden = false;
@@ -45,31 +46,49 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
   bool _isSpeakerOn = true;
   bool _isScreenSharing = false;
   bool _remoteIsScreenSharing = false;
-  
+
   // Call duration
   Timer? _durationTimer;
   int _callDuration = 0;
-  
+
   // Prevent multiple pops
   bool _isEnding = false;
-  
+
   // Device lists
   List<MediaDeviceInfo> _microphones = [];
   List<MediaDeviceInfo> _cameras = [];
   List<MediaDeviceInfo> _speakers = [];
-  
+
   // Selected devices
   String? _selectedMicId;
   String? _selectedCameraId;
   String? _selectedSpeakerId;
 
   // Services for ongoing call notification and PiP
-  final CallNotificationService _callNotificationService = CallNotificationService();
+  final CallNotificationService _callNotificationService =
+      CallNotificationService();
   final PipService _pipService = PipService();
   bool _isInPipMode = false;
-  
+
   // Listener key for socket events
   static const String _listenerKey = 'connected_call_screen';
+
+  /// Determine if the currently selected camera is front-facing
+  bool get _isFrontCamera {
+    if (_selectedCameraId == null || _cameras.isEmpty) return true;
+
+    final selectedCamera = _cameras.firstWhere(
+      (camera) => camera.deviceId == _selectedCameraId,
+      orElse: () => _cameras.first,
+    );
+
+    // Check if the camera label indicates it's a front camera
+    final label = selectedCamera.label.toLowerCase();
+    return label.contains('front') ||
+        label.contains('user') ||
+        label.contains('selfie') ||
+        !label.contains('back') && !label.contains('rear');
+  }
 
   @override
   void initState() {
@@ -127,32 +146,32 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
   Future<void> _initializeRenderers() async {
     await _localRenderer.initialize();
     await _remoteRenderer.initialize();
-    
+
     // Set local stream
     if (widget.localStream != null) {
       _localRenderer.srcObject = widget.localStream;
     } else if (widget.callService.localStream != null) {
       _localRenderer.srcObject = widget.callService.localStream;
     }
-    
+
     // Set remote stream if already available
     if (widget.callService.remoteStream != null) {
       _remoteRenderer.srcObject = widget.callService.remoteStream;
     }
-    
+
     setState(() {});
   }
 
   void _setupCallListeners() {
     final socketService = SocketService();
-    
+
     // Listen for remote stream
     widget.callService.onRemoteStream = (stream) {
       debugPrint('🎥 Connected call screen received remote stream');
       _remoteRenderer.srcObject = stream;
       setState(() {});
     };
-    
+
     // Listen for call state changes
     widget.callService.onCallStateChanged = (state) {
       debugPrint('📞 Call state changed to: $state');
@@ -160,7 +179,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
         _endCall();
       }
     };
-    
+
     // Listen for screen share changes (local or remote)
     widget.callService.onScreenShareChanged = (isSharing) {
       debugPrint('🖥️ Screen share changed: $isSharing');
@@ -173,7 +192,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
         });
       }
     };
-    
+
     // Listen for call ended from socket using keyed listener (remote user ended call)
     socketService.addListener('callEnded', _listenerKey, (data) {
       debugPrint('📴 ConnectedCallScreen received callEnded event: $data');
@@ -182,7 +201,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
         _endCall();
       }
     });
-    
+
     // Also listen for call declined
     socketService.addListener('callDeclined', _listenerKey, (data) {
       debugPrint('📴 ConnectedCallScreen received callDeclined event: $data');
@@ -191,7 +210,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
         _endCall();
       }
     });
-    
+
     // Listen for signals during the call
     socketService.onSignal = (data) {
       widget.callService.handleSignal(data);
@@ -205,7 +224,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
         _microphones = devices.where((d) => d.kind == 'audioinput').toList();
         _cameras = devices.where((d) => d.kind == 'videoinput').toList();
         _speakers = devices.where((d) => d.kind == 'audiooutput').toList();
-        
+
         if (_microphones.isNotEmpty) {
           _selectedMicId = _microphones.first.deviceId;
         }
@@ -235,7 +254,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
     final hours = seconds ~/ 3600;
     final minutes = (seconds % 3600) ~/ 60;
     final secs = seconds % 60;
-    
+
     if (hours > 0) {
       return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
     }
@@ -269,10 +288,12 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
   Future<void> _switchCamera() async {
     final stream = widget.localStream ?? widget.callService.localStream;
     if (stream != null && _cameras.length > 1) {
-      final currentIndex = _cameras.indexWhere((c) => c.deviceId == _selectedCameraId);
+      final currentIndex = _cameras.indexWhere(
+        (c) => c.deviceId == _selectedCameraId,
+      );
       final nextIndex = (currentIndex + 1) % _cameras.length;
       _selectedCameraId = _cameras[nextIndex].deviceId;
-      
+
       // Switch camera using Helper
       await Helper.switchCamera(stream.getVideoTracks().first);
       setState(() {});
@@ -298,14 +319,14 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
     if (_isEnding) return; // Prevent multiple calls
     _isEnding = true;
     debugPrint('📞 Ending call from connected screen');
-    
+
     // Clear call-in-progress flag so presence resumes normal behavior
     PresenceService().isCallInProgress = false;
-    
+
     // Show "Call Ended" notification and disable PiP
     _callNotificationService.showCallEnded();
     _pipService.setInCall(false); // fire-and-forget is fine on cleanup
-    
+
     widget.callService.endCall();
     if (mounted) {
       Navigator.of(context).pop();
@@ -331,7 +352,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
         widget.callService.endCall();
       },
     );
-    
+
     // Only pop the call screen - the overlay manager handles navigation back
     Navigator.of(context).pop();
   }
@@ -340,7 +361,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
     List<MediaDeviceInfo> devices;
     String? selectedId;
     String title;
-    
+
     switch (type) {
       case 'mic':
         devices = _microphones;
@@ -360,18 +381,24 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
       default:
         return;
     }
-    
+
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E293B),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => _buildDeviceSelector(title, devices, selectedId, type),
+      builder: (context) =>
+          _buildDeviceSelector(title, devices, selectedId, type),
     );
   }
 
-  Widget _buildDeviceSelector(String title, List<MediaDeviceInfo> devices, String? selectedId, String type) {
+  Widget _buildDeviceSelector(
+    String title,
+    List<MediaDeviceInfo> devices,
+    String? selectedId,
+    String type,
+  ) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -398,40 +425,49 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
             ),
           ),
           const SizedBox(height: 16),
-          ...devices.map((device) => ListTile(
-            leading: Icon(
-              type == 'mic' ? Icons.mic : 
-              type == 'camera' ? Icons.videocam : Icons.speaker,
-              color: device.deviceId == selectedId 
-                  ? const Color(0xFF8B5CF6) 
-                  : Colors.grey,
-            ),
-            title: Text(
-              device.label.isNotEmpty ? device.label : 'Device ${device.deviceId.substring(0, 8)}',
-              style: TextStyle(
-                color: device.deviceId == selectedId ? const Color(0xFF8B5CF6) : Colors.white,
+          ...devices.map(
+            (device) => ListTile(
+              leading: Icon(
+                type == 'mic'
+                    ? Icons.mic
+                    : type == 'camera'
+                    ? Icons.videocam
+                    : Icons.speaker,
+                color: device.deviceId == selectedId
+                    ? const Color(0xFF8B5CF6)
+                    : Colors.grey,
               ),
+              title: Text(
+                device.label.isNotEmpty
+                    ? device.label
+                    : 'Device ${device.deviceId.substring(0, 8)}',
+                style: TextStyle(
+                  color: device.deviceId == selectedId
+                      ? const Color(0xFF8B5CF6)
+                      : Colors.white,
+                ),
+              ),
+              trailing: device.deviceId == selectedId
+                  ? const Icon(Icons.check, color: Color(0xFF8B5CF6))
+                  : null,
+              onTap: () {
+                setState(() {
+                  switch (type) {
+                    case 'mic':
+                      _selectedMicId = device.deviceId;
+                      break;
+                    case 'camera':
+                      _selectedCameraId = device.deviceId;
+                      break;
+                    case 'speaker':
+                      _selectedSpeakerId = device.deviceId;
+                      break;
+                  }
+                });
+                Navigator.pop(context);
+              },
             ),
-            trailing: device.deviceId == selectedId
-                ? const Icon(Icons.check, color: Color(0xFF8B5CF6))
-                : null,
-            onTap: () {
-              setState(() {
-                switch (type) {
-                  case 'mic':
-                    _selectedMicId = device.deviceId;
-                    break;
-                  case 'camera':
-                    _selectedCameraId = device.deviceId;
-                    break;
-                  case 'speaker':
-                    _selectedSpeakerId = device.deviceId;
-                    break;
-                }
-              });
-              Navigator.pop(context);
-            },
-          )),
+          ),
           const SizedBox(height: 16),
         ],
       ),
@@ -442,24 +478,24 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _durationTimer?.cancel();
-    
+
     // Remove socket listeners
     final socketService = SocketService();
     socketService.removeListener('callEnded', _listenerKey);
     socketService.removeListener('callDeclined', _listenerKey);
-    
+
     _localRenderer.dispose();
     _remoteRenderer.dispose();
-    
+
     // Clean up notification and PiP if not already ended
     if (!_isEnding) {
       _callNotificationService.showCallEnded();
     }
     _pipService.setInCall(false);
-    
+
     // Ensure call flag is cleared even if _endCall wasn't called
     PresenceService().isCallInProgress = false;
-    
+
     super.dispose();
   }
 
@@ -480,13 +516,13 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
             children: [
               // Remote video (fullscreen background)
               _buildRemoteVideo(),
-              
+
               // Local video (PiP, draggable) - hide in PiP mode
               if (!_isInPipMode) _buildLocalVideoPiP(),
-              
+
               // Top bar with call info - hide in PiP mode
               if (_showControls && !_isInPipMode) _buildTopBar(),
-              
+
               // Bottom controls - hide in PiP mode
               if (_showControls && !_isInPipMode) _buildBottomControls(),
             ],
@@ -498,7 +534,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
 
   Widget _buildRemoteVideo() {
     final hasRemoteStream = _remoteRenderer.srcObject != null;
-    
+
     if (!hasRemoteStream || widget.callType == 'audio') {
       // Audio call or no remote stream - show avatar
       return Container(
@@ -516,10 +552,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [
-                      const Color(0xFF8B5CF6),
-                      const Color(0xFF6D28D9),
-                    ],
+                    colors: [const Color(0xFF8B5CF6), const Color(0xFF6D28D9)],
                   ),
                 ),
                 child: Center(
@@ -547,17 +580,14 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
               const SizedBox(height: 8),
               Text(
                 _formatDuration(_callDuration),
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 16,
-                ),
+                style: TextStyle(color: Colors.grey[400], fontSize: 16),
               ),
             ],
           ),
         ),
       );
     }
-    
+
     // Use RTCVideoViewObjectFitContain to show full width video without cropping
     return Stack(
       children: [
@@ -578,7 +608,10 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
             right: 0,
             child: Center(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF8B5CF6).withValues(alpha: 0.9),
                   borderRadius: BorderRadius.circular(20),
@@ -607,11 +640,11 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
 
   Widget _buildLocalVideoPiP() {
     final hasLocalStream = _localRenderer.srcObject != null && !_isVideoHidden;
-    
+
     if (!hasLocalStream || widget.callType == 'audio') {
       return const SizedBox.shrink();
     }
-    
+
     return Positioned(
       left: _localVideoPosition.dx,
       top: _localVideoPosition.dy,
@@ -646,7 +679,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
             borderRadius: BorderRadius.circular(10),
             child: RTCVideoView(
               _localRenderer,
-              mirror: true,
+              mirror: _isFrontCamera, // Mirror only for front cameras
               objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
             ),
           ),
@@ -671,10 +704,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Colors.black.withValues(alpha: 0.7),
-              Colors.transparent,
-            ],
+            colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
           ),
         ),
         child: Row(
@@ -736,10 +766,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [
-              Colors.black.withValues(alpha: 0.8),
-              Colors.transparent,
-            ],
+            colors: [Colors.black.withValues(alpha: 0.8), Colors.transparent],
           ),
         ),
         child: Column(
@@ -757,7 +784,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
                   onTap: _toggleMic,
                   onLongPress: () => _showDeviceSelector('mic'),
                 ),
-                
+
                 // Video toggle
                 if (widget.callType == 'video')
                   _buildControlButton(
@@ -767,7 +794,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
                     onTap: _toggleVideo,
                     onLongPress: () => _showDeviceSelector('camera'),
                   ),
-                
+
                 // Switch camera
                 if (widget.callType == 'video' && _cameras.length > 1)
                   _buildControlButton(
@@ -776,7 +803,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
                     isActive: true,
                     onTap: _switchCamera,
                   ),
-                
+
                 // Speaker
                 _buildControlButton(
                   icon: _isSpeakerOn ? Icons.volume_up : Icons.hearing,
@@ -785,15 +812,17 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
                   onTap: _toggleSpeaker,
                   onLongPress: () => _showDeviceSelector('speaker'),
                 ),
-                
+
                 // Screen share
                 _buildControlButton(
-                  icon: _isScreenSharing ? Icons.stop_screen_share : Icons.screen_share,
+                  icon: _isScreenSharing
+                      ? Icons.stop_screen_share
+                      : Icons.screen_share,
                   label: _isScreenSharing ? 'Stop Share' : 'Share',
                   isActive: _isScreenSharing,
                   onTap: _toggleScreenShare,
                 ),
-                
+
                 // Chat (minimizes to overlay)
                 if (widget.onChatPressed != null)
                   _buildControlButton(
@@ -804,9 +833,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
                   ),
               ],
             ),
-            
+
             const SizedBox(height: 24),
-            
+
             // End call button
             GestureDetector(
               onTap: _endCall,
@@ -855,24 +884,14 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen> with WidgetsB
             height: 56,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: isActive 
+              color: isActive
                   ? const Color.fromRGBO(255, 255, 255, 0.2)
                   : const Color.fromRGBO(255, 82, 82, 0.7),
             ),
-            child: Icon(
-              icon,
-              color: Colors.white,
-              size: 24,
-            ),
+            child: Icon(icon, color: Colors.white, size: 24),
           ),
           const SizedBox(height: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.grey[300],
-              fontSize: 11,
-            ),
-          ),
+          Text(label, style: TextStyle(color: Colors.grey[300], fontSize: 11)),
         ],
       ),
     );

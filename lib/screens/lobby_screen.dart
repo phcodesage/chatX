@@ -157,6 +157,33 @@ class _LobbyScreenState extends State<LobbyScreen> {
       _handleIncomingCall(data);
     });
 
+    // FALLBACK: Also listen for crossRoomCallOffer in case backend only sends this event
+    // This handles cases where web clients call mobile and backend doesn't send 'incomingCall'
+    _socketService.addListener('crossRoomCallOffer', key, (
+      Map<String, dynamic> data,
+    ) {
+      debugPrint(
+        '📲 Fallback: Received crossRoomCallOffer, converting to incomingCall format',
+      );
+      debugPrint('📲 Original crossRoomCallOffer data: $data');
+
+      // Convert crossRoomCallOffer format to incomingCall format
+      // Note: crossRoomCallOffer uses 'caller_id' and 'caller_username', not 'callerId' and 'callerName'
+      final convertedData = {
+        'id': DateTime.now().millisecondsSinceEpoch, // Generate call ID
+        'call_room_id': data['room'] as String?,
+        'call_type': data['call_type'] as String? ?? 'video',
+        'caller': {
+          'id': data['caller_id'] as int?,
+          'username': data['caller_username'] as String? ?? 'Unknown',
+          'full_name': data['caller_username'] as String? ?? 'Unknown',
+        },
+      };
+
+      debugPrint('📲 Converted to incomingCall format: $convertedData');
+      _handleIncomingCall(convertedData);
+    });
+
     // Listen for backend connection state changes
     _socketService.addListener('connectionChanged', key, (
       Map<String, dynamic> data,
@@ -456,10 +483,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // the async gap would be silently dropped (_bufferSignals=false, _onSignal=null → noop).
     _socketService.startSignalBuffering();
 
-    // Initialize call service (fetches ICE servers) and set up the call state
+    // Initialize call service (fetches ICE servers)
     final callService = CallService();
     await callService.initialize();
+
+    // CRITICAL: Set call state BEFORE setting up signal handler
+    // This ensures that when buffered signals are processed, the call state is already set
     callService.handleIncomingCall(data);
+    debugPrint('📲 Call state set to ringing, now setting up signal handler');
 
     // Set up signal handler for WebRTC — buffered signals are replayed immediately
     _socketService.onSignal = (signalData) {

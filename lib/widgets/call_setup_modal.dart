@@ -9,8 +9,15 @@ enum CallType { video, audio }
 class CallSetupModal extends StatefulWidget {
   final String recipientName;
   final CallType callType;
-  final Function(MediaStream localStream, String? selectedMic, String? selectedSpeaker, String? selectedCamera, bool videoEnabled) onStartCall;
-  
+  final Function(
+    MediaStream localStream,
+    String? selectedMic,
+    String? selectedSpeaker,
+    String? selectedCamera,
+    bool videoEnabled,
+  )
+  onStartCall;
+
   const CallSetupModal({
     super.key,
     required this.recipientName,
@@ -27,28 +34,45 @@ class _CallSetupModalState extends State<CallSetupModal> {
   List<MediaDeviceInfo> _microphones = [];
   List<MediaDeviceInfo> _speakers = [];
   List<MediaDeviceInfo> _cameras = [];
-  
+
   // Selected devices
   String? _selectedMicId;
   String? _selectedSpeakerId;
   String? _selectedCameraId;
-  
+
   // Video toggle state
   bool _videoEnabled = true;
-  
+
   // Local media stream
   MediaStream? _localStream;
-  
+
   // Video renderer for preview
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
-  
+
   // Audio level
   double _audioLevel = 0.0;
-  
+
   // Loading state
   bool _isLoading = true;
   bool _hasPermissions = false;
   String? _errorMessage;
+
+  /// Determine if the currently selected camera is front-facing
+  bool get _isFrontCamera {
+    if (_selectedCameraId == null || _cameras.isEmpty) return true;
+
+    final selectedCamera = _cameras.firstWhere(
+      (camera) => camera.deviceId == _selectedCameraId,
+      orElse: () => _cameras.first,
+    );
+
+    // Check if the camera label indicates it's a front camera
+    final label = selectedCamera.label.toLowerCase();
+    return label.contains('front') ||
+        label.contains('user') ||
+        label.contains('selfie') ||
+        !label.contains('back') && !label.contains('rear');
+  }
 
   @override
   void initState() {
@@ -61,7 +85,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
     try {
       // Request permissions first
       await _requestPermissions();
-      
+
       if (!_hasPermissions) {
         setState(() {
           _isLoading = false;
@@ -69,18 +93,18 @@ class _CallSetupModalState extends State<CallSetupModal> {
         });
         return;
       }
-      
+
       // Initialize renderer
       await _localRenderer.initialize();
-      
+
       // Get available devices
       final devices = await navigator.mediaDevices.enumerateDevices();
-      
+
       setState(() {
         _microphones = devices.where((d) => d.kind == 'audioinput').toList();
         _speakers = devices.where((d) => d.kind == 'audiooutput').toList();
         _cameras = devices.where((d) => d.kind == 'videoinput').toList();
-        
+
         // Set defaults
         if (_microphones.isNotEmpty) {
           _selectedMicId = _microphones.first.deviceId;
@@ -92,10 +116,10 @@ class _CallSetupModalState extends State<CallSetupModal> {
           _selectedCameraId = _cameras.first.deviceId;
         }
       });
-      
+
       // Get initial media stream
       await _getMediaStream();
-      
+
       setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('Error initializing devices: $e');
@@ -109,13 +133,11 @@ class _CallSetupModalState extends State<CallSetupModal> {
   Future<void> _requestPermissions() async {
     // Batch both permissions in a single request to avoid
     // "A request for permissions is already running" PlatformException
-    final statuses = await [
-      Permission.camera,
-      Permission.microphone,
-    ].request();
-    
+    final statuses = await [Permission.camera, Permission.microphone].request();
+
     setState(() {
-      _hasPermissions = (statuses[Permission.camera]?.isGranted ?? false) &&
+      _hasPermissions =
+          (statuses[Permission.camera]?.isGranted ?? false) &&
           (statuses[Permission.microphone]?.isGranted ?? false);
     });
   }
@@ -124,27 +146,25 @@ class _CallSetupModalState extends State<CallSetupModal> {
     try {
       // Stop existing stream
       await _stopMediaStream();
-      
+
       final Map<String, dynamic> constraints = {
-        'audio': _selectedMicId != null 
-          ? {'deviceId': _selectedMicId}
-          : true,
+        'audio': _selectedMicId != null ? {'deviceId': _selectedMicId} : true,
         'video': _videoEnabled && _selectedCameraId != null
-          ? {
-              'deviceId': _selectedCameraId,
-              'width': {'ideal': 640},
-              'height': {'ideal': 480},
-              'facingMode': 'user',
-            }
-          : _videoEnabled,
+            ? {
+                'deviceId': _selectedCameraId,
+                'width': {'ideal': 640},
+                'height': {'ideal': 480},
+                'facingMode': 'user',
+              }
+            : _videoEnabled,
       };
-      
+
       _localStream = await navigator.mediaDevices.getUserMedia(constraints);
-      
+
       if (_videoEnabled && _localStream != null) {
         _localRenderer.srcObject = _localStream;
       }
-      
+
       setState(() {});
     } catch (e) {
       debugPrint('Error getting media stream: $e');
@@ -170,7 +190,9 @@ class _CallSetupModalState extends State<CallSetupModal> {
 
   Future<void> _switchCamera() async {
     if (_localStream != null && _cameras.length > 1) {
-      final currentIndex = _cameras.indexWhere((c) => c.deviceId == _selectedCameraId);
+      final currentIndex = _cameras.indexWhere(
+        (c) => c.deviceId == _selectedCameraId,
+      );
       final nextIndex = (currentIndex + 1) % _cameras.length;
       _selectedCameraId = _cameras[nextIndex].deviceId;
       await _getMediaStream();
@@ -181,14 +203,14 @@ class _CallSetupModalState extends State<CallSetupModal> {
     setState(() {
       _videoEnabled = !_videoEnabled;
     });
-    
+
     if (_localStream != null) {
       final videoTracks = _localStream!.getVideoTracks();
       for (var track in videoTracks) {
         track.enabled = _videoEnabled;
       }
     }
-    
+
     // Get new stream with/without video
     _getMediaStream();
   }
@@ -206,7 +228,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
       );
     }
   }
-  
+
   // Flag to track if stream was handed off to call service
   bool _streamHandedOff = false;
 
@@ -237,8 +259,8 @@ class _CallSetupModalState extends State<CallSetupModal> {
                 ),
               )
             : _errorMessage != null
-                ? _buildErrorView()
-                : _buildSetupView(),
+            ? _buildErrorView()
+            : _buildSetupView(),
       ),
     );
   }
@@ -290,7 +312,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
               ),
             ),
             const SizedBox(height: 24),
-            
+
             // Title
             const Center(
               child: Text(
@@ -303,7 +325,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
               ),
             ),
             const SizedBox(height: 24),
-            
+
             // Microphone selector
             _buildSectionLabel('Microphone'),
             const SizedBox(height: 8),
@@ -319,7 +341,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
             const SizedBox(height: 8),
             _buildAudioLevelIndicator(),
             const SizedBox(height: 20),
-            
+
             // Speaker selector
             _buildSectionLabel('Speaker'),
             const SizedBox(height: 8),
@@ -332,7 +354,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
             const SizedBox(height: 8),
             _buildVolumeSlider(),
             const SizedBox(height: 20),
-            
+
             // Camera section - only show for video calls
             if (widget.callType == CallType.video) ...[
               // Camera toggle and selector
@@ -356,7 +378,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
                 ],
               ),
               const SizedBox(height: 8),
-              
+
               // Camera dropdown (only if video enabled)
               if (_videoEnabled) ...[
                 _buildDeviceDropdown(
@@ -369,7 +391,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
                 ),
                 const SizedBox(height: 16),
               ],
-              
+
               // Video preview
               Container(
                 width: double.infinity,
@@ -383,18 +405,27 @@ class _CallSetupModalState extends State<CallSetupModal> {
                   child: _videoEnabled && _localStream != null
                       ? RTCVideoView(
                           _localRenderer,
-                          mirror: true,
-                          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                          mirror:
+                              _isFrontCamera, // Mirror only for front cameras
+                          objectFit:
+                              RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                         )
                       : const Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.videocam_off, color: Colors.grey, size: 48),
+                              Icon(
+                                Icons.videocam_off,
+                                color: Colors.grey,
+                                size: 48,
+                              ),
                               SizedBox(height: 8),
                               Text(
                                 'Video is off',
-                                style: TextStyle(color: Colors.grey, fontSize: 14),
+                                style: TextStyle(
+                                  color: Colors.grey,
+                                  fontSize: 14,
+                                ),
                               ),
                             ],
                           ),
@@ -406,7 +437,7 @@ class _CallSetupModalState extends State<CallSetupModal> {
               // Add spacing for audio-only calls
               const SizedBox(height: 24),
             ],
-            
+
             // Action buttons
             Row(
               children: [
@@ -439,7 +470,10 @@ class _CallSetupModalState extends State<CallSetupModal> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    child: const Text('Start Call', style: TextStyle(fontSize: 16)),
+                    child: const Text(
+                      'Start Call',
+                      style: TextStyle(fontSize: 16),
+                    ),
                   ),
                 ),
               ],
@@ -475,17 +509,24 @@ class _CallSetupModalState extends State<CallSetupModal> {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: devices.any((d) => d.deviceId == selectedId) ? selectedId : null,
+          value: devices.any((d) => d.deviceId == selectedId)
+              ? selectedId
+              : null,
           isExpanded: true,
           dropdownColor: const Color(0xFF334155),
           style: const TextStyle(color: Colors.white, fontSize: 14),
-          hint: const Text('Select device', style: TextStyle(color: Colors.grey)),
+          hint: const Text(
+            'Select device',
+            style: TextStyle(color: Colors.grey),
+          ),
           icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
           items: devices.map((device) {
             return DropdownMenuItem<String>(
               value: device.deviceId,
               child: Text(
-                device.label.isNotEmpty ? device.label : 'Device ${device.deviceId.substring(0, 8)}',
+                device.label.isNotEmpty
+                    ? device.label
+                    : 'Device ${device.deviceId.substring(0, 8)}',
                 overflow: TextOverflow.ellipsis,
               ),
             );

@@ -19,25 +19,23 @@ void main() async {
 
   await ChatCacheService.init();
   await StorageService.init();
-  
+
   // Initialize Firebase
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
   // Initialize Firebase Cloud Messaging
   await FirebaseMessagingService.instance.initialize();
-  
+
   // Set up notification tap handler
   FirebaseMessagingService.instance.onNotificationTapped = (data) {
     NotificationHandler.handleNotificationTap(data);
   };
-  
+
   // Set up auth error handler with navigator key
   AuthErrorHandler.navigatorKey = NotificationHandler.navigatorKey;
-  
+
   // Note: FCM token will be sent to backend after successful login
-  
+
   runApp(const MessengerApp());
 }
 

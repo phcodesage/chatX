@@ -29,7 +29,7 @@ class CallService {
   CallService._internal();
 
   final SocketService _socketService = SocketService();
-  
+
   // WebRTC components
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
@@ -37,11 +37,11 @@ class CallService {
   MediaStream? _primaryRemoteStream; // Track the first (camera) stream
   MediaStream? _screenStream;
   RTCDataChannel? _dataChannel;
-  
+
   // Screen sharing state
   bool _isScreenSharing = false;
   MediaStreamTrack? _originalVideoTrack;
-  
+
   // Call state
   CallState _callState = CallState.idle;
   CallDirection? _callDirection;
@@ -49,7 +49,7 @@ class CallService {
   int? _remoteUserId;
   String? _callRoomId;
   String? _callType; // 'video' or 'audio'
-  
+
   // Callbacks
   Function(CallState state)? onCallStateChanged;
   Function(MediaStream stream)? onLocalStream;
@@ -59,18 +59,19 @@ class CallService {
   Function(bool isSharing)? onScreenShareChanged;
   Function(MediaStream stream)? onRemoteScreenShare;
   Function(String message)? onDataChannelMessage;
-  
+
   // ICE servers
   List<Map<String, dynamic>> _iceServers = [];
-  
+
   // ICE candidate queuing (for candidates that arrive before PC or remote description is set)
-  final List<RTCIceCandidate> _earlyIceCandidates = [];  // Before PC exists
-  final List<RTCIceCandidate> _candidateQueue = [];      // Before remote description is set
+  final List<RTCIceCandidate> _earlyIceCandidates = []; // Before PC exists
+  final List<RTCIceCandidate> _candidateQueue =
+      []; // Before remote description is set
   bool _remoteDescriptionSet = false;
-  
+
   // Pending offer for incoming calls (wait for user to answer before creating WebRTC answer)
   Map<String, dynamic>? _pendingOffer;
-  
+
   // Getters
   CallState get callState => _callState;
   int? get callId => _callId;
@@ -98,48 +99,52 @@ class CallService {
       // Get auth token from storage
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token');
-      
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
+
+      final headers = <String, String>{'Content-Type': 'application/json'};
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
-      
-      debugPrint('📡 Fetching ICE servers from ${ApiConfig.baseUrl}/get-ice-servers');
-      
+
+      debugPrint(
+        '📡 Fetching ICE servers from ${ApiConfig.baseUrl}/get-ice-servers',
+      );
+
       final response = await http.get(
         Uri.parse('${ApiConfig.baseUrl}/get-ice-servers'),
         headers: headers,
       );
-      
+
       debugPrint('📡 ICE servers response status: ${response.statusCode}');
       debugPrint('📡 ICE servers response body: ${response.body}');
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        
+
         // Backend may return 'iceServers' (camelCase) or 'ice_servers' (snake_case)
         final servers = data['iceServers'] ?? data['ice_servers'];
         debugPrint('📡 Raw iceServers value: $servers');
         debugPrint('📡 iceServers type: ${servers.runtimeType}');
-        
+
         if (servers != null && servers is List) {
           _iceServers = List<Map<String, dynamic>>.from(servers);
           debugPrint('📡 ICE servers parsed: ${_iceServers.length} servers');
-          
+
           for (var i = 0; i < _iceServers.length; i++) {
             final server = _iceServers[i];
             debugPrint('📡 Server $i:');
             debugPrint('   urls: ${server['urls']}');
-            debugPrint('   username: ${server['username'] != null ? '(set)' : '(not set)'}');
-            debugPrint('   credential: ${server['credential'] != null ? '(set)' : '(not set)'}');
+            debugPrint(
+              '   username: ${server['username'] != null ? '(set)' : '(not set)'}',
+            );
+            debugPrint(
+              '   credential: ${server['credential'] != null ? '(set)' : '(not set)'}',
+            );
           }
         } else {
           debugPrint('⚠️ iceServers is null or not a list');
           _iceServers = [];
         }
-        
+
         // If we got 0 servers, fall back to default
         if (_iceServers.isEmpty) {
           debugPrint('⚠️ Backend returned empty ICE servers, using defaults');
@@ -169,17 +174,17 @@ class CallService {
   /// Set up socket event listeners for call signaling
   void _setupSocketListeners() {
     final socket = _socketService;
-    
+
     // Listen for incoming call
     socket.emit('subscribe_calls', {});
-    
+
     // Listen for screen share started/stopped via dedicated socket events
     // (Web client sends these in addition to signal-based notifications)
     socket.onScreenShareStarted = (data) {
       debugPrint('🖥️ Remote screen share started (socket event): $data');
       onScreenShareChanged?.call(true);
     };
-    
+
     socket.onScreenShareStopped = (data) {
       debugPrint('🖥️ Remote screen share stopped (socket event): $data');
       if (_primaryRemoteStream != null) {
@@ -202,7 +207,7 @@ class CallService {
       debugPrint('⚠️ Resetting stale call state: $_callState');
       _cleanup();
     }
-    
+
     if (_callState != CallState.idle) {
       debugPrint('⚠️ Cannot initiate call - already in a call');
       return;
@@ -220,9 +225,11 @@ class CallService {
 
       // Create a completer to wait for call_initiated response
       final callInitiatedCompleter = Completer<Map<String, dynamic>>();
-      
+
       // Register a temporary keyed listener for call_initiated
-      _socketService.addListener('callInitiated', '_call_initiate', (Map<String, dynamic> data) {
+      _socketService.addListener('callInitiated', '_call_initiate', (
+        Map<String, dynamic> data,
+      ) {
         debugPrint('✅ Received call_initiated response: $data');
         if (!callInitiatedCompleter.isCompleted) {
           _callId = data['id'] as int?;
@@ -261,7 +268,7 @@ class CallService {
 
       // Now we have the call room, proceed with WebRTC
       debugPrint('📞 Call room assigned: $_callRoomId');
-      
+
       // Set up peer connection
       await _createPeerConnection();
 
@@ -277,16 +284,11 @@ class CallService {
       debugPrint('📤 Sending WebRTC offer to room: $_callRoomId');
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {
-          'type': 'offer',
-          'sdp': offer.sdp,
-          'callType': callType,
-        },
+        'signal': {'type': 'offer', 'sdp': offer.sdp, 'callType': callType},
       });
 
       _callState = CallState.ringing;
       onCallStateChanged?.call(_callState);
-
     } catch (e) {
       debugPrint('❌ Error initiating call: $e');
       _callState = CallState.failed;
@@ -298,9 +300,11 @@ class CallService {
   /// Create WebRTC peer connection
   Future<void> _createPeerConnection() async {
     final config = {
-      'iceServers': _iceServers.isNotEmpty ? _iceServers : [
-        {'urls': 'stun:stun.l.google.com:19302'},
-      ],
+      'iceServers': _iceServers.isNotEmpty
+          ? _iceServers
+          : [
+              {'urls': 'stun:stun.l.google.com:19302'},
+            ],
       'sdpSemantics': 'unified-plan',
     };
 
@@ -333,33 +337,37 @@ class CallService {
         _callState = CallState.connected;
         onCallStateChanged?.call(_callState);
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
-                 state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+          state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
         debugPrint('⚠️ ICE connection failed or disconnected');
       }
     };
 
     // Handle remote tracks
     _peerConnection!.onTrack = (event) {
-      debugPrint('🎥 Received remote track: ${event.track.kind}, streams: ${event.streams.length}');
-      debugPrint('🎥 Track ID: ${event.track.id}, enabled: ${event.track.enabled}');
-      
+      debugPrint(
+        '🎥 Received remote track: ${event.track.kind}, streams: ${event.streams.length}',
+      );
+      debugPrint(
+        '🎥 Track ID: ${event.track.id}, enabled: ${event.track.enabled}',
+      );
+
       if (event.streams.isNotEmpty) {
         // Check if this is a new stream (could be screen share)
         final stream = event.streams[0];
         debugPrint('🎥 Stream ID: ${stream.id}');
-        
+
         // Save the very first remote stream as our primary (camera) stream
         _primaryRemoteStream ??= stream;
-        
+
         // Always update remote stream - this handles both initial stream and screen share
         _remoteStream = stream;
         onRemoteStream?.call(_remoteStream!);
-        
+
         // Listen for track ended (e.g., when screen share stops)
         event.track.onEnded = () {
           debugPrint('🎥 Remote track ended: ${event.track.kind}');
         };
-        
+
         // Listen for track mute/unmute (can indicate screen share changes)
         event.track.onMute = () {
           debugPrint('🎥 Remote track muted: ${event.track.kind}');
@@ -369,12 +377,12 @@ class CallService {
         };
       }
     };
-    
+
     // Handle renegotiation needed (when tracks are added/removed)
     _peerConnection!.onRenegotiationNeeded = () {
       debugPrint('🔄 Renegotiation needed - tracks may have changed');
     };
-    
+
     // Handle data channel from remote peer
     _peerConnection!.onDataChannel = (channel) {
       debugPrint('📨 Data channel received: ${channel.label}');
@@ -390,11 +398,11 @@ class CallService {
   /// Set up listeners for a data channel
   void _setupDataChannelListeners(RTCDataChannel channel) {
     _dataChannel = channel;
-    
+
     channel.onMessage = (message) {
       debugPrint('📨 Data channel message received: ${message.text}');
       onDataChannelMessage?.call(message.text);
-      
+
       // Handle screen share notifications via data channel
       if (message.text.contains('screen-share-started')) {
         debugPrint('🖥️ Remote started screen sharing (via data channel)');
@@ -409,7 +417,7 @@ class CallService {
         onScreenShareChanged?.call(false);
       }
     };
-    
+
     channel.onDataChannelState = (state) {
       debugPrint('📨 Data channel state: $state');
     };
@@ -417,7 +425,8 @@ class CallService {
 
   /// Send a message via data channel
   void sendDataChannelMessage(String message) {
-    if (_dataChannel != null && _dataChannel!.state == RTCDataChannelState.RTCDataChannelOpen) {
+    if (_dataChannel != null &&
+        _dataChannel!.state == RTCDataChannelState.RTCDataChannelOpen) {
       _dataChannel!.send(RTCDataChannelMessage(message));
       debugPrint('📨 Data channel message sent: $message');
     } else {
@@ -431,7 +440,7 @@ class CallService {
     if (signal == null) return;
 
     final type = signal['type'] as String?;
-    
+
     // Web client may send ICE candidates without 'type' field
     // Detect by presence of 'candidate' key
     if (type == null && signal.containsKey('candidate')) {
@@ -479,24 +488,30 @@ class CallService {
 
   /// Handle incoming offer
   Future<void> _handleOffer(Map<String, dynamic> signal) async {
-    debugPrint('📥 Received WebRTC offer (callDirection: $_callDirection, callState: $_callState, remoteDescSet: $_remoteDescriptionSet)');
-    
+    debugPrint(
+      '📥 Received WebRTC offer (callDirection: $_callDirection, callState: $_callState, remoteDescSet: $_remoteDescriptionSet)',
+    );
+
     // RENEGOTIATION DETECTION: If we already have an active peer connection
     // with remote description set (i.e., call is TRULY connected/connecting),
     // this is a renegotiation offer (e.g., screen share). We auto-answer it.
     // NOTE: 'connecting' with no peer connection = we're still setting up the
     // initial call — that is NOT renegotiation.
     final isRenegotiation = signal['renegotiate'] == true;
-    final hasActiveConnection = _peerConnection != null && _remoteDescriptionSet;
-    final isCallActive = _callState == CallState.connected ||
+    final hasActiveConnection =
+        _peerConnection != null && _remoteDescriptionSet;
+    final isCallActive =
+        _callState == CallState.connected ||
         (_callState == CallState.connecting && hasActiveConnection);
-    
+
     if (isRenegotiation || (hasActiveConnection && isCallActive)) {
-      debugPrint('🔄 Renegotiation offer detected (renegotiate flag: $isRenegotiation, activePC: $hasActiveConnection, callActive: $isCallActive) - auto-answering');
+      debugPrint(
+        '🔄 Renegotiation offer detected (renegotiate flag: $isRenegotiation, activePC: $hasActiveConnection, callActive: $isCallActive) - auto-answering',
+      );
       await _processRenegotiationOffer(signal);
       return;
     }
-    
+
     // For incoming calls or when direction is not yet set (cross-room calls),
     // store the offer and wait for user to answer.
     // The answer will be created in answerCall() after user provides local stream.
@@ -506,23 +521,31 @@ class CallService {
       // Deduplicate by comparing SDP fingerprint so the second delivery is ignored.
       final incomingSdp = signal['sdp'] as String?;
       final existingSdp = _pendingOffer?['sdp'] as String?;
-      if (incomingSdp != null && existingSdp != null && incomingSdp == existingSdp) {
+      if (incomingSdp != null &&
+          existingSdp != null &&
+          incomingSdp == existingSdp) {
         debugPrint('⏭ Duplicate offer received (same SDP) — ignoring');
         return;
       }
-      debugPrint('📥 Storing offer for incoming call - waiting for user to answer');
+      debugPrint(
+        '📥 Storing offer for incoming call - waiting for user to answer',
+      );
+      debugPrint(
+        '📥 Current call state when storing offer: $_callState, direction: $_callDirection',
+      );
       _pendingOffer = signal;
       // If direction not set, this is likely a cross-room call - set it now
       if (_callDirection == null) {
+        debugPrint('📥 Setting call direction to incoming (was null)');
         _callDirection = CallDirection.incoming;
       }
       return;
     }
-    
+
     // For outgoing calls that receive an offer (shouldn't happen normally)
     await _processOffer(signal);
   }
-  
+
   /// Process a renegotiation offer during an active call (e.g., screen share started/stopped)
   /// Unlike _processOffer, this reuses the existing peer connection and does NOT re-add local tracks.
   Future<void> _processRenegotiationOffer(Map<String, dynamic> signal) async {
@@ -533,17 +556,17 @@ class CallService {
 
     try {
       final sdp = signal['sdp'] as String;
-      
+
       // Reset remote description flag so ICE candidates are queued during transition
       _remoteDescriptionSet = false;
-      
+
       await _peerConnection!.setRemoteDescription(
         RTCSessionDescription(sdp, 'offer'),
       );
-      
+
       _remoteDescriptionSet = true;
       debugPrint('🔄 Remote description set (renegotiation offer)');
-      
+
       // Process any queued ICE candidates
       await _processQueuedCandidates();
 
@@ -552,19 +575,17 @@ class CallService {
       await _peerConnection!.setLocalDescription(answer);
 
       debugPrint('🔄 Sending renegotiation answer to room: $_callRoomId');
-      
+
       if (_callRoomId == null || _callRoomId!.isEmpty) {
-        debugPrint('❌ ERROR: _callRoomId is null or empty! Cannot send renegotiation answer.');
+        debugPrint(
+          '❌ ERROR: _callRoomId is null or empty! Cannot send renegotiation answer.',
+        );
         return;
       }
-      
+
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {
-          'type': 'answer',
-          'sdp': answer.sdp,
-          'renegotiate': true,
-        },
+        'signal': {'type': 'answer', 'sdp': answer.sdp, 'renegotiate': true},
       });
 
       debugPrint('✅ Renegotiation answer sent successfully');
@@ -583,10 +604,10 @@ class CallService {
     await _peerConnection!.setRemoteDescription(
       RTCSessionDescription(sdp, 'offer'),
     );
-    
+
     _remoteDescriptionSet = true;
     debugPrint('📥 Remote description set (offer)');
-    
+
     // Process any queued ICE candidates
     await _processQueuedCandidates();
 
@@ -601,19 +622,18 @@ class CallService {
     final answer = await _peerConnection!.createAnswer();
     await _peerConnection!.setLocalDescription(answer);
 
-    debugPrint('📤 Sending WebRTC answer to room: $_callRoomId (callId: $_callId, direction: $_callDirection)');
-    
+    debugPrint(
+      '📤 Sending WebRTC answer to room: $_callRoomId (callId: $_callId, direction: $_callDirection)',
+    );
+
     if (_callRoomId == null || _callRoomId!.isEmpty) {
       debugPrint('❌ ERROR: _callRoomId is null or empty! Cannot send answer.');
       return;
     }
-    
+
     final signalData = {
       'room': _callRoomId,
-      'signal': {
-        'type': 'answer',
-        'sdp': answer.sdp,
-      },
+      'signal': {'type': 'answer', 'sdp': answer.sdp},
     };
     debugPrint('📤 Signal data: $signalData');
     _socketService.emit('signal', signalData);
@@ -625,17 +645,17 @@ class CallService {
   /// Handle incoming answer
   Future<void> _handleAnswer(Map<String, dynamic> signal) async {
     debugPrint('📥 Received WebRTC answer');
-    
+
     if (_peerConnection == null) return;
 
     final sdp = signal['sdp'] as String;
     await _peerConnection!.setRemoteDescription(
       RTCSessionDescription(sdp, 'answer'),
     );
-    
+
     _remoteDescriptionSet = true;
     debugPrint('📥 Remote description set (answer)');
-    
+
     // Process any queued ICE candidates
     await _processQueuedCandidates();
 
@@ -650,21 +670,25 @@ class CallService {
       signal['sdpMid'] as String?,
       signal['sdpMLineIndex'] as int?,
     );
-    
+
     // Queue if no peer connection yet
     if (_peerConnection == null) {
       _earlyIceCandidates.add(candidate);
-      debugPrint('🧊 Queued early ICE candidate (no PC). Queue size: ${_earlyIceCandidates.length}');
+      debugPrint(
+        '🧊 Queued early ICE candidate (no PC). Queue size: ${_earlyIceCandidates.length}',
+      );
       return;
     }
-    
+
     // Queue if remote description not set
     if (!_remoteDescriptionSet) {
       _candidateQueue.add(candidate);
-      debugPrint('🧊 Queued ICE candidate (no remote desc). Queue size: ${_candidateQueue.length}');
+      debugPrint(
+        '🧊 Queued ICE candidate (no remote desc). Queue size: ${_candidateQueue.length}',
+      );
       return;
     }
-    
+
     // Add immediately if ready
     try {
       debugPrint('🧊 Adding ICE candidate immediately');
@@ -674,46 +698,58 @@ class CallService {
       _candidateQueue.add(candidate);
     }
   }
-  
+
   /// Process all queued ICE candidates
   Future<void> _processQueuedCandidates() async {
     if (_peerConnection == null || !_remoteDescriptionSet) {
-      debugPrint('⚠️ Cannot process queued candidates - PC or remote desc not ready');
+      debugPrint(
+        '⚠️ Cannot process queued candidates - PC or remote desc not ready',
+      );
       return;
     }
-    
+
     // First, move early candidates to main queue
     if (_earlyIceCandidates.isNotEmpty) {
-      debugPrint('🧊 Flushing ${_earlyIceCandidates.length} early ICE candidates');
+      debugPrint(
+        '🧊 Flushing ${_earlyIceCandidates.length} early ICE candidates',
+      );
       _candidateQueue.addAll(_earlyIceCandidates);
       _earlyIceCandidates.clear();
     }
-    
+
     final totalCandidates = _candidateQueue.length;
     debugPrint('🧊 Processing $totalCandidates queued ICE candidates');
-    
+
     int processed = 0;
     int failed = 0;
-    
+
     while (_candidateQueue.isNotEmpty) {
       final candidate = _candidateQueue.removeAt(0);
       try {
         await _peerConnection!.addCandidate(candidate);
         processed++;
-        debugPrint('🧊 Added queued ICE candidate ($processed/$totalCandidates)');
+        debugPrint(
+          '🧊 Added queued ICE candidate ($processed/$totalCandidates)',
+        );
       } catch (e) {
         failed++;
         debugPrint('❌ Error adding queued ICE candidate: $e');
       }
     }
-    
-    debugPrint('🧊 Queue processing complete: $processed added, $failed failed');
+
+    debugPrint(
+      '🧊 Queue processing complete: $processed added, $failed failed',
+    );
   }
 
   /// Answer an incoming call
   Future<void> answerCall({required MediaStream localStream}) async {
+    debugPrint(
+      '📞 answerCall called - current state: $_callState, direction: $_callDirection',
+    );
+
     if (_callState != CallState.ringing) {
-      debugPrint('⚠️ Cannot answer - not ringing');
+      debugPrint('⚠️ Cannot answer - not ringing (current state: $_callState)');
       return;
     }
 
@@ -721,13 +757,12 @@ class CallService {
     onLocalStream?.call(_localStream!);
 
     // Emit answer_call to backend
-    _socketService.emit('answer_call', {
-      'call_id': _callId,
-    });
+    _socketService.emit('answer_call', {'call_id': _callId});
 
     _callState = CallState.connecting;
     onCallStateChanged?.call(_callState);
-    
+    debugPrint('📞 Call state changed to connecting');
+
     // Process the pending offer now that we have the local stream
     if (_pendingOffer != null) {
       debugPrint('📥 Processing pending offer after user answered');
@@ -740,22 +775,20 @@ class CallService {
 
   /// Decline an incoming call
   void declineCall() {
-    debugPrint('📴 Declining call - callId: $_callId, callRoomId: $_callRoomId');
-    
+    debugPrint(
+      '📴 Declining call - callId: $_callId, callRoomId: $_callRoomId',
+    );
+
     // Emit decline_call for backend-managed calls (initiate_call flow)
     if (_callId != null) {
-      _socketService.emit('decline_call', {
-        'call_id': _callId,
-      });
+      _socketService.emit('decline_call', {'call_id': _callId});
     }
-    
+
     // Also emit signal-based decline for cross-room calls (web client compatibility)
     if (_callRoomId != null) {
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {
-          'type': 'call-ended',
-        },
+        'signal': {'type': 'call-ended'},
       });
     }
 
@@ -765,22 +798,18 @@ class CallService {
   /// End the current call
   void endCall() {
     debugPrint('📴 Ending call - callId: $_callId, callRoomId: $_callRoomId');
-    
+
     // Emit end_call event with call_id
     if (_callId != null) {
-      _socketService.emit('end_call', {
-        'call_id': _callId,
-      });
+      _socketService.emit('end_call', {'call_id': _callId});
     }
-    
+
     // Also emit to the call room directly for cross-room calls (web client compatibility)
     // Use 'call-ended' with hyphen to match backend signal handler
     if (_callRoomId != null) {
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {
-          'type': 'call-ended',
-        },
+        'signal': {'type': 'call-ended'},
       });
     }
 
@@ -800,16 +829,21 @@ class CallService {
   void handleIncomingCall(Map<String, dynamic> data) {
     debugPrint('📲 Incoming call: $data');
     debugPrint('📲 Setting _callRoomId to: ${data['call_room_id']}');
-    
+    debugPrint(
+      '📲 Current call state before: $_callState, direction: $_callDirection',
+    );
+
     _callId = data['id'] as int?;
     _callRoomId = data['call_room_id'] as String?;
     _callType = data['call_type'] as String?;
     _remoteUserId = data['caller']?['id'] as int?;
     _callDirection = CallDirection.incoming;
     _callState = CallState.ringing;
-    
-    debugPrint('📲 After setting: _callRoomId=$_callRoomId, _callId=$_callId, _callDirection=$_callDirection');
-    
+
+    debugPrint(
+      '📲 After setting: _callRoomId=$_callRoomId, _callId=$_callId, _callDirection=$_callDirection, _callState=$_callState',
+    );
+
     onCallStateChanged?.call(_callState);
     onIncomingCall?.call(data);
   }
@@ -824,45 +858,45 @@ class CallService {
   /// Clean up resources - properly close peer connection and stop tracks
   void _cleanup() {
     debugPrint('🧹 Cleaning up call resources');
-    
+
     // Close data channel
     _dataChannel?.close();
     _dataChannel = null;
-    
+
     // Close peer connection first
     _peerConnection?.close();
     _peerConnection = null;
-    
+
     // Note: We don't dispose _localStream here since it's managed by the caller
     // The caller should dispose it when appropriate
     _localStream = null;
     _remoteStream = null;
     _primaryRemoteStream = null;
-    
+
     _callState = CallState.idle;
     _callDirection = null;
     _callId = null;
     _remoteUserId = null;
     _callRoomId = null;
     _callType = null;
-    
+
     // Reset ICE candidate queuing state
     _remoteDescriptionSet = false;
     _earlyIceCandidates.clear();
     _candidateQueue.clear();
-    
+
     onCallStateChanged?.call(_callState);
   }
-  
+
   /// Full cleanup including stopping and disposing local stream
   /// Call this when the call UI is being completely closed
   void fullCleanup() {
     debugPrint('🧹 Full cleanup - stopping all tracks and disposing streams');
-    
+
     // Close data channel
     _dataChannel?.close();
     _dataChannel = null;
-    
+
     // Stop screen sharing if active
     if (_isScreenSharing) {
       if (_screenStream != null) {
@@ -875,7 +909,7 @@ class CallService {
       _isScreenSharing = false;
       _originalVideoTrack = null;
     }
-    
+
     // Stop all local tracks (camera, microphone)
     if (_localStream != null) {
       for (var track in _localStream!.getTracks()) {
@@ -883,16 +917,16 @@ class CallService {
       }
       _localStream!.dispose();
     }
-    
+
     // Dispose remote stream
     if (_remoteStream != null) {
       _remoteStream!.dispose();
     }
-    
+
     // Close peer connection
     _peerConnection?.close();
     _peerConnection = null;
-    
+
     _localStream = null;
     _remoteStream = null;
     _primaryRemoteStream = null;
@@ -902,15 +936,15 @@ class CallService {
     _remoteUserId = null;
     _callRoomId = null;
     _callType = null;
-    
+
     // Reset ICE candidate queuing state
     _remoteDescriptionSet = false;
     _earlyIceCandidates.clear();
     _candidateQueue.clear();
-    
+
     onCallStateChanged?.call(_callState);
   }
-  
+
   /// Handle call declined event (remote user declined)
   void handleCallDeclined() {
     debugPrint('❌ Call was declined by remote user');
@@ -918,7 +952,6 @@ class CallService {
     onCallStateChanged?.call(_callState);
     fullCleanup();
   }
-
 
   /// Toggle local video
   void toggleVideo(bool enabled) {
@@ -954,39 +987,43 @@ class CallService {
       debugPrint('❌ Cannot start screen share: no peer connection');
       return false;
     }
-    
+
     if (_isScreenSharing) {
       debugPrint('⚠️ Already sharing screen');
       return true;
     }
-    
+
     try {
       debugPrint('🖥️ Starting screen share...');
-      
+
       // On Android, we need to start the foreground service first
       // This is required for media projection on Android 10+
       try {
-        const channel = MethodChannel('com.example.flutter_messenger/screen_share');
+        const channel = MethodChannel(
+          'com.example.flutter_messenger/screen_share',
+        );
         await channel.invokeMethod('startForegroundService', {
           'notificationTitle': 'Screen Sharing',
           'notificationText': 'You are sharing your screen',
         });
         debugPrint('🖥️ Foreground service started');
       } catch (e) {
-        debugPrint('⚠️ Could not start foreground service (may not be needed on this platform): $e');
+        debugPrint(
+          '⚠️ Could not start foreground service (may not be needed on this platform): $e',
+        );
       }
-      
+
       // Get screen capture stream
       _screenStream = await navigator.mediaDevices.getDisplayMedia({
         'video': true,
         'audio': true, // Include system audio if available
       });
-      
+
       if (_screenStream == null) {
         debugPrint('❌ Failed to get screen stream');
         return false;
       }
-      
+
       // Get the screen video track
       final screenTrack = _screenStream!.getVideoTracks().firstOrNull;
       if (screenTrack == null) {
@@ -995,12 +1032,12 @@ class CallService {
         _screenStream = null;
         return false;
       }
-      
+
       // Store original video track for later restoration
       if (_localStream != null) {
         _originalVideoTrack = _localStream!.getVideoTracks().firstOrNull;
       }
-      
+
       // Replace the video track in the peer connection
       final senders = await _peerConnection!.getSenders();
       for (final sender in senders) {
@@ -1010,29 +1047,27 @@ class CallService {
           break;
         }
       }
-      
+
       // Listen for when user stops sharing via system UI
       screenTrack.onEnded = () {
         debugPrint('🖥️ Screen share ended by user');
         stopScreenShare();
       };
-      
+
       _isScreenSharing = true;
       onScreenShareChanged?.call(true);
-      
+
       // Notify remote user about screen share via signal
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {
-          'type': 'screen-share-started',
-        },
+        'signal': {'type': 'screen-share-started'},
       });
-      
+
       // Also notify via dedicated socket event for reliability (matches web client behavior)
       _socketService.emit('screen_share_started', {
         'from': '${_socketService.currentUserId}',
       });
-      
+
       debugPrint('✅ Screen sharing started');
       return true;
     } catch (e) {
@@ -1046,10 +1081,10 @@ class CallService {
     if (!_isScreenSharing) {
       return;
     }
-    
+
     try {
       debugPrint('🖥️ Stopping screen share...');
-      
+
       // Restore original video track if available
       if (_originalVideoTrack != null && _peerConnection != null) {
         final senders = await _peerConnection!.getSenders();
@@ -1061,7 +1096,7 @@ class CallService {
           }
         }
       }
-      
+
       // Stop and dispose screen stream
       if (_screenStream != null) {
         for (var track in _screenStream!.getTracks()) {
@@ -1070,33 +1105,33 @@ class CallService {
         await _screenStream!.dispose();
         _screenStream = null;
       }
-      
+
       _isScreenSharing = false;
       _originalVideoTrack = null;
       onScreenShareChanged?.call(false);
-      
+
       // Notify remote user about screen share stop via signal
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {
-          'type': 'screen-share-stopped',
-        },
+        'signal': {'type': 'screen-share-stopped'},
       });
-      
+
       // Also notify via dedicated socket event for reliability (matches web client behavior)
       _socketService.emit('screen_share_stopped', {
         'from': '${_socketService.currentUserId}',
       });
-      
+
       // Stop the foreground service on Android
       try {
-        const channel = MethodChannel('com.example.flutter_messenger/screen_share');
+        const channel = MethodChannel(
+          'com.example.flutter_messenger/screen_share',
+        );
         await channel.invokeMethod('stopForegroundService');
         debugPrint('🖥️ Foreground service stopped');
       } catch (e) {
         debugPrint('⚠️ Could not stop foreground service: $e');
       }
-      
+
       debugPrint('✅ Screen sharing stopped');
     } catch (e) {
       debugPrint('❌ Error stopping screen share: $e');

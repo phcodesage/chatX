@@ -58,21 +58,46 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
   final SocketService _socketService = SocketService();
   static const String _listenerKey = 'incoming_call_setup_modal';
 
+  /// Determine if the currently selected camera is front-facing
+  bool get _isFrontCamera {
+    if (_selectedCameraId == null || _cameras.isEmpty) return true;
+
+    final selectedCamera = _cameras.firstWhere(
+      (camera) => camera.deviceId == _selectedCameraId,
+      orElse: () => _cameras.first,
+    );
+
+    // Check if the camera label indicates it's a front camera
+    final label = selectedCamera.label.toLowerCase();
+    return label.contains('front') ||
+        label.contains('user') ||
+        label.contains('selfie') ||
+        !label.contains('back') && !label.contains('rear');
+  }
+
   @override
   void initState() {
     super.initState();
     _videoEnabled = widget.callType == 'video';
-    
+
     _initializeDevices();
-    
+
     // Listen for call state changes (caller might cancel)
     widget.callService.onCallStateChanged = _handleCallStateChanged;
-    
+
     // Also listen directly for socket events to ensure modal closes
-    _socketService.addListener('callEnded', _listenerKey, _handleSocketCallEnded);
-    _socketService.addListener('callDeclined', _listenerKey, _handleSocketCallEnded);
+    _socketService.addListener(
+      'callEnded',
+      _listenerKey,
+      _handleSocketCallEnded,
+    );
+    _socketService.addListener(
+      'callDeclined',
+      _listenerKey,
+      _handleSocketCallEnded,
+    );
   }
-  
+
   void _handleSocketCallEnded(Map<String, dynamic> data) {
     debugPrint('📴 IncomingCallSetupModal received call end event: $data');
     if (!mounted) return;
@@ -82,7 +107,7 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
 
   void _handleCallStateChanged(CallState state) {
     if (!mounted) return;
-    
+
     if (state == CallState.ended || state == CallState.failed) {
       Navigator.of(context).pop('ended');
     }
@@ -135,13 +160,11 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
   Future<void> _requestPermissions() async {
     // Batch both permissions in a single request to avoid
     // "A request for permissions is already running" PlatformException
-    final statuses = await [
-      Permission.camera,
-      Permission.microphone,
-    ].request();
+    final statuses = await [Permission.camera, Permission.microphone].request();
 
     setState(() {
-      _hasPermissions = (statuses[Permission.camera]?.isGranted ?? false) &&
+      _hasPermissions =
+          (statuses[Permission.camera]?.isGranted ?? false) &&
           (statuses[Permission.microphone]?.isGranted ?? false);
     });
   }
@@ -151,9 +174,7 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
       await _stopMediaStream();
 
       final Map<String, dynamic> constraints = {
-        'audio': _selectedMicId != null
-            ? {'deviceId': _selectedMicId}
-            : true,
+        'audio': _selectedMicId != null ? {'deviceId': _selectedMicId} : true,
         'video': _videoEnabled && _selectedCameraId != null
             ? {
                 'deviceId': _selectedCameraId,
@@ -216,10 +237,9 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
       await widget.callService.answerCall(localStream: _localStream!);
 
       if (mounted) {
-        Navigator.of(context).pop({
-          'result': 'accepted',
-          'localStream': _localStream,
-        });
+        Navigator.of(
+          context,
+        ).pop({'result': 'accepted', 'localStream': _localStream});
       }
     } catch (e) {
       debugPrint('❌ Error answering call: $e');
@@ -276,8 +296,8 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
           child: _isLoading
               ? _buildLoadingView()
               : _errorMessage != null
-                  ? _buildErrorView()
-                  : _buildSetupView(),
+              ? _buildErrorView()
+              : _buildSetupView(),
         ),
       ),
     );
@@ -480,7 +500,8 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
                   child: _videoEnabled && _localStream != null
                       ? RTCVideoView(
                           _localRenderer,
-                          mirror: true,
+                          mirror:
+                              _isFrontCamera, // Mirror only for front cameras
                           objectFit:
                               RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                         )
@@ -488,13 +509,18 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.videocam_off,
-                                  color: Colors.grey, size: 48),
+                              Icon(
+                                Icons.videocam_off,
+                                color: Colors.grey,
+                                size: 48,
+                              ),
                               SizedBox(height: 8),
                               Text(
                                 'Video is off',
-                                style:
-                                    TextStyle(color: Colors.grey, fontSize: 14),
+                                style: TextStyle(
+                                  color: Colors.grey,
+                                  fontSize: 14,
+                                ),
                               ),
                             ],
                           ),
@@ -586,12 +612,16 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: devices.any((d) => d.deviceId == selectedId) ? selectedId : null,
+          value: devices.any((d) => d.deviceId == selectedId)
+              ? selectedId
+              : null,
           isExpanded: true,
           dropdownColor: const Color(0xFF334155),
           style: const TextStyle(color: Colors.white, fontSize: 14),
-          hint: const Text('Select device',
-              style: TextStyle(color: Colors.grey)),
+          hint: const Text(
+            'Select device',
+            style: TextStyle(color: Colors.grey),
+          ),
           icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
           items: devices.map((device) {
             return DropdownMenuItem<String>(

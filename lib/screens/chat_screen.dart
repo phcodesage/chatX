@@ -894,6 +894,33 @@ class _ChatScreenState extends State<ChatScreen> {
       _handleIncomingCallInChat(data);
     });
 
+    // FALLBACK: Also listen for crossRoomCallOffer in case backend only sends this event
+    // This handles cases where web clients call mobile and backend doesn't send 'incomingCall'
+    _socketService.addListener('crossRoomCallOffer', key, (
+      Map<String, dynamic> data,
+    ) {
+      debugPrint(
+        '📲 Fallback: Received crossRoomCallOffer in chat, converting to incomingCall format',
+      );
+      debugPrint('📲 Original crossRoomCallOffer data: $data');
+
+      // Convert crossRoomCallOffer format to incomingCall format
+      // Note: crossRoomCallOffer uses 'caller_id' and 'caller_username', not 'callerId' and 'callerName'
+      final convertedData = {
+        'id': DateTime.now().millisecondsSinceEpoch, // Generate call ID
+        'call_room_id': data['room'] as String?,
+        'call_type': data['call_type'] as String? ?? 'video',
+        'caller': {
+          'id': data['caller_id'] as int?,
+          'username': data['caller_username'] as String? ?? 'Unknown',
+          'full_name': data['caller_username'] as String? ?? 'Unknown',
+        },
+      };
+
+      debugPrint('📲 Converted to incomingCall format: $convertedData');
+      _handleIncomingCallInChat(convertedData);
+    });
+
     // Listen for reaction updates (multi-reaction: user can have multiple different emojis)
     _socketService.addListener('reactionUpdated', key, (
       Map<String, dynamic> data,
