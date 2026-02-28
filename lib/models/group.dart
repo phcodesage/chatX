@@ -29,21 +29,41 @@ class Group {
   });
 
   factory Group.fromJson(Map<String, dynamic> json) {
-    return Group(
-      id: json['id'] as int,
-      name: json['name'] as String,
-      description: json['description'] as String?,
-      createdBy: json['created_by'] as int,
-      avatarUrl: json['avatar_url'] as String?,
-      memberCount: json['member_count'] as int,
-      isActive: json['is_active'] as bool? ?? true,
-      createdAt: json['created_at'] as String,
-      myRole: json['my_role'] as String? ?? 'member',
-      isMuted: json['is_muted'] as bool? ?? false,
-      lastMessage: json['last_message'] != null
-          ? GroupMessage.fromJson(json['last_message'] as Map<String, dynamic>)
-          : null,
-    );
+    try {
+      // Try to extract my_role from the root level first
+      String myRole = json['my_role'] as String? ?? 'member';
+
+      // If my_role is not at root level, try to extract it from members array
+      // This handles the case where the backend returns members with user_id matching current user
+      if (json['my_role'] == null && json['members'] != null) {
+        // We'll default to 'member' if we can't determine the role
+        // The role will be updated when the group details are fetched
+        myRole = 'member';
+      }
+
+      return Group(
+        id: json['id'] as int,
+        name: json['name'] as String,
+        description: json['description'] as String?,
+        createdBy: json['created_by'] as int,
+        avatarUrl: json['avatar_url'] as String?,
+        memberCount: json['member_count'] as int,
+        isActive: json['is_active'] as bool? ?? true,
+        createdAt: json['created_at'] as String,
+        myRole: myRole,
+        isMuted: json['is_muted'] as bool? ?? false,
+        lastMessage: json['last_message'] != null
+            ? GroupMessage.fromJson(
+                json['last_message'] as Map<String, dynamic>,
+              )
+            : null,
+      );
+    } catch (e, stackTrace) {
+      debugPrint('❌ Error parsing Group: $e');
+      debugPrint('📋 JSON data: $json');
+      debugPrint('📋 Stack trace: $stackTrace');
+      rethrow;
+    }
   }
 
   Map<String, dynamic> toJson() {
@@ -186,39 +206,48 @@ class GroupMessage {
   });
 
   factory GroupMessage.fromJson(Map<String, dynamic> json) {
-    // Handle reply_preview which can be either a String or a Map
-    String? replyPreviewText;
-    final replyPreviewData = json['reply_preview'];
-    if (replyPreviewData != null) {
-      if (replyPreviewData is String) {
-        replyPreviewText = replyPreviewData;
-      } else if (replyPreviewData is Map) {
-        // If it's a map, extract the content field
-        replyPreviewText = replyPreviewData['content'] as String?;
+    try {
+      // Handle reply_preview which can be either a String or a Map
+      String? replyPreviewText;
+      final replyPreviewData = json['reply_preview'];
+      if (replyPreviewData != null) {
+        if (replyPreviewData is String) {
+          replyPreviewText = replyPreviewData;
+        } else if (replyPreviewData is Map) {
+          // If it's a map, extract the content field
+          replyPreviewText = replyPreviewData['content'] as String?;
+        }
       }
-    }
 
-    return GroupMessage(
-      id: json['id'] as int? ?? json['message_id'] as int,
-      messageId: json['message_id'] as int? ?? json['id'] as int,
-      groupId: json['group_id'] as int,
-      senderId: json['sender_id'] as int,
-      sender: json['sender'] != null
-          ? GroupMessageSender.fromJson(json['sender'] as Map<String, dynamic>)
-          : null,
-      content: json['content'] as String,
-      messageType: json['message_type'] as String,
-      timestamp: json['timestamp'] as String,
-      timestampMs: json['timestamp_ms'] as int,
-      isDeleted: json['is_deleted'] as bool? ?? false,
-      fileUrl: json['file_url'] as String?,
-      fileName: json['file_name'] as String?,
-      fileSize: json['file_size'] as int?,
-      fileType: json['file_type'] as String?,
-      replyToId: json['reply_to_id'] as int?,
-      replyPreview: replyPreviewText,
-      reactions: json['reactions'] as Map<String, dynamic>? ?? {},
-    );
+      return GroupMessage(
+        id: json['id'] as int? ?? json['message_id'] as int,
+        messageId: json['message_id'] as int? ?? json['id'] as int,
+        groupId: json['group_id'] as int,
+        senderId: json['sender_id'] as int,
+        sender: json['sender'] != null
+            ? GroupMessageSender.fromJson(
+                json['sender'] as Map<String, dynamic>,
+              )
+            : null,
+        content: json['content'] as String? ?? '',
+        messageType: json['message_type'] as String? ?? 'text',
+        timestamp: json['timestamp'] as String,
+        timestampMs: json['timestamp_ms'] as int? ?? 0,
+        isDeleted: json['is_deleted'] as bool? ?? false,
+        fileUrl: json['file_url'] as String?,
+        fileName: json['file_name'] as String?,
+        fileSize: json['file_size'] as int?,
+        fileType: json['file_type'] as String?,
+        replyToId: json['reply_to_id'] as int?,
+        replyPreview: replyPreviewText,
+        reactions: (json['reactions'] as Map<String, dynamic>?) ?? {},
+      );
+    } catch (e, stackTrace) {
+      debugPrint('❌ Error parsing GroupMessage: $e');
+      debugPrint('📋 JSON data: $json');
+      debugPrint('📋 Stack trace: $stackTrace');
+      rethrow;
+    }
   }
 
   Map<String, dynamic> toJson() {

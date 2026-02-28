@@ -8,8 +8,10 @@ import '../config/api_config.dart';
 import '../models/group.dart';
 import 'storage_service.dart';
 import 'auth_error_handler.dart';
+import 'chat_cache_service.dart';
 
 /// Service for group chat API calls
+/// Enhanced with offline-first capabilities
 class GroupService {
   /// Get all groups the current user belongs to
   static Future<List<Group>> getGroups() async {
@@ -96,7 +98,11 @@ class GroupService {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body);
-        return Group.fromJson(data['data']);
+        debugPrint('📡 Create group response: $data');
+
+        // Handle both response formats: {data: {...}} or direct group object
+        final groupData = data['data'] ?? data;
+        return Group.fromJson(groupData as Map<String, dynamic>);
       } else {
         final error = jsonDecode(response.body);
         throw Exception(error['error'] ?? 'Failed to create group');
@@ -298,8 +304,39 @@ class GroupService {
     }
   }
 
-  /// Get messages for a group
+  /// Get messages for a group with offline-first approach
   static Future<List<GroupMessage>> getMessages({
+    required int groupId,
+    int limit = 50,
+    int? beforeId,
+    bool offlineFirst = true,
+  }) async {
+    // Load from cache first for instant display
+    if (offlineFirst) {
+      final cachedMessages = await ChatCacheService.loadGroupMessages(groupId);
+
+      if (cachedMessages.isNotEmpty) {
+        debugPrint(
+          '📦 Loaded ${cachedMessages.length} group messages from cache',
+        );
+
+        // Fetch fresh data in background
+        _syncGroupMessagesInBackground(groupId, limit, beforeId);
+
+        return cachedMessages;
+      }
+    }
+
+    // No cache - fetch from server
+    return await _fetchGroupMessagesFromServer(
+      groupId: groupId,
+      limit: limit,
+      beforeId: beforeId,
+    );
+  }
+
+  /// Fetch group messages from server and update cache
+  static Future<List<GroupMessage>> _fetchGroupMessagesFromServer({
     required int groupId,
     int limit = 50,
     int? beforeId,
@@ -318,7 +355,6 @@ class GroupService {
       ).replace(queryParameters: queryParams);
 
       debugPrint('💬 Fetching messages from: $uri');
-      debugPrint('🔑 Token length: ${token.length}');
 
       final response = await http
           .get(
@@ -331,7 +367,6 @@ class GroupService {
           .timeout(ApiConfig.connectionTimeout);
 
       debugPrint('📡 Messages API response status: ${response.statusCode}');
-      debugPrint('📡 Messages API response body: ${response.body}');
 
       if (response.statusCode == 401) {
         await AuthErrorHandler().handleAuthError(
@@ -343,20 +378,54 @@ class GroupService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final messagesList = data['messages'] as List;
-        debugPrint(
-          '✅ Loaded ${messagesList.length} messages for group $groupId',
-        );
-        if (messagesList.isNotEmpty) {
-          debugPrint('📋 First message: ${messagesList[0]}');
+        final messages = messagesList
+            .map((json) => GroupMessage.fromJson(json))
+            .toList();
+
+        debugPrint('✅ Loaded ${messages.length} messages for group $groupId');
+
+        // Cache the messages for offline access
+        if (messages.isNotEmpty) {
+          await ChatCacheService.saveGroupMessages(groupId, messages);
+          debugPrint('💾 Cached ${messages.length} group messages');
         }
-        return messagesList.map((json) => GroupMessage.fromJson(json)).toList();
+
+        return messages;
       } else {
         debugPrint('❌ Failed to load messages: ${response.statusCode}');
         throw Exception('Failed to load messages: ${response.body}');
       }
     } catch (e) {
       debugPrint('❌ Get group messages error: $e');
+
+      // If network error, try returning cached data
+      final cachedMessages = await ChatCacheService.loadGroupMessages(groupId);
+      if (cachedMessages.isNotEmpty) {
+        debugPrint(
+          '📦 Network error - returning ${cachedMessages.length} cached group messages',
+        );
+        return cachedMessages;
+      }
+
       rethrow;
+    }
+  }
+
+  /// Background sync without blocking UI
+  static Future<void> _syncGroupMessagesInBackground(
+    int groupId,
+    int limit,
+    int? beforeId,
+  ) async {
+    try {
+      await _fetchGroupMessagesFromServer(
+        groupId: groupId,
+        limit: limit,
+        beforeId: beforeId,
+      );
+    } catch (e) {
+      debugPrint('Background group sync failed: $e');
+      // Silently fail - user already has cached data
     }
   }
 

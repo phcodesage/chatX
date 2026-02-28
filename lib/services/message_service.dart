@@ -5,18 +5,73 @@ import '../config/api_config.dart';
 import '../models/message.dart';
 import 'storage_service.dart';
 import 'auth_error_handler.dart';
+import 'chat_cache_service.dart';
 
 /// Service for handling message API calls
+/// Enhanced with offline-first capabilities
 class MessageService {
-  /// Get conversation messages with a specific user
+  /// Get conversation messages with offline-first approach
+  /// Returns cached messages immediately, then syncs with server
   static Future<List<Message>> getConversationMessages({
     required int userId,
+    int limit = 50,
+    int? beforeId,
+    bool offlineFirst = true,
+  }) async {
+    debugPrint(
+      '🔍 getConversationMessages called for userId: $userId, offlineFirst: $offlineFirst',
+    );
+
+    // Get current user ID for cache
+    final currentUserId = await StorageService.getUserId();
+    debugPrint('🔍 Current user ID: $currentUserId');
+
+    // Load from cache first for instant display
+    if (offlineFirst && currentUserId != null) {
+      debugPrint('🔍 Attempting to load from cache...');
+      final cachedMessages = await ChatCacheService.loadConversationMessages(
+        currentUserId,
+        userId,
+      );
+      debugPrint('🔍 Cache returned ${cachedMessages.length} messages');
+
+      // Return cached messages immediately if available
+      if (cachedMessages.isNotEmpty) {
+        debugPrint('📦 Loaded ${cachedMessages.length} messages from cache');
+
+        // Fetch fresh data in background (don't await)
+        _syncMessagesInBackground(userId, currentUserId, limit, beforeId);
+
+        return cachedMessages;
+      } else {
+        debugPrint('📦 Cache is empty, will try server');
+      }
+    } else {
+      debugPrint(
+        '🔍 Skipping cache: offlineFirst=$offlineFirst, currentUserId=$currentUserId',
+      );
+    }
+
+    // No cache or offline mode disabled - fetch from server
+    debugPrint('🔍 Fetching from server...');
+    return await _fetchMessagesFromServer(
+      userId: userId,
+      currentUserId: currentUserId,
+      limit: limit,
+      beforeId: beforeId,
+    );
+  }
+
+  /// Fetch messages from server and update cache
+  static Future<List<Message>> _fetchMessagesFromServer({
+    required int userId,
+    required int? currentUserId,
     int limit = 50,
     int? beforeId,
   }) async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) {
         throw Exception('No authentication token found');
       }
@@ -26,23 +81,38 @@ class MessageService {
         if (beforeId != null) 'before_id': beforeId.toString(),
       };
 
-      final uri = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.mobilePrefix}/messages/conversation/$userId')
-          .replace(queryParameters: queryParams);
+      final uri = Uri.parse(
+        '${ApiConfig.baseUrl}${ApiConfig.mobilePrefix}/messages/conversation/$userId',
+      ).replace(queryParameters: queryParams);
 
-      final response = await http.get(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .get(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final messages = data['messages'] as List;
-        return messages.map((json) => Message.fromJson(json)).toList();
+        final messages = (data['messages'] as List)
+            .map((json) => Message.fromJson(json))
+            .toList();
+
+        // Cache the messages for offline access
+        if (currentUserId != null && messages.isNotEmpty) {
+          await ChatCacheService.saveConversationMessages(
+            currentUserId,
+            userId,
+            messages,
+          );
+          debugPrint('💾 Cached ${messages.length} messages');
+        }
+
+        return messages;
       } else if (response.statusCode == 401) {
-        // Token expired - trigger auth error handler
         debugPrint('🔐 Token expired - redirecting to sign in');
         await AuthErrorHandler().handleAuthError(
           message: 'Your session has expired. Please sign in again.',
@@ -54,7 +124,42 @@ class MessageService {
       }
     } catch (e) {
       debugPrint('Get conversation messages error: $e');
+
+      // If network error and we have currentUserId, try returning cached data
+      if (currentUserId != null) {
+        final cachedMessages = await ChatCacheService.loadConversationMessages(
+          currentUserId,
+          userId,
+        );
+        if (cachedMessages.isNotEmpty) {
+          debugPrint(
+            '📦 Network error - returning ${cachedMessages.length} cached messages',
+          );
+          return cachedMessages;
+        }
+      }
+
       rethrow;
+    }
+  }
+
+  /// Background sync without blocking UI
+  static Future<void> _syncMessagesInBackground(
+    int userId,
+    int currentUserId,
+    int limit,
+    int? beforeId,
+  ) async {
+    try {
+      await _fetchMessagesFromServer(
+        userId: userId,
+        currentUserId: currentUserId,
+        limit: limit,
+        beforeId: beforeId,
+      );
+    } catch (e) {
+      debugPrint('Background sync failed: $e');
+      // Silently fail - user already has cached data
     }
   }
 
@@ -67,24 +172,26 @@ class MessageService {
   }) async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) {
         throw Exception('No authentication token found');
       }
 
-      final response = await http.post(
-        Uri.parse(ApiConfig.sendMessageUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'recipient_id': recipientId,
-          'content': content,
-          'message_type': messageType,
-          if (replyToId != null) 'reply_to_id': replyToId,
-        }),
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.sendMessageUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'recipient_id': recipientId,
+              'content': content,
+              'message_type': messageType,
+              if (replyToId != null) 'reply_to_id': replyToId,
+            }),
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body);
@@ -113,20 +220,24 @@ class MessageService {
   }) async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) return;
 
-      await http.post(
-        Uri.parse('${ApiConfig.baseUrl}${ApiConfig.mobilePrefix}/messages/mark-read'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'sender_id': senderId,
-          'last_message_id': lastMessageId,
-        }),
-      ).timeout(ApiConfig.connectionTimeout);
+      await http
+          .post(
+            Uri.parse(
+              '${ApiConfig.baseUrl}${ApiConfig.mobilePrefix}/messages/mark-read',
+            ),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'sender_id': senderId,
+              'last_message_id': lastMessageId,
+            }),
+          )
+          .timeout(ApiConfig.connectionTimeout);
     } catch (e) {
       debugPrint('Mark as read error: $e');
     }
@@ -139,17 +250,19 @@ class MessageService {
   }) async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) {
         throw Exception('No authentication token found');
       }
 
-      final uri = Uri.parse('${ApiConfig.baseUrl}${ApiConfig.mobilePrefix}/messages/upload');
-      
+      final uri = Uri.parse(
+        '${ApiConfig.baseUrl}${ApiConfig.mobilePrefix}/messages/upload',
+      );
+
       final request = http.MultipartRequest('POST', uri);
       request.headers['Authorization'] = 'Bearer $token';
       request.fields['recipient_id'] = recipientId.toString();
-      
+
       // Add file to request
       if (file is http.MultipartFile) {
         request.files.add(file);
@@ -158,7 +271,9 @@ class MessageService {
         request.files.add(await http.MultipartFile.fromPath('file', file.path));
       }
 
-      final streamedResponse = await request.send().timeout(const Duration(minutes: 2));
+      final streamedResponse = await request.send().timeout(
+        const Duration(minutes: 2),
+      );
       final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
@@ -183,18 +298,20 @@ class MessageService {
   static Future<List<Map<String, dynamic>>> getAllTasks() async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) {
         throw Exception('No authentication token found');
       }
 
-      final response = await http.get(
-        Uri.parse(ApiConfig.tasksUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .get(
+            Uri.parse(ApiConfig.tasksUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -224,23 +341,26 @@ class MessageService {
   }) async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) {
         throw Exception('No authentication token found');
       }
 
-      final response = await http.post(
-        Uri.parse(ApiConfig.tasksUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'title': title,
-          if (description != null) 'description': description,
-          if (assignedToUserId != null) 'assigned_to_user_id': assignedToUserId,
-        }),
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.tasksUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'title': title,
+              if (description != null) 'description': description,
+              if (assignedToUserId != null)
+                'assigned_to_user_id': assignedToUserId,
+            }),
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body);
@@ -264,18 +384,20 @@ class MessageService {
   static Future<bool> completeTask(int taskId) async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) {
         throw Exception('No authentication token found');
       }
 
-      final response = await http.post(
-        Uri.parse(ApiConfig.getTaskCompleteUrl(taskId)),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.getTaskCompleteUrl(taskId)),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       return response.statusCode == 200;
     } catch (e) {
@@ -288,18 +410,20 @@ class MessageService {
   static Future<bool> deleteTask(int taskId) async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) {
         throw Exception('No authentication token found');
       }
 
-      final response = await http.delete(
-        Uri.parse(ApiConfig.getTaskUrl(taskId)),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .delete(
+            Uri.parse(ApiConfig.getTaskUrl(taskId)),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       return response.statusCode == 200;
     } catch (e) {
@@ -312,18 +436,20 @@ class MessageService {
   static Future<List<Map<String, dynamic>>> getAllExcalidrawBoards() async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) {
         throw Exception('No authentication token found');
       }
 
-      final response = await http.get(
-        Uri.parse(ApiConfig.excalidrawBoardsUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .get(
+            Uri.parse(ApiConfig.excalidrawBoardsUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -335,7 +461,9 @@ class MessageService {
         );
         throw Exception('Session expired');
       } else {
-        debugPrint('Get excalidraw boards error - Status: ${response.statusCode}');
+        debugPrint(
+          'Get excalidraw boards error - Status: ${response.statusCode}',
+        );
         return [];
       }
     } catch (e) {

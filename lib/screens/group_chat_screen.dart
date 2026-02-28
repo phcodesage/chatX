@@ -12,6 +12,7 @@ import '../models/group.dart';
 import '../services/group_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
+import '../services/chat_cache_service.dart';
 import '../widgets/reaction_picker.dart';
 
 /// Group chat screen for messaging in a group
@@ -260,7 +261,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
-  void _handleNewMessage(Map<String, dynamic> data) {
+  void _handleNewMessage(Map<String, dynamic> data) async {
     debugPrint('📨 [GROUP NEW MESSAGE] Received: data=$data');
     final message = GroupMessage.fromJson(data);
 
@@ -268,6 +269,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       setState(() {
         _messages.add(message);
       });
+
+      // Save to cache for offline access
+      await ChatCacheService.addGroupMessageToCache(widget.group.id, message);
+      debugPrint('💾 Cached group message ${message.id}');
 
       // Play notification sound if not from current user
       if (message.senderId != _currentUserId) {
