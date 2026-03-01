@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/lobby_user.dart';
 import '../services/lobby_service.dart';
 import '../services/group_service.dart';
+import '../services/storage_service.dart';
 
 /// Create group screen - select members and create group
 class CreateGroupScreen extends StatefulWidget {
@@ -15,7 +16,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final TextEditingController _groupNameController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
-  
+
   List<LobbyUser> _allUsers = [];
   List<LobbyUser> _filteredUsers = [];
   final Set<int> _selectedUserIds = {};
@@ -25,16 +26,33 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   @override
   void initState() {
     super.initState();
+    _checkAdminAccess();
     _loadUsers();
     _searchController.addListener(_filterUsers);
   }
 
+  Future<void> _checkAdminAccess() async {
+    final isAdmin = await StorageService.getIsAdmin();
+    if (!isAdmin) {
+      // Non-admin users shouldn't be able to access this screen
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Only admin users can create groups'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
   Future<void> _loadUsers() async {
     setState(() => _isLoading = true);
-    
+
     try {
       final users = await LobbyService.getLobbyUsers();
-      
+
       if (mounted) {
         setState(() {
           _allUsers = users;
@@ -46,54 +64,66 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       debugPrint('Error loading users: $e');
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load users: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to load users: $e')));
       }
     }
   }
 
   void _filterUsers() {
     final query = _searchController.text.toLowerCase();
-    
+
     setState(() {
       if (query.isEmpty) {
         _filteredUsers = _allUsers;
       } else {
         _filteredUsers = _allUsers.where((user) {
           return user.username.toLowerCase().contains(query) ||
-                 user.fullName.toLowerCase().contains(query);
+              user.fullName.toLowerCase().contains(query);
         }).toList();
       }
     });
   }
 
   Future<void> _createGroup() async {
+    // Double-check admin access before creating
+    final isAdmin = await StorageService.getIsAdmin();
+    if (!isAdmin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Only admin users can create groups'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final groupName = _groupNameController.text.trim();
-    
+
     if (groupName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a group name')),
       );
       return;
     }
-    
+
     if (_selectedUserIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select at least one member')),
       );
       return;
     }
-    
+
     setState(() => _isCreating = true);
-    
+
     try {
       await GroupService.createGroup(
         name: groupName,
         description: _descriptionController.text.trim(),
         memberIds: _selectedUserIds.toList(),
       );
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Group created successfully')),
@@ -104,9 +134,9 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       debugPrint('Error creating group: $e');
       if (mounted) {
         setState(() => _isCreating = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to create group: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to create group: $e')));
       }
     }
   }
@@ -125,7 +155,10 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
       backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1E293B),
-        title: const Text('Create Group', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Create Group',
+          style: TextStyle(color: Colors.white),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Column(
@@ -148,7 +181,10 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none,
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -165,13 +201,16 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none,
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          
+
           // Selected members count
           if (_selectedUserIds.isNotEmpty)
             Container(
@@ -186,7 +225,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                 ],
               ),
             ),
-          
+
           // Search bar
           Container(
             padding: const EdgeInsets.all(16),
@@ -203,59 +242,62 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
               ),
             ),
           ),
-          
+
           // Users list
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _filteredUsers.isEmpty
-                    ? Center(
-                        child: Text(
-                          'No users found',
+                ? Center(
+                    child: Text(
+                      'No users found',
+                      style: TextStyle(color: Colors.grey[400]),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _filteredUsers.length,
+                    itemBuilder: (context, index) {
+                      final user = _filteredUsers[index];
+                      final isSelected = _selectedUserIds.contains(user.id);
+
+                      return CheckboxListTile(
+                        value: isSelected,
+                        onChanged: (value) {
+                          setState(() {
+                            if (value == true) {
+                              _selectedUserIds.add(user.id);
+                            } else {
+                              _selectedUserIds.remove(user.id);
+                            }
+                          });
+                        },
+                        title: Text(
+                          user.fullName,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        subtitle: Text(
+                          '@${user.username}',
                           style: TextStyle(color: Colors.grey[400]),
                         ),
-                      )
-                    : ListView.builder(
-                        itemCount: _filteredUsers.length,
-                        itemBuilder: (context, index) {
-                          final user = _filteredUsers[index];
-                          final isSelected = _selectedUserIds.contains(user.id);
-                          
-                          return CheckboxListTile(
-                            value: isSelected,
-                            onChanged: (value) {
-                              setState(() {
-                                if (value == true) {
-                                  _selectedUserIds.add(user.id);
-                                } else {
-                                  _selectedUserIds.remove(user.id);
-                                }
-                              });
-                            },
-                            title: Text(
-                              user.fullName,
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            subtitle: Text(
-                              '@${user.username}',
-                              style: TextStyle(color: Colors.grey[400]),
-                            ),
-                            secondary: CircleAvatar(
-                              backgroundColor: const Color(0xFF8B5CF6),
-                              child: Text(
-                                user.fullName[0].toUpperCase(),
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                            ),
-                            activeColor: const Color(0xFF8B5CF6),
-                            checkColor: Colors.white,
-                          );
-                        },
-                      ),
+                        secondary: CircleAvatar(
+                          backgroundColor: const Color(0xFF8B5CF6),
+                          child: Text(
+                            user.fullName[0].toUpperCase(),
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                        activeColor: const Color(0xFF8B5CF6),
+                        checkColor: Colors.white,
+                      );
+                    },
+                  ),
           ),
         ],
       ),

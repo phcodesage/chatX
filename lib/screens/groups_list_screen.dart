@@ -19,10 +19,11 @@ class GroupsListScreen extends StatefulWidget {
 class _GroupsListScreenState extends State<GroupsListScreen> {
   final SocketService _socketService = SocketService();
   final TextEditingController _searchController = TextEditingController();
-  
+
   List<Group> _groups = [];
   List<Group> _filteredGroups = [];
   bool _isLoading = true;
+  bool _isCurrentUserAdmin = false;
   int? _currentUserId;
 
   @override
@@ -34,39 +35,180 @@ class _GroupsListScreenState extends State<GroupsListScreen> {
 
   Future<void> _initialize() async {
     _currentUserId = await StorageService.getUserId();
+    _isCurrentUserAdmin = await StorageService.getIsAdmin();
     await _loadGroups();
     _setupRealtimeListeners();
   }
 
   void _setupRealtimeListeners() {
     const key = 'groups_list';
-    
+
     // New message in any group
     _socketService.addListener('groupNewMessage', key, (data) {
       _updateGroupLastMessage(data);
     });
-    
+
+    // Group created - add new group to list
+    _socketService.addListener('groupCreated', key, (data) {
+      debugPrint('🎉 New group created: $data');
+      if (data is Map<String, dynamic>) {
+        try {
+          final newGroup = Group.fromJson(data);
+          if (mounted) {
+            setState(() {
+              _groups.insert(0, newGroup);
+              _filterGroups();
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('New group: ${newGroup.name}'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        } catch (e) {
+          debugPrint('❌ Error parsing group_created: $e');
+        }
+      }
+    });
+
+    // Group member added - add group if current user was added
+    _socketService.addListener('groupMemberAdded', key, (data) {
+      debugPrint('👥 Member added to group: $data');
+      if (data is Map<String, dynamic>) {
+        final groupData = data['group'] as Map<String, dynamic>?;
+        final addedUserIds = List<int>.from(data['added_user_ids'] ?? []);
+
+        if (groupData != null && mounted) {
+          // Check if current user was added
+          if (addedUserIds.contains(_currentUserId)) {
+            try {
+              final newGroup = Group.fromJson(groupData);
+              setState(() {
+                // Check if group already exists
+                final existingIndex = _groups.indexWhere(
+                  (g) => g.id == newGroup.id,
+                );
+                if (existingIndex == -1) {
+                  _groups.insert(0, newGroup);
+                } else {
+                  _groups[existingIndex] = newGroup;
+                }
+                _filterGroups();
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Added to group: ${newGroup.name}'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            } catch (e) {
+              debugPrint('❌ Error parsing group_member_added: $e');
+            }
+          } else {
+            // Update existing group member count
+            try {
+              final updatedGroup = Group.fromJson(groupData);
+              final index = _groups.indexWhere((g) => g.id == updatedGroup.id);
+              if (index != -1) {
+                setState(() {
+                  _groups[index] = updatedGroup;
+                  _filterGroups();
+                });
+              }
+            } catch (e) {
+              debugPrint('❌ Error updating group after member added: $e');
+            }
+          }
+        }
+      }
+    });
+
+    // Group deleted - remove from list
+    _socketService.addListener('groupDeleted', key, (data) {
+      debugPrint('🗑️ Group deleted: $data');
+      if (data is Map<String, dynamic>) {
+        final groupId = data['group_id'] as int?;
+        if (groupId != null && mounted) {
+          setState(() {
+            _groups.removeWhere((g) => g.id == groupId);
+            _filterGroups();
+          });
+        }
+      }
+    });
+
     // Member left group
     _socketService.addListener('groupMemberLeft', key, (data) {
-      final groupId = data['group_id'] as int?;
-      final userId = data['user_id'] as int?;
-      
-      if (groupId != null && userId == _currentUserId) {
+      debugPrint('👋 [GROUPS LIST] Group member left event received: $data');
+
+      int? groupId;
+      bool currentUserRemoved = false;
+
+      // Handle different event data structures
+      if (data.containsKey('group_id') && data.containsKey('user_id')) {
+        // Structure: {group_id: 6, user_id: 16} - from group_member_left
+        groupId = data['group_id'] as int?;
+        final userId = data['user_id'] as int?;
+        currentUserRemoved = (userId == _currentUserId);
+        debugPrint('👋 [GROUPS LIST] Using group_member_left structure');
+      } else if (data.containsKey('group')) {
+        // Structure: {group: {...}} - from group_member_removed
+        final groupData = data['group'] as Map<String, dynamic>?;
+        if (groupData != null) {
+          groupId = groupData['id'] as int?;
+          // Check if current user is still in the members list
+          final members = groupData['members'] as List?;
+          if (members != null) {
+            final isCurrentUserInGroup = members.any((member) {
+              final memberData = member as Map<String, dynamic>;
+              final memberUserId = memberData['user_id'] as int?;
+              return memberUserId == _currentUserId;
+            });
+            currentUserRemoved = !isCurrentUserInGroup;
+          }
+        }
+        debugPrint('👋 [GROUPS LIST] Using group_member_removed structure');
+      }
+
+      debugPrint(
+        '👋 [GROUPS LIST] Parsed groupId: $groupId, currentUserRemoved: $currentUserRemoved',
+      );
+
+      if (groupId != null && currentUserRemoved) {
+        debugPrint(
+          '👋 [GROUPS LIST] Current user was removed from group $groupId',
+        );
         // Current user was removed or left - remove from list
         setState(() {
+          final initialCount = _groups.length;
           _groups.removeWhere((g) => g.id == groupId);
+          final finalCount = _groups.length;
+          debugPrint(
+            '👋 [GROUPS LIST] Groups count: $initialCount → $finalCount',
+          );
           _filterGroups();
         });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You were removed from a group'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else if (groupId != null) {
+        debugPrint('👋 [GROUPS LIST] Another member left, reloading groups');
+        // Another member left, update member count
+        _loadGroups(); // Reload to get updated member count
       }
     });
   }
 
   Future<void> _loadGroups() async {
     setState(() => _isLoading = true);
-    
+
     try {
       final groups = await GroupService.getGroups();
-      
+
       if (mounted) {
         setState(() {
           _groups = groups;
@@ -78,9 +220,9 @@ class _GroupsListScreenState extends State<GroupsListScreen> {
       debugPrint('Error loading groups: $e');
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load groups: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to load groups: $e')));
       }
     }
   }
@@ -88,7 +230,7 @@ class _GroupsListScreenState extends State<GroupsListScreen> {
   void _updateGroupLastMessage(Map<String, dynamic> data) {
     final groupId = data['group_id'] as int?;
     if (groupId == null) return;
-    
+
     setState(() {
       final index = _groups.indexWhere((g) => g.id == groupId);
       if (index != -1) {
@@ -107,7 +249,7 @@ class _GroupsListScreenState extends State<GroupsListScreen> {
           isMuted: _groups[index].isMuted,
           lastMessage: message,
         );
-        
+
         // Move to top
         final group = _groups.removeAt(index);
         _groups.insert(0, group);
@@ -118,14 +260,14 @@ class _GroupsListScreenState extends State<GroupsListScreen> {
 
   void _filterGroups() {
     final query = _searchController.text.toLowerCase();
-    
+
     setState(() {
       if (query.isEmpty) {
         _filteredGroups = _groups;
       } else {
         _filteredGroups = _groups.where((group) {
           return group.name.toLowerCase().contains(query) ||
-                 (group.description?.toLowerCase().contains(query) ?? false);
+              (group.description?.toLowerCase().contains(query) ?? false);
         }).toList();
       }
     });
@@ -174,35 +316,42 @@ class _GroupsListScreenState extends State<GroupsListScreen> {
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
               ),
             ),
           ),
-          
+
           // Groups list
           Expanded(
             child: _isLoading
                 ? _buildLoadingShimmer()
                 : _filteredGroups.isEmpty
-                    ? _buildEmptyState()
-                    : _buildGroupsList(),
+                ? _buildEmptyState()
+                : _buildGroupsList(),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const CreateGroupScreen()),
-          );
-          
-          if (result == true) {
-            _loadGroups();
-          }
-        },
-        backgroundColor: const Color(0xFF8B5CF6),
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
+      floatingActionButton: _isCurrentUserAdmin
+          ? FloatingActionButton(
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const CreateGroupScreen(),
+                  ),
+                );
+
+                if (result == true) {
+                  _loadGroups();
+                }
+              },
+              backgroundColor: const Color(0xFF8B5CF6),
+              child: const Icon(Icons.add, color: Colors.white),
+            )
+          : null,
     );
   }
 
@@ -270,7 +419,7 @@ class _GroupsListScreenState extends State<GroupsListScreen> {
   Widget _buildGroupTile(Group group) {
     final lastMessage = group.lastMessage;
     final hasUnread = false; // TODO: Implement unread count
-    
+
     return ListTile(
       onTap: () async {
         await Navigator.push(
@@ -379,15 +528,15 @@ class _GroupsListScreenState extends State<GroupsListScreen> {
     if (message == null) {
       return 'No messages yet';
     }
-    
+
     if (message.isDeleted) {
       return 'Message deleted';
     }
-    
+
     final senderName = message.sender?.firstName ?? 'Someone';
     final isSentByMe = message.senderId == _currentUserId;
     final prefix = isSentByMe ? 'You: ' : '$senderName: ';
-    
+
     switch (message.messageType) {
       case 'image':
         return '$prefix📷 Photo';

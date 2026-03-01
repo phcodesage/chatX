@@ -49,6 +49,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
   String _connectivityBannerMessage = 'Server unavailable. Reconnecting...';
+  Future<int?> _currentUserId = StorageService.getUserId();
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
   // Typing indicator: maps userId → auto-clear timer
@@ -206,7 +207,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _isBackendAvailable = _socketService.isConnected;
 
     // Listen for group events
-    _socketService.addListener('group_created', key, (dynamic data) {
+    // Group management events using standardized socket service listeners
+    _socketService.addListener('groupCreated', key, (dynamic data) {
       debugPrint('🎉 Group created event received: $data');
       if (data is Map<String, dynamic>) {
         try {
@@ -229,7 +231,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       }
     });
 
-    _socketService.addListener('group_updated', key, (dynamic data) {
+    _socketService.addListener('groupUpdated', key, (dynamic data) {
       debugPrint('🔄 Group updated event received: $data');
       if (data is Map<String, dynamic>) {
         try {
@@ -249,19 +251,171 @@ class _LobbyScreenState extends State<LobbyScreen> {
       }
     });
 
-    _socketService.addListener('group_member_removed', key, (dynamic data) {
-      debugPrint('👋 Group member removed event received: $data');
+    _socketService.addListener('groupMemberAdded', key, (dynamic data) {
+      debugPrint('👥 Group member added event received: $data');
+      if (data is Map<String, dynamic>) {
+        final groupData = data['group'] as Map<String, dynamic>?;
+        final addedUserIds = List<int>.from(data['added_user_ids'] ?? []);
+
+        if (groupData != null && mounted) {
+          _currentUserId.then((userId) {
+            if (userId != null && addedUserIds.contains(userId)) {
+              // Current user was added to the group
+              try {
+                final newGroup = Group.fromJson(groupData);
+                setState(() {
+                  // Check if group already exists (shouldn't happen, but safety check)
+                  final existingIndex = _groups.indexWhere(
+                    (g) => g.id == newGroup.id,
+                  );
+                  if (existingIndex == -1) {
+                    _groups.insert(0, newGroup);
+                  } else {
+                    _groups[existingIndex] = newGroup;
+                  }
+                });
+                _filterUsers();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Added to group: ${newGroup.name}'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                debugPrint('❌ Error parsing group_member_added event: $e');
+              }
+            } else {
+              // Another member was added, update existing group if we have it
+              try {
+                final updatedGroup = Group.fromJson(groupData);
+                final index = _groups.indexWhere(
+                  (g) => g.id == updatedGroup.id,
+                );
+                if (index != -1) {
+                  setState(() {
+                    _groups[index] = updatedGroup;
+                  });
+                  _filterUsers();
+                }
+              } catch (e) {
+                debugPrint('❌ Error updating group after member added: $e');
+              }
+            }
+          });
+        }
+      }
+    });
+
+    _socketService.addListener('groupDeleted', key, (dynamic data) {
+      debugPrint('🗑️ Group deleted event received: $data');
       if (data is Map<String, dynamic>) {
         final groupId = data['group_id'] as int?;
-        final removedUserId = data['removed_user_id'] as int?;
-        final currentUserId = StorageService.getUserId();
+        final groupName = data['group_name'] as String?;
+
+        if (groupId != null && mounted) {
+          setState(() {
+            _groups.removeWhere((g) => g.id == groupId);
+          });
+          _filterUsers();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Group deleted: ${groupName ?? 'Unknown'}'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    });
+
+    _socketService.addListener('groupMemberLeft', key, (dynamic data) {
+      debugPrint('👋 Group member removed event received: $data');
+      debugPrint('👋 Event data type: ${data.runtimeType}');
+      if (data is Map<String, dynamic>) {
+        int? groupId;
+        int? removedUserId;
+
+        // Handle different event data structures
+        if (data.containsKey('group_id') && data.containsKey('user_id')) {
+          // Structure: {group_id: 6, user_id: 16} - from group_member_left
+          groupId = data['group_id'] as int?;
+          removedUserId = data['user_id'] as int?;
+          debugPrint('👋 Using group_member_left structure');
+        } else if (data.containsKey('group')) {
+          // Structure: {group: {...}} - from group_member_removed
+          final groupData = data['group'] as Map<String, dynamic>?;
+          if (groupData != null) {
+            groupId = groupData['id'] as int?;
+            // For group_member_removed, we need to determine which user was removed
+            // by comparing the current member list with our stored list
+            // For now, we'll check if current user is still in the members list
+            final members = groupData['members'] as List?;
+            if (members != null) {
+              _currentUserId.then((userId) {
+                if (userId != null) {
+                  final isCurrentUserInGroup = members.any((member) {
+                    final memberData = member as Map<String, dynamic>;
+                    final memberUserId = memberData['user_id'] as int?;
+                    return memberUserId == userId;
+                  });
+
+                  debugPrint(
+                    '👋 Current user ($userId) in group: $isCurrentUserInGroup',
+                  );
+
+                  if (!isCurrentUserInGroup) {
+                    // Current user was removed
+                    debugPrint(
+                      '👋 Current user ($userId) not found in member list, was removed from group $groupId',
+                    );
+                    setState(() {
+                      final initialCount = _groups.length;
+                      _groups.removeWhere((g) => g.id == groupId);
+                      final finalCount = _groups.length;
+                      debugPrint(
+                        '👋 Groups count: $initialCount → $finalCount',
+                      );
+                    });
+                    _filterUsers();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('You were removed from a group'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                  } else {
+                    debugPrint(
+                      '👋 Current user still in group, another member was removed',
+                    );
+                    // Another member was removed, reload group details
+                    _loadLobby(useCacheFirst: false);
+                  }
+                }
+              });
+            }
+          }
+          debugPrint('👋 Using group_member_removed structure');
+          return; // Exit early for this structure as we handle it above
+        }
+
+        debugPrint(
+          '👋 Parsed groupId: $groupId, removedUserId: $removedUserId',
+        );
 
         if (groupId != null && removedUserId != null && mounted) {
-          currentUserId.then((userId) {
+          _currentUserId.then((userId) {
+            debugPrint(
+              '👋 Current userId: $userId, comparing with removedUserId: $removedUserId',
+            );
             if (userId == removedUserId) {
+              debugPrint(
+                '👋 Current user was removed from group $groupId, removing from list',
+              );
               // Current user was removed, remove group from list
               setState(() {
+                final initialCount = _groups.length;
                 _groups.removeWhere((g) => g.id == groupId);
+                final finalCount = _groups.length;
+                debugPrint('👋 Groups count: $initialCount → $finalCount');
               });
               _filterUsers();
               ScaffoldMessenger.of(context).showSnackBar(
@@ -271,11 +425,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 ),
               );
             } else {
+              debugPrint('👋 Another member was removed, reloading lobby');
               // Another member was removed, reload group details
               _loadLobby(useCacheFirst: false);
             }
           });
+        } else {
+          debugPrint(
+            '👋 Missing required data: groupId=$groupId, removedUserId=$removedUserId, mounted=$mounted',
+          );
         }
+      } else {
+        debugPrint('👋 Event data is not a Map: $data');
       }
     });
 
@@ -1238,53 +1399,82 @@ class _LobbyScreenState extends State<LobbyScreen> {
             style: TextStyle(color: Colors.grey[600], fontSize: 11),
           ),
           const Spacer(),
-          // Create group button
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: () async {
-                final result = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const CreateGroupScreen(),
-                  ),
-                );
-                if (result == true) {
-                  _loadLobby(useCacheFirst: false);
-                }
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF00D9FF).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: const Color(0xFF00D9FF).withOpacity(0.3),
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.add, color: Color(0xFF00D9FF), size: 16),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Create',
-                      style: const TextStyle(
-                        color: Color(0xFF00D9FF),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
+          // Create group button (only for admin users)
+          if (_isCurrentUserAdmin)
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () async {
+                  final result = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const CreateGroupScreen(),
                     ),
-                  ],
+                  );
+                  if (result == true) {
+                    _loadLobby(useCacheFirst: false);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00D9FF).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: const Color(0xFF00D9FF).withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.add, color: Color(0xFF00D9FF), size: 16),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Create',
+                        style: const TextStyle(
+                          color: Color(0xFF00D9FF),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
+            )
+          else
+            // Show admin-only indicator for non-admin users
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.admin_panel_settings,
+                    color: Colors.grey[500],
+                    size: 12,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Admin only',
+                    style: TextStyle(
+                      color: Colors.grey[500],
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );

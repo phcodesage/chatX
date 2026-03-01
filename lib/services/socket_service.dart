@@ -99,6 +99,14 @@ class SocketService {
   final Map<String, Function(Map<String, dynamic>)>
   _groupMessageStatusUpdatedListeners = {};
 
+  // Missing group management listeners
+  final Map<String, Function(Map<String, dynamic>)> _groupCreatedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupUpdatedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupDeletedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupMemberAddedListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)> _groupTypingListeners = {};
+
   // ---------------------------------------------------------------------------
   // Keyed listener registration / removal helpers
   // ---------------------------------------------------------------------------
@@ -283,6 +291,26 @@ class SocketService {
         _groupMessageStatusUpdatedListeners[key] =
             callback as Function(Map<String, dynamic>);
         break;
+      // Group management events
+      case 'groupCreated':
+        _groupCreatedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupUpdated':
+        _groupUpdatedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupDeleted':
+        _groupDeletedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupMemberAdded':
+        _groupMemberAddedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupTyping':
+        _groupTypingListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
       case 'test_response':
         // Add test_response listeners to group new message listeners for now
         _groupNewMessageListeners[key] =
@@ -435,6 +463,22 @@ class SocketService {
       case 'groupMessageStatusUpdated':
         _groupMessageStatusUpdatedListeners.remove(key);
         break;
+      // Group management events
+      case 'groupCreated':
+        _groupCreatedListeners.remove(key);
+        break;
+      case 'groupUpdated':
+        _groupUpdatedListeners.remove(key);
+        break;
+      case 'groupDeleted':
+        _groupDeletedListeners.remove(key);
+        break;
+      case 'groupMemberAdded':
+        _groupMemberAddedListeners.remove(key);
+        break;
+      case 'groupTyping':
+        _groupTypingListeners.remove(key);
+        break;
       case 'test_response':
         // Remove from group new message listeners
         _groupNewMessageListeners.remove(key);
@@ -492,6 +536,12 @@ class SocketService {
     _groupReactionClearedListeners.remove(key);
     _groupMemberLeftListeners.remove(key);
     _groupMessageStatusUpdatedListeners.remove(key);
+    // Group management listeners
+    _groupCreatedListeners.remove(key);
+    _groupUpdatedListeners.remove(key);
+    _groupDeletedListeners.remove(key);
+    _groupMemberAddedListeners.remove(key);
+    _groupTypingListeners.remove(key);
   }
 
   // Broadcast helpers
@@ -1112,7 +1162,22 @@ class SocketService {
 
     // Group member left
     _socket!.on('group_member_left', (data) {
-      debugPrint('👋 Group member left: $data');
+      debugPrint('👋 [SOCKET] Group member left event received: $data');
+      debugPrint(
+        '👋 [SOCKET] Broadcasting to ${_groupMemberLeftListeners.length} listeners',
+      );
+      debugPrint(
+        '👋 [SOCKET] Listener keys: ${_groupMemberLeftListeners.keys}',
+      );
+      _broadcast(_groupMemberLeftListeners, data as Map<String, dynamic>);
+    });
+
+    // Group member removed (alternative event name for member removal)
+    _socket!.on('group_member_removed', (data) {
+      debugPrint('👋 [SOCKET] Group member removed event received: $data');
+      debugPrint(
+        '👋 [SOCKET] Broadcasting to ${_groupMemberLeftListeners.length} listeners',
+      );
       _broadcast(_groupMemberLeftListeners, data as Map<String, dynamic>);
     });
 
@@ -1123,6 +1188,38 @@ class SocketService {
         _groupMessageStatusUpdatedListeners,
         data as Map<String, dynamic>,
       );
+    });
+
+    // === Group management events ===
+
+    // Group created - when a new group is created
+    _socket!.on('group_created', (data) {
+      debugPrint('🎉 Group created: $data');
+      _broadcast(_groupCreatedListeners, data as Map<String, dynamic>);
+    });
+
+    // Group updated - when group info is updated
+    _socket!.on('group_updated', (data) {
+      debugPrint('🔄 Group updated: $data');
+      _broadcast(_groupUpdatedListeners, data as Map<String, dynamic>);
+    });
+
+    // Group deleted - when a group is deleted
+    _socket!.on('group_deleted', (data) {
+      debugPrint('🗑️ Group deleted: $data');
+      _broadcast(_groupDeletedListeners, data as Map<String, dynamic>);
+    });
+
+    // Group member added - when members are added to a group
+    _socket!.on('group_member_added', (data) {
+      debugPrint('👥 Group member added: $data');
+      _broadcast(_groupMemberAddedListeners, data as Map<String, dynamic>);
+    });
+
+    // Group typing - typing indicators in groups
+    _socket!.on('group_typing', (data) {
+      debugPrint('⌨️ Group typing: $data');
+      _broadcast(_groupTypingListeners, data as Map<String, dynamic>);
     });
 
     // Debug: Test response event - handle it properly
