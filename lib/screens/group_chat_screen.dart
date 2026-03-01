@@ -42,6 +42,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   // Scroll to bottom button state
   bool _isAtBottom = true;
+  int _unreadCount = 0;
 
   // Reply state
   GroupMessage? _replyingToMessage;
@@ -343,6 +344,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             '🔊 Playing notification sound for message from other user',
           );
           _playNotificationSound();
+
+          // Increment unread count if not at bottom (for incoming messages)
+          if (!_isAtBottom) {
+            _unreadCount++;
+          }
         }
 
         // Mark as viewed if at bottom
@@ -652,12 +658,38 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         _scrollController.position.maxScrollExtent - 100;
 
     if (isAtBottom != _isAtBottom) {
-      setState(() => _isAtBottom = isAtBottom);
+      setState(() {
+        _isAtBottom = isAtBottom;
+        // Reset unread count when at bottom
+        if (isAtBottom) {
+          _unreadCount = 0;
+        }
+      });
 
       if (isAtBottom) {
         _markMessagesAsViewed();
       }
     }
+  }
+
+  /// Scroll to bottom and mark all messages as read
+  Future<void> _scrollToBottomAndMarkRead() async {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+
+    // Reset unread count
+    setState(() {
+      _unreadCount = 0;
+      _isAtBottom = true;
+    });
+
+    // Mark messages as viewed
+    _markMessagesAsViewed();
   }
 
   Future<void> _sendMessage() async {
@@ -918,13 +950,81 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                         style: TextStyle(color: Colors.grey, fontSize: 16),
                       ),
                     )
-                  : ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _messages.length,
-                      itemBuilder: (context, index) {
-                        return _buildMessageBubble(_messages[index]);
-                      },
+                  : Stack(
+                      children: [
+                        ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _messages.length,
+                          itemBuilder: (context, index) {
+                            return _buildMessageBubble(_messages[index]);
+                          },
+                        ),
+                        // Scroll to bottom button - positioned inside messages area
+                        if (!_isAtBottom)
+                          Positioned(
+                            bottom: 16,
+                            left: 0,
+                            right: 0,
+                            child: Center(
+                              child: GestureDetector(
+                                onTap: _scrollToBottomAndMarkRead,
+                                child: Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF7C3AED),
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.3),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      const Icon(
+                                        Icons.keyboard_arrow_down,
+                                        color: Colors.white,
+                                        size: 28,
+                                      ),
+                                      if (_unreadCount > 0)
+                                        Positioned(
+                                          top: 2,
+                                          right: 2,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: const BoxDecoration(
+                                              color: Colors.red,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            constraints: const BoxConstraints(
+                                              minWidth: 18,
+                                              minHeight: 18,
+                                            ),
+                                            child: Text(
+                                              _unreadCount > 99
+                                                  ? '99+'
+                                                  : _unreadCount.toString(),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
             ),
 
