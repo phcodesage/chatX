@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -371,44 +372,50 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _handleMessageSent(Map<String, dynamic> data) {
-    // Message sent confirmation - update optimistic message OR add new message from another device
+    // Message sent confirmation - replace optimistic message with real message
     final messageId = data['message_id'] as int?;
+    final senderId = data['sender_id'] as int?;
+    final messageType = data['message_type'] as String? ?? 'text';
+
     debugPrint(
-      '📨 [GROUP MESSAGE SENT] Received: messageId=$messageId, data=$data',
+      '📨 [GROUP MESSAGE SENT] Received: messageId=$messageId, senderId=$senderId, type=$messageType, currentUserId=$_currentUserId',
     );
 
     if (messageId == null) return;
 
     if (mounted) {
       setState(() {
-        // Find and update the message
-        final index = _messages.indexWhere((m) => m.id == messageId);
-        if (index != -1) {
-          // Update existing optimistic message
-          debugPrint(
-            '📨 [GROUP MESSAGE SENT] Updating existing message at index $index',
+        // If this is from the current user, replace optimistic message
+        if (senderId == _currentUserId) {
+          // Find optimistic message (temporary ID > 1000000000000 - timestamp range)
+          final optimisticIndex = _messages.indexWhere(
+            (m) =>
+                m.id > 1000000000000 && // Temporary ID range
+                m.senderId == _currentUserId &&
+                (m.content == data['content'] || // For text messages
+                    (messageType != 'text' &&
+                        m.messageType ==
+                            messageType)), // For file messages, match by type
           );
-          _messages[index] = GroupMessage.fromJson(data);
-        } else {
-          // Add new message (sent from another device of the same user)
-          debugPrint(
-            '📨 [GROUP MESSAGE SENT] Adding new message from another device',
-          );
-          final message = GroupMessage.fromJson(data);
-          _messages.add(message);
 
-          // Scroll to bottom if at bottom
-          if (_isAtBottom) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (_scrollController.hasClients) {
-                _scrollController.animateTo(
-                  _scrollController.position.maxScrollExtent,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOut,
-                );
-              }
-            });
+          if (optimisticIndex != -1) {
+            debugPrint(
+              '📨 [GROUP MESSAGE SENT] Replacing optimistic message at index $optimisticIndex',
+            );
+            _messages[optimisticIndex] = GroupMessage.fromJson(data);
+          } else {
+            debugPrint(
+              '📨 [GROUP MESSAGE SENT] No optimistic message found, adding new message',
+            );
+            // Fallback: add message if no optimistic message found
+            final message = GroupMessage.fromJson(data);
+            _messages.add(message);
           }
+        } else {
+          // Message from another user - this shouldn't happen in groupMessageSent
+          debugPrint(
+            '📨 [GROUP MESSAGE SENT] Ignoring message from other user: $senderId',
+          );
         }
       });
     }
@@ -638,39 +645,65 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     // Capture reply info before clearing
     final replyToId = _replyingToMessage?.id;
 
+    // Generate a temporary ID for optimistic update
+    final tempId = DateTime.now().millisecondsSinceEpoch;
+    final now = DateTime.now();
+
+    // Create optimistic message
+    final optimisticMessage = GroupMessage(
+      id: tempId, // Temporary ID
+      messageId: tempId, // Use same temp ID for messageId
+      groupId: widget.group.id,
+      senderId: _currentUserId!,
+      sender: null, // Will be updated with real data
+      content: content,
+      messageType: 'text',
+      timestamp: now.toIso8601String(),
+      timestampMs: now.millisecondsSinceEpoch,
+      replyToId: replyToId,
+    );
+
     // Clear input and reply state immediately for better UX
     _messageController.clear();
     setState(() {
       _replyingToMessage = null;
       _showActionButtons = false; // Hide action buttons after sending
+      // Add optimistic message immediately
+      _messages.add(optimisticMessage);
+    });
+
+    // Scroll to bottom after adding optimistic message
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
     });
 
     try {
-      final message = await GroupService.sendMessage(
+      // Send message via API (this will trigger groupMessageSent event)
+      await GroupService.sendMessage(
         groupId: widget.group.id,
         content: content,
         replyToId: replyToId,
       );
 
-      if (mounted) {
-        setState(() {
-          _messages.add(message);
-        });
-
-        // Scroll to bottom after sending
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.animateTo(
-              _scrollController.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut,
-            );
-          }
-        });
-      }
+      // Don't add message here - wait for socket confirmation
+      debugPrint(
+        '📤 Message sent successfully, waiting for socket confirmation',
+      );
     } catch (e) {
       debugPrint('Error sending message: $e');
+
+      // Remove optimistic message on error
       if (mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m.id == tempId);
+        });
+
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to send message: $e')));
@@ -697,31 +730,80 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   Future<void> _uploadFile(File file) async {
+    // Generate a temporary ID for optimistic update
+    final tempId = DateTime.now().millisecondsSinceEpoch;
+    final now = DateTime.now();
+
+    // Determine file type and create appropriate optimistic message
+    final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
+    final fileName = file.path.split('/').last;
+    final fileSize = await file.length();
+
+    String messageType = 'file';
+    String content = fileName;
+
+    if (mimeType.startsWith('image/')) {
+      messageType = 'image';
+      content = 'Image: $fileName';
+    } else if (mimeType.startsWith('video/')) {
+      messageType = 'video';
+      content = 'Video: $fileName';
+    } else if (mimeType.startsWith('audio/')) {
+      messageType = 'audio';
+      content = 'Audio: $fileName';
+    }
+
+    // Create optimistic message
+    final optimisticMessage = GroupMessage(
+      id: tempId, // Temporary ID
+      messageId: tempId, // Use same temp ID for messageId
+      groupId: widget.group.id,
+      senderId: _currentUserId!,
+      sender: null, // Will be updated with real data
+      content: content,
+      messageType: messageType,
+      timestamp: now.toIso8601String(),
+      timestampMs: now.millisecondsSinceEpoch,
+      fileName: fileName,
+      fileSize: fileSize,
+      fileType: mimeType,
+    );
+
+    // Add optimistic message immediately for responsive UI
+    if (mounted) {
+      setState(() {
+        _messages.add(optimisticMessage);
+      });
+
+      // Scroll to bottom after adding optimistic message
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+
     try {
-      final message = await GroupService.uploadFile(
-        groupId: widget.group.id,
-        file: file,
+      // Upload file via API (this will trigger socket events)
+      await GroupService.uploadFile(groupId: widget.group.id, file: file);
+
+      // Don't add message here - wait for socket confirmation
+      debugPrint(
+        '📎 File uploaded successfully, waiting for socket confirmation',
       );
-
-      if (mounted) {
-        setState(() {
-          _messages.add(message);
-        });
-
-        // Scroll to bottom
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.animateTo(
-              _scrollController.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut,
-            );
-          }
-        });
-      }
     } catch (e) {
       debugPrint('Error uploading file: $e');
+
+      // Remove optimistic message on error
       if (mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m.id == tempId);
+        });
+
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to upload file: $e')));
@@ -2494,11 +2576,23 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   /// Ring doorbell for group (notify all members)
   void _ringDoorbell() async {
+    // Show immediate feedback (optimistic)
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔔 Ringing doorbell...'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
+
     try {
       // Use Socket.IO instead of REST API (backend doesn't have REST endpoint yet)
       _socketService.ringGroupDoorbell(widget.group.id);
 
       if (mounted) {
+        // Update to success message
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('🔔 Doorbell rung for all members'),
@@ -2509,6 +2603,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     } catch (e) {
       debugPrint('Error ringing doorbell: $e');
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to ring doorbell: $e')));
