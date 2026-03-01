@@ -794,6 +794,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: const Color(0xFF1A1A2E),
       appBar: _buildAppBar(),
       body: GestureDetector(
@@ -2981,12 +2982,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final headerColor = const Color(0xFF1E293B); // Match group chat theme
 
     return Container(
-      padding: EdgeInsets.only(
-        left: 12,
-        right: 12,
-        top: 0,
-        bottom: 4 + MediaQuery.of(context).viewInsets.bottom,
-      ),
+      padding: const EdgeInsets.only(left: 12, right: 12, top: 0, bottom: 4),
       decoration: BoxDecoration(
         color: headerColor,
         border: const Border(
