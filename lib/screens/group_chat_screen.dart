@@ -2935,9 +2935,24 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                       offset: cursorPos + emojis[index].length,
                     );
 
-                    setState(
-                      () {},
-                    ); // Force rebuild to update button visibility
+                    // Manually trigger typing indicator since onChanged won't fire
+                    _typingEmitTimer?.cancel();
+                    _typingEmitTimer = Timer(const Duration(milliseconds: 150), () {
+                      debugPrint(
+                        '🔍 [EMOJI TYPING DEBUG] Socket connected: ${_socketService.isConnected}',
+                      );
+                      debugPrint(
+                        '🔍 [EMOJI TYPING DEBUG] Emitting typing for group ${widget.group.id} with text: "$newText"',
+                      );
+                      _socketService.sendGroupTyping(widget.group.id, newText);
+                    });
+
+                    setState(() {
+                      // Hide action buttons when typing
+                      if (newText.isNotEmpty && _showActionButtons) {
+                        _showActionButtons = false;
+                      }
+                    }); // Force rebuild to update button visibility
                   },
                   child: Center(
                     child: Text(

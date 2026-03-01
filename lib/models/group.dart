@@ -1,5 +1,6 @@
 /// Group model for group chats
 import 'package:flutter/foundation.dart';
+import '../config/api_config.dart';
 
 class Group {
   final int id;
@@ -271,6 +272,17 @@ class GroupMessage {
             '📎 [GROUP MESSAGE PARSE] HTML parsing failed for content: $content',
           );
         }
+      }
+
+      // Process file URL to convert relative paths to full URLs (like 1-on-1 chat)
+      if (fileUrl != null && fileUrl.isNotEmpty) {
+        final fullFileUrl = fileUrl.startsWith('http')
+            ? fileUrl
+            : '${ApiConfig.baseUrl}$fileUrl';
+        debugPrint(
+          '📎 [GROUP MESSAGE PARSE] Converting URL: $fileUrl -> $fullFileUrl',
+        );
+        fileUrl = fullFileUrl;
       }
 
       return GroupMessage(

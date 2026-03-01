@@ -171,7 +171,7 @@ class ChatCacheService {
   }
 
   /// Save group messages to cache.
-  /// Only caches text content - strips file URLs to save storage space.
+  /// Preserves all message data including file URLs for proper display.
   static Future<void> saveGroupMessages(
     int groupId,
     List<GroupMessage> messages,
@@ -179,7 +179,7 @@ class ChatCacheService {
     if (!_initialized) return;
     final capped = messages.take(_maxMessagesPerThread).toList();
 
-    // Strip file URLs to save storage
+    // Don't strip file URLs anymore - preserve all data for proper display
     final cachedMessages = capped.map((m) => _stripGroupFileData(m)).toList();
 
     await _groupChatBox.put(_groupConversationKey(groupId), {
@@ -191,31 +191,9 @@ class ChatCacheService {
 
   /// Strip file URLs from group message to save storage space
   static GroupMessage _stripGroupFileData(GroupMessage message) {
-    // If it's a text message, return as-is
-    if (message.messageType == 'text') {
-      return message;
-    }
-
-    // For file messages, strip the file URL but keep the message structure
-    return GroupMessage(
-      id: message.id,
-      messageId: message.messageId,
-      groupId: message.groupId,
-      senderId: message.senderId,
-      sender: message.sender,
-      content: message.content, // This already has the preview text
-      messageType: message.messageType,
-      timestamp: message.timestamp,
-      timestampMs: message.timestampMs,
-      isDeleted: message.isDeleted,
-      fileUrl: null, // Strip file URL to save space
-      fileName: null,
-      fileSize: null,
-      fileType: null,
-      replyToId: message.replyToId,
-      replyPreview: message.replyPreview,
-      reactions: message.reactions,
-    );
+    // Don't strip file data anymore - we need it for proper display
+    // The storage savings aren't worth the broken file message display
+    return message;
   }
 
   /// Load cached group messages.
