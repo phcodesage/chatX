@@ -1217,8 +1217,8 @@ class SocketService {
     });
 
     // Group typing - typing indicators in groups
-    _socket!.on('group_typing', (data) {
-      debugPrint('⌨️ Group typing: $data');
+    _socket!.on('group_user_typing', (data) {
+      debugPrint('⌨️ Group user typing: $data');
       _broadcast(_groupTypingListeners, data as Map<String, dynamic>);
     });
 
@@ -1433,7 +1433,10 @@ class SocketService {
   /// Send typing indicator in a group
   void sendGroupTyping(int groupId, String message) {
     final preview = message.length > 120 ? message.substring(0, 120) : message;
-    emit('group_typing', {'group_id': groupId, 'message': preview});
+    debugPrint(
+      '⌨️ Sending group typing: group_id=$groupId, message="$preview"',
+    );
+    emit('group_user_typing', {'group_id': groupId, 'message': preview});
   }
 
   /// Confirm group message delivery

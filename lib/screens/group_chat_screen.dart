@@ -85,6 +85,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     super.initState();
     _inputFocusNode.addListener(_onFocusChange);
     _scrollController.addListener(_onScroll);
+
     _initialize();
 
     // Set this group as active to prevent FCM notifications
@@ -249,6 +250,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       if (data['group_id'] == widget.group.id) {
         debugPrint('⌨️ [GROUP TYPING] Processing for current group');
         _handleGroupUserTyping(data);
+      } else {
+        debugPrint(
+          '⌨️ [GROUP TYPING] Ignoring - different group: ${data['group_id']} vs ${widget.group.id}',
+        );
       }
     });
   }
@@ -554,17 +559,29 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _handleGroupUserTyping(Map<String, dynamic> data) {
+    debugPrint('⌨️ [GROUP TYPING HANDLER] Processing data: $data');
+
     final userId = data['user_id'] as int?;
     final username = data['username'] as String?;
     final fullName = data['full_name'] as String?;
     final message = data['message'] as String? ?? '';
 
+    debugPrint(
+      '⌨️ [GROUP TYPING HANDLER] userId: $userId, currentUserId: $_currentUserId',
+    );
+    debugPrint(
+      '⌨️ [GROUP TYPING HANDLER] username: $username, fullName: $fullName',
+    );
+    debugPrint('⌨️ [GROUP TYPING HANDLER] message: "$message"');
+
     // Don't show typing indicator for own messages
     if (userId == _currentUserId) {
+      debugPrint('⌨️ [GROUP TYPING HANDLER] Ignoring own typing indicator');
       return;
     }
 
     final displayName = fullName ?? username ?? 'Someone';
+    debugPrint('⌨️ [GROUP TYPING HANDLER] Display name: $displayName');
 
     // Cancel previous hide timer
     _typingHideTimer?.cancel();
@@ -575,9 +592,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         _typingMessage = message;
       });
 
+      debugPrint(
+        '⌨️ [GROUP TYPING HANDLER] Updated UI - typingUserName: $_typingUserName, typingMessage: $_typingMessage',
+      );
+
       // Auto-hide after 3 seconds
       _typingHideTimer = Timer(const Duration(seconds: 3), () {
         if (mounted) {
+          debugPrint('⌨️ [GROUP TYPING HANDLER] Auto-hiding typing indicator');
           setState(() {
             _typingUserName = '';
             _typingMessage = '';
@@ -907,7 +929,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
 
             // Typing indicator
-            if (_typingUserName.isNotEmpty) _buildTypingIndicator(),
+            Container(
+              height: _typingUserName.isNotEmpty ? null : 0,
+              child: _typingUserName.isNotEmpty
+                  ? _buildTypingIndicator()
+                  : const SizedBox.shrink(),
+            ),
 
             // Reply preview
             if (_replyingToMessage != null) _buildReplyPreview(),
@@ -1525,48 +1552,34 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   Widget _buildTypingIndicator() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: const Color(0xFF1E293B).withOpacity(0.5),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF8B5CF6)),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: RichText(
-              text: TextSpan(
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
-                children: [
-                  TextSpan(
-                    text: '$_typingUserName: ',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF8B5CF6),
-                    ),
-                  ),
-                  TextSpan(
-                    text: _typingMessage.isEmpty ? 'typing...' : _typingMessage,
-                    style: TextStyle(
-                      color: _typingMessage.isEmpty
-                          ? Colors.white54
-                          : Colors.white70,
-                      fontStyle: _typingMessage.isEmpty
-                          ? FontStyle.italic
-                          : FontStyle.normal,
-                    ),
-                  ),
-                ],
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B), // Match group chat header color
+        border: const Border(
+          top: BorderSide(color: Color(0xFF3D3D3D), width: 1),
+        ),
+      ),
+      child: RepaintBoundary(child: _buildTypingPreviewBubble()),
+    );
+  }
+
+  Widget _buildTypingPreviewBubble() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        decoration: BoxDecoration(
+          color: const Color(0xFFA32CC4), // Same purple color as 1-on-1 chat
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Text(
+          _typingMessage.isEmpty
+              ? '$_typingUserName is typing...'
+              : '$_typingUserName: $_typingMessage',
+          style: const TextStyle(color: Colors.white, fontSize: 15),
+        ),
       ),
     );
   }
