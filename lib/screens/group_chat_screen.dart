@@ -274,7 +274,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
       if (mounted) {
         setState(() {
-          _messages = messages.reversed.toList();
+          _messages = messages; // Don't reverse - ListView will handle it
           _isLoading = false;
           _isLoadingMessages = false;
         });
@@ -1504,6 +1504,19 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   // Status indicator (simplified for groups)
                   const Icon(Icons.done_all, size: 16, color: Colors.white70),
                 ],
+              ),
+            ),
+          // Full timestamp - only visible when _showTimestamps is true
+          if (_showTimestamps)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Text(
+                message.formattedTimestampFull,
+                style: const TextStyle(
+                  color: Color(0xFFFF69B4), // Hot pink
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
         ],

@@ -448,6 +448,36 @@ class GroupMessage {
     }
   }
 
+  /// Format timestamp for full display with square brackets and timezone
+  /// Format: [MM/DD/YYYY, HH:MM:SS GMT+offset]
+  String get formattedTimestampFull {
+    try {
+      final dateTime = DateTime.parse(timestamp).toLocal();
+
+      // Format date parts
+      final month = dateTime.month.toString().padLeft(2, '0');
+      final day = dateTime.day.toString().padLeft(2, '0');
+      final year = dateTime.year;
+
+      // Format time parts
+      final hour = dateTime.hour.toString().padLeft(2, '0');
+      final minute = dateTime.minute.toString().padLeft(2, '0');
+      final second = dateTime.second.toString().padLeft(2, '0');
+
+      // Get timezone offset
+      final offset = dateTime.timeZoneOffset;
+      final offsetHours = offset.inHours.abs();
+      final offsetSign = offset.isNegative ? '-' : '+';
+
+      return '[$month/$day/$year, $hour:$minute:$second GMT$offsetSign$offsetHours]';
+    } catch (e) {
+      debugPrint(
+        '🕐 [GROUP TIMESTAMP DEBUG] Error parsing timestamp "$timestamp": $e',
+      );
+      return '';
+    }
+  }
+
   bool isSentByMe(int currentUserId) => senderId == currentUserId;
 }
 
