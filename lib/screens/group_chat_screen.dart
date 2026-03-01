@@ -508,9 +508,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final timestampMs =
         data['timestamp_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch;
 
-    // Don't show notification if we sent it
+    // Don't show incoming notification if we sent it (we already have outgoing message)
     if (senderId == _currentUserId) {
-      debugPrint('Ignoring own doorbell notification');
+      debugPrint(
+        'Ignoring own doorbell notification - sender sees outgoing message',
+      );
       return;
     }
 
@@ -534,7 +536,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       debugPrint('Error playing doorbell sound: $e');
     }
 
-    // Create doorbell system message
+    // Create doorbell system message for incoming notifications
     final doorbellMessage = GroupMessage(
       id: timestampMs,
       messageId: timestampMs,
@@ -1137,28 +1139,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         IconButton(
           icon: const Icon(Icons.notifications, color: Colors.white),
           onPressed: () {
-            try {
-              // Use Socket.IO instead of REST API
-              _socketService.ringGroupDoorbell(widget.group.id);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('🔔 Doorbell sent to all members'),
-                    backgroundColor: Color(0xFF4C1D95),
-                    duration: Duration(seconds: 2),
-                  ),
-                );
-              }
-            } catch (e) {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Failed to ring doorbell: $e'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
-            }
+            _ringDoorbell();
           },
           tooltip: 'Ring Doorbell',
         ),
@@ -1227,7 +1208,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   Widget _buildMessageBubble(GroupMessage message) {
-    // Handle system messages (doorbell, etc.)
+    // Handle system messages (doorbell notifications from others, etc.)
     if (message.messageType == 'system') {
       return Center(
         child: Container(
@@ -1248,6 +1229,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           ),
         ),
       );
+    }
+
+    // Handle doorbell messages as regular outgoing messages
+    if (message.messageType == 'doorbell') {
+      // Treat doorbell messages as regular messages (they'll show as outgoing for sender)
+      // The message content is already set to "You sent a notification! 🔔"
     }
 
     final isSentByMe = message.senderId == _currentUserId;
@@ -2971,34 +2958,48 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   /// Ring doorbell for group (notify all members)
   void _ringDoorbell() async {
-    // Show immediate feedback (optimistic)
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('🔔 Ringing doorbell...'),
-          duration: Duration(seconds: 1),
-        ),
-      );
-    }
-
     try {
-      // Use Socket.IO instead of REST API (backend doesn't have REST endpoint yet)
+      // Create outgoing doorbell message immediately
+      final now = DateTime.now();
+      final tempId = now.millisecondsSinceEpoch;
+
+      final doorbellMessage = GroupMessage(
+        id: tempId,
+        messageId: tempId,
+        groupId: widget.group.id,
+        senderId: _currentUserId!,
+        sender: null, // Will be populated by server response
+        content: 'You sent a notification! 🔔',
+        messageType: 'doorbell',
+        timestamp: now.toIso8601String(),
+        timestampMs: tempId,
+        reactions: {},
+      );
+
+      // Add outgoing message to UI immediately
+      setState(() {
+        _messages.add(doorbellMessage);
+      });
+
+      // Scroll to bottom to show the message
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+
+      // Send doorbell via Socket.IO
       _socketService.ringGroupDoorbell(widget.group.id);
 
-      if (mounted) {
-        // Update to success message
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('🔔 Doorbell rung for all members'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
+      debugPrint('🔔 Doorbell sent successfully');
     } catch (e) {
       debugPrint('Error ringing doorbell: $e');
+
       if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to ring doorbell: $e')));
