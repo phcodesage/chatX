@@ -1436,7 +1436,13 @@ class SocketService {
     debugPrint(
       '⌨️ Sending group typing: group_id=$groupId, message="$preview"',
     );
-    emit('group_user_typing', {'group_id': groupId, 'message': preview});
+    emit('group_typing', {'group_id': groupId, 'message': preview});
+  }
+
+  /// Stop typing indicator in a group
+  void stopGroupTyping(int groupId) {
+    debugPrint('⌨️ Stopping group typing: group_id=$groupId');
+    emit('group_typing', {'group_id': groupId, 'message': ''});
   }
 
   /// Confirm group message delivery

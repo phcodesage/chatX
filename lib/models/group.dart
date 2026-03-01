@@ -239,15 +239,37 @@ class GroupMessage {
       String? fileType = json['file_type'] as String?;
       int? fileSize = json['file_size'] as int?;
 
+      // Debug logging for file messages
+      if (messageType != 'text' && messageType != 'system') {
+        debugPrint('📎 [GROUP MESSAGE PARSE] File message detected:');
+        debugPrint('📎 [GROUP MESSAGE PARSE] - Type: $messageType');
+        debugPrint('📎 [GROUP MESSAGE PARSE] - Content: $content');
+        debugPrint('📎 [GROUP MESSAGE PARSE] - File URL: $fileUrl');
+        debugPrint('📎 [GROUP MESSAGE PARSE] - File Name: $fileName');
+        debugPrint('📎 [GROUP MESSAGE PARSE] - File Type: $fileType');
+        debugPrint('📎 [GROUP MESSAGE PARSE] - File Size: $fileSize');
+        debugPrint('📎 [GROUP MESSAGE PARSE] - Raw JSON: $json');
+      }
+
       // If content contains HTML and no file info is provided, parse it
       if (content.contains('<') && content.contains('>') && fileUrl == null) {
+        debugPrint(
+          '📎 [GROUP MESSAGE PARSE] Parsing HTML content for file info',
+        );
         final htmlParseResult = _parseHtmlContent(content);
         if (htmlParseResult != null) {
+          debugPrint(
+            '📎 [GROUP MESSAGE PARSE] HTML parsing successful: $htmlParseResult',
+          );
           messageType = htmlParseResult['messageType'] ?? messageType;
           fileUrl = htmlParseResult['fileUrl'];
           fileName = htmlParseResult['fileName'];
           fileType = htmlParseResult['fileType'];
           fileSize = htmlParseResult['fileSize'];
+        } else {
+          debugPrint(
+            '📎 [GROUP MESSAGE PARSE] HTML parsing failed for content: $content',
+          );
         }
       }
 

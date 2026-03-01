@@ -310,6 +310,7 @@ class GroupService {
     int limit = 50,
     int? beforeId,
     bool offlineFirst = true,
+    Function(List<GroupMessage>)? onBackgroundUpdate,
   }) async {
     // Load from cache first for instant display
     if (offlineFirst) {
@@ -320,8 +321,13 @@ class GroupService {
           '📦 Loaded ${cachedMessages.length} group messages from cache',
         );
 
-        // Fetch fresh data in background
-        _syncGroupMessagesInBackground(groupId, limit, beforeId);
+        // Fetch fresh data in background and notify UI when complete
+        _syncGroupMessagesInBackground(
+          groupId,
+          limit,
+          beforeId,
+          onBackgroundUpdate,
+        );
 
         return cachedMessages;
       }
@@ -416,13 +422,22 @@ class GroupService {
     int groupId,
     int limit,
     int? beforeId,
+    Function(List<GroupMessage>)? onBackgroundUpdate,
   ) async {
     try {
-      await _fetchGroupMessagesFromServer(
+      final freshMessages = await _fetchGroupMessagesFromServer(
         groupId: groupId,
         limit: limit,
         beforeId: beforeId,
       );
+
+      // Notify UI with fresh messages that have file URLs
+      if (onBackgroundUpdate != null && freshMessages.isNotEmpty) {
+        debugPrint(
+          '🔄 Background sync complete - notifying UI with ${freshMessages.length} fresh messages',
+        );
+        onBackgroundUpdate(freshMessages);
+      }
     } catch (e) {
       debugPrint('Background group sync failed: $e');
       // Silently fail - user already has cached data

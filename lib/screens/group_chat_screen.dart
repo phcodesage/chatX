@@ -279,6 +279,21 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           _isLoadingMessages = false;
         });
 
+        // Debug: Log file messages
+        final fileMessages = messages
+            .where((m) => m.messageType != 'text' && m.messageType != 'system')
+            .toList();
+        if (fileMessages.isNotEmpty) {
+          debugPrint(
+            '📎 [LOAD MESSAGES] Found ${fileMessages.length} file messages:',
+          );
+          for (final msg in fileMessages) {
+            debugPrint(
+              '📎 [LOAD MESSAGES] - ID: ${msg.id}, Type: ${msg.messageType}, URL: ${msg.fileUrl}, Name: ${msg.fileName}',
+            );
+          }
+        }
+
         // Mark messages as viewed
         _markMessagesAsViewed();
 
@@ -312,6 +327,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         '📨 [GROUP NEW MESSAGE] Successfully parsed message: ${message.id}',
       );
       debugPrint('📨 [GROUP NEW MESSAGE] Message content: ${message.content}');
+      debugPrint('📨 [GROUP NEW MESSAGE] Message type: ${message.messageType}');
+      debugPrint('📨 [GROUP NEW MESSAGE] File URL: ${message.fileUrl}');
+      debugPrint('📨 [GROUP NEW MESSAGE] File name: ${message.fileName}');
+      debugPrint('📨 [GROUP NEW MESSAGE] File type: ${message.fileType}');
       debugPrint('📨 [GROUP NEW MESSAGE] Sender ID: ${message.senderId}');
       debugPrint('📨 [GROUP NEW MESSAGE] Current user ID: $_currentUserId');
 
@@ -692,6 +711,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _markMessagesAsViewed();
   }
 
+  /// Stop group typing indicator
+  void _stopGroupTyping() {
+    // Cancel any pending typing emit timer
+    _typingEmitTimer?.cancel();
+
+    // Send empty message to stop typing indicator
+    _socketService.stopGroupTyping(widget.group.id);
+  }
+
   Future<void> _sendMessage() async {
     final content = _messageController.text.trim();
     if (content.isEmpty) return;
@@ -719,6 +747,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     // Clear input and reply state immediately for better UX
     _messageController.clear();
+    _stopGroupTyping(); // Stop typing indicator immediately when sending
     setState(() {
       _replyingToMessage = null;
       _showActionButtons = false; // Hide action buttons after sending
@@ -915,6 +944,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   void dispose() {
     // Clear active chat when leaving group chat screen
     ActiveChatService().clearActiveChat();
+
+    // Stop typing indicator when leaving the screen
+    _stopGroupTyping();
 
     _socketService.removeListenersForKey('group_chat_${widget.group.id}');
     _socketService.leaveGroupChat(widget.group.id);
@@ -1231,6 +1263,21 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         (message.fileType?.startsWith('audio/') ?? false);
     final bool isMedia = isImage || isVideo;
 
+    // Debug logging for file message display
+    if (message.messageType != 'text' && message.messageType != 'system') {
+      debugPrint('🎨 [MESSAGE DISPLAY] Rendering file message:');
+      debugPrint('🎨 [MESSAGE DISPLAY] - ID: ${message.id}');
+      debugPrint('🎨 [MESSAGE DISPLAY] - Type: ${message.messageType}');
+      debugPrint('🎨 [MESSAGE DISPLAY] - isImage: $isImage');
+      debugPrint('🎨 [MESSAGE DISPLAY] - isVideo: $isVideo');
+      debugPrint('🎨 [MESSAGE DISPLAY] - isAudio: $isAudio');
+      debugPrint('🎨 [MESSAGE DISPLAY] - isMedia: $isMedia');
+      debugPrint('🎨 [MESSAGE DISPLAY] - fileUrl: ${message.fileUrl}');
+      debugPrint('🎨 [MESSAGE DISPLAY] - fileName: ${message.fileName}');
+      debugPrint('🎨 [MESSAGE DISPLAY] - fileType: ${message.fileType}');
+      debugPrint('🎨 [MESSAGE DISPLAY] - content: ${message.content}');
+    }
+
     // Check if this message has reactions to adjust bottom margin
     final hasReactions = message.reactions.isNotEmpty;
 
@@ -1372,14 +1419,31 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                           );
                         },
                         errorBuilder: (context, error, stackTrace) {
+                          debugPrint(
+                            '❌ [IMAGE ERROR] Failed to load image: $error',
+                          );
+                          debugPrint('❌ [IMAGE ERROR] URL: ${message.fileUrl}');
                           return Container(
                             height: 100,
                             color: Colors.grey[800],
                             child: const Center(
-                              child: Icon(
-                                Icons.broken_image,
-                                color: Colors.white54,
-                                size: 40,
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.broken_image,
+                                    color: Colors.white54,
+                                    size: 40,
+                                  ),
+                                  SizedBox(height: 8),
+                                  Text(
+                                    'Image failed to load',
+                                    style: TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           );
@@ -1415,10 +1479,175 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 ),
               ),
             ),
+          ] else if (isMedia && message.fileUrl == null) ...[
+            // Fallback for media messages without fileUrl
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(
+                    isImage ? Icons.image : Icons.videocam,
+                    color: Colors.white70,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          message.fileName ?? (isImage ? 'Image' : 'Video'),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'File not available',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else if ((message.messageType == 'file' ||
+                  message.messageType == 'document') &&
+              message.fileUrl != null) ...[
+            // Generic file display
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.attach_file,
+                    color: Colors.white70,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          message.fileName ?? 'File',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        if (message.fileSize != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            _formatFileSize(message.fileSize!),
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.download, color: Colors.white70, size: 20),
+                ],
+              ),
+            ),
           ],
           // Audio/Voice message content
           if (isAudio && message.fileUrl != null) ...[
             _buildAudioPlayer(message.fileUrl!),
+          ] else if (isAudio && message.fileUrl == null) ...[
+            // Fallback for audio messages without fileUrl
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(Icons.audiotrack, color: Colors.white70, size: 24),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          message.fileName ?? 'Audio',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Audio file not available',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          // Generic file message (not image, video, or audio)
+          if (message.messageType == 'file' && !isMedia && !isAudio) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.attach_file,
+                    color: Colors.white70,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          message.fileName ?? 'File',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        if (message.fileSize != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            _formatFileSize(message.fileSize!),
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (message.fileUrl != null)
+                    IconButton(
+                      onPressed: () => _openFile(message.fileUrl!),
+                      icon: const Icon(
+                        Icons.download,
+                        color: Colors.white70,
+                        size: 20,
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ],
           // Text content (if not just filename and not audio)
           if ((!isMedia && !isAudio) ||
@@ -1597,6 +1826,31 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     // Check if it looks like a filename with extension
     final filenamePattern = RegExp(r'^[\w\-\.\s]+\.\w{2,5}$');
     return filenamePattern.hasMatch(content.trim());
+  }
+
+  /// Format file size in human readable format
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024)
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
+  /// Open file URL (for downloads or external viewing)
+  void _openFile(String fileUrl) {
+    // TODO: Implement file opening/downloading
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('File URL: $fileUrl'),
+        action: SnackBarAction(
+          label: 'Copy',
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: fileUrl));
+          },
+        ),
+      ),
+    );
   }
 
   /// Open full screen media viewer
@@ -3310,6 +3564,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                               _typingEmitTimer = Timer(
                                 const Duration(milliseconds: 150),
                                 () {
+                                  debugPrint(
+                                    '🔍 [TYPING DEBUG] Socket connected: ${_socketService.isConnected}',
+                                  );
+                                  debugPrint(
+                                    '🔍 [TYPING DEBUG] Emitting typing for group ${widget.group.id} with text: "$text"',
+                                  );
                                   _socketService.sendGroupTyping(
                                     widget.group.id,
                                     text,
@@ -3345,6 +3605,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                         ElevatedButton(
                           onPressed: () {
                             _messageController.clear();
+                            _stopGroupTyping(); // Stop typing indicator when clearing
                             setState(() {
                               _replyingToMessage = null;
                             });
