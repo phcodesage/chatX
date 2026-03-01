@@ -17,6 +17,7 @@ import '../services/chat_cache_service.dart';
 import '../services/translation_service.dart';
 import '../services/active_chat_service.dart';
 import '../widgets/reaction_picker.dart';
+import '../widgets/color_picker_modal.dart';
 
 /// Group chat screen for messaging in a group
 class GroupChatScreen extends StatefulWidget {
@@ -70,6 +71,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   final Map<int, String> _messageTranslations = {};
 
   // Color customization (for group chat theme)
+  Color _headerColor = const Color(0xFF4C1D95); // Default purple color
   bool _showResetButton = false;
 
   // Admin status
@@ -107,6 +109,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   Future<void> _initialize() async {
     _currentUserId = await StorageService.getUserId();
     await _loadMessages();
+    await _loadSavedGroupChatColor(); // Load saved color
     _setupRealtimeListeners();
     _socketService.joinGroupChat(widget.group.id);
 
@@ -255,6 +258,24 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         debugPrint(
           '⌨️ [GROUP TYPING] Ignoring - different group: ${data['group_id']} vs ${widget.group.id}',
         );
+      }
+    });
+
+    // Group color change events
+    _socketService.addListener('groupColorChanged', key, (data) {
+      debugPrint('🎨 [GROUP COLOR CHANGED] Event received: $data');
+      if (data['group_id'] == widget.group.id) {
+        debugPrint('🎨 [GROUP COLOR CHANGED] Processing for current group');
+        _handleGroupColorChange(data);
+      }
+    });
+
+    // Group color reset events
+    _socketService.addListener('groupColorReset', key, (data) {
+      debugPrint('🔄 [GROUP COLOR RESET] Event received: $data');
+      if (data['group_id'] == widget.group.id) {
+        debugPrint('🔄 [GROUP COLOR RESET] Processing for current group');
+        _handleGroupColorReset(data);
       }
     });
   }
@@ -636,6 +657,139 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
+  void _handleGroupColorChange(Map<String, dynamic> data) {
+    final colorHex = data['color'] as String?;
+    final senderName = data['sender_name'] as String?;
+    final senderId = data['sender_id'] as int?;
+    final isFromSelf = senderId == _currentUserId;
+    final timestampMs =
+        data['timestamp_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch;
+
+    if (colorHex != null) {
+      try {
+        // Parse hex color (e.g., "#FF5733" or "FF5733")
+        final hexColor = colorHex.replaceAll('#', '');
+        final color = Color(int.parse('FF$hexColor', radix: 16));
+
+        // Only apply color change if we are NOT the sender
+        if (!isFromSelf) {
+          setState(() {
+            _headerColor = color;
+            _showResetButton = true;
+          });
+
+          // Persist the color so it survives app restarts
+          _saveGroupChatColor(colorHex);
+        }
+
+        // Create system message
+        final colorMessage = GroupMessage(
+          id: timestampMs,
+          messageId: timestampMs,
+          groupId: widget.group.id,
+          senderId: senderId ?? 0,
+          sender: GroupMessageSender(
+            id: senderId ?? 0,
+            username: senderName ?? 'Someone',
+            firstName: senderName ?? 'Someone',
+            lastName: '',
+            fullName: senderName ?? 'Someone',
+          ),
+          content: isFromSelf
+              ? 'You changed the group chat color'
+              : '${senderName ?? "Someone"} changed your chat color to $colorHex',
+          messageType: 'system',
+          timestamp: DateTime.fromMillisecondsSinceEpoch(
+            timestampMs,
+          ).toIso8601String(),
+          timestampMs: timestampMs,
+          reactions: {},
+        );
+
+        setState(() {
+          _messages.add(colorMessage);
+        });
+
+        // Scroll to bottom to show the message
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) {
+            _scrollController.animateTo(
+              _scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
+          }
+        });
+
+        debugPrint('🎨 [GROUP COLOR CHANGE] Applied color: $colorHex');
+      } catch (e) {
+        debugPrint('❌ [GROUP COLOR CHANGE] Error parsing color: $e');
+      }
+    }
+  }
+
+  void _handleGroupColorReset(Map<String, dynamic> data) {
+    final senderName = data['sender_name'] as String?;
+    final senderId = data['sender_id'] as int?;
+    final isFromSelf = senderId == _currentUserId;
+    final timestampMs =
+        data['timestamp_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch;
+
+    // Only apply color reset if we are NOT the sender
+    if (!isFromSelf) {
+      setState(() {
+        _headerColor = const Color(0xFF4C1D95); // Reset to default
+        _showResetButton = false;
+      });
+
+      // Clear saved color
+      _clearGroupChatColor();
+    }
+
+    // Create system message
+    final resetMessage = GroupMessage(
+      id: timestampMs,
+      messageId: timestampMs,
+      groupId: widget.group.id,
+      senderId: senderId ?? 0,
+      sender: GroupMessageSender(
+        id: senderId ?? 0,
+        username: senderName ?? 'Someone',
+        firstName: senderName ?? 'Someone',
+        lastName: '',
+        fullName: senderName ?? 'Someone',
+      ),
+      content: isFromSelf
+          ? 'You reset the group chat color'
+          : '${senderName ?? "Someone"} reset your chat color',
+      messageType: 'system',
+      timestamp: DateTime.fromMillisecondsSinceEpoch(
+        timestampMs,
+      ).toIso8601String(),
+      timestampMs: timestampMs,
+      reactions: {},
+    );
+
+    setState(() {
+      _messages.add(resetMessage);
+    });
+
+    // Scroll to bottom to show the message
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+
+    debugPrint(
+      '🔄 [GROUP COLOR RESET] Color reset by ${senderName ?? "Someone"}',
+    );
+  }
+
   void _markMessagesAsViewed() {
     if (_messages.isEmpty || _currentUserId == null) return;
 
@@ -661,6 +815,40 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         senderId: entry.key,
       );
     }
+  }
+
+  /// Load persisted group chat color from SharedPreferences
+  Future<void> _loadSavedGroupChatColor() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedColorHex = prefs.getString(
+      'group_chat_color_${widget.group.id}',
+    );
+    if (savedColorHex != null && mounted) {
+      try {
+        final hexColor = savedColorHex.replaceAll('#', '');
+        final color = Color(int.parse('FF$hexColor', radix: 16));
+        final defaultColor = const Color(0xFF4C1D95);
+
+        setState(() {
+          _headerColor = color;
+          _showResetButton = color.value != defaultColor.value;
+        });
+      } catch (e) {
+        debugPrint('Error loading saved group chat color: $e');
+      }
+    }
+  }
+
+  /// Persist group chat color to SharedPreferences
+  Future<void> _saveGroupChatColor(String colorHex) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('group_chat_color_${widget.group.id}', colorHex);
+  }
+
+  /// Clear saved group chat color
+  Future<void> _clearGroupChatColor() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('group_chat_color_${widget.group.id}');
   }
 
   Future<void> _playNotificationSound() async {
@@ -1083,7 +1271,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
-      backgroundColor: const Color(0xFF4C1D95),
+      backgroundColor: _headerColor, // Use dynamic color
       elevation: 0,
       leading: IconButton(
         icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -3007,6 +3195,105 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
+  /// Change group chat color for all members
+  void _changeGroupColor() {
+    // Show full-screen color picker modal
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => ColorPickerModal(
+        onColorSelected: (selectedColor) {
+          // Only send color to other group members, don't change our own background
+          final colorHex = selectedColor.value
+              .toRadixString(16)
+              .substring(2)
+              .toUpperCase();
+
+          // Emit group color change event
+          _socketService.emit('change_group_color', {
+            'group_id': widget.group.id,
+            'color': '#$colorHex',
+            'sender_name': 'You',
+          });
+
+          // Add outgoing system message to show we changed the group color
+          final now = DateTime.now();
+          final colorMessage = GroupMessage(
+            id: now.millisecondsSinceEpoch,
+            messageId: now.millisecondsSinceEpoch,
+            groupId: widget.group.id,
+            senderId: _currentUserId!,
+            sender: null,
+            content: 'You changed the group chat color',
+            messageType: 'system',
+            timestamp: now.toIso8601String(),
+            timestampMs: now.millisecondsSinceEpoch,
+            reactions: {},
+          );
+
+          setState(() {
+            _messages.add(colorMessage);
+          });
+
+          // Scroll to bottom to show the message
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollController.hasClients) {
+              _scrollController.animateTo(
+                _scrollController.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+              );
+            }
+          });
+
+          debugPrint('🎨 Group color sent: #$colorHex');
+        },
+      ),
+    );
+  }
+
+  /// Reset group chat color for all members
+  void _resetGroupColor() {
+    // Emit group color reset event
+    _socketService.emit('reset_group_color', {
+      'group_id': widget.group.id,
+      'sender_name': 'You',
+    });
+
+    // Add outgoing system message
+    final now = DateTime.now();
+    final resetMessage = GroupMessage(
+      id: now.millisecondsSinceEpoch,
+      messageId: now.millisecondsSinceEpoch,
+      groupId: widget.group.id,
+      senderId: _currentUserId!,
+      sender: null,
+      content: 'You reset the group chat color',
+      messageType: 'system',
+      timestamp: now.toIso8601String(),
+      timestampMs: now.millisecondsSinceEpoch,
+      reactions: {},
+    );
+
+    setState(() {
+      _messages.add(resetMessage);
+    });
+
+    // Scroll to bottom to show the message
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+
+    debugPrint('🔄 Group color reset sent');
+  }
+
   /// Pick a file from device storage
   Future<void> _pickFile() async {
     try {
@@ -3392,26 +3679,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   /// Change group chat color (placeholder)
   void _changeColor() {
-    // TODO: Implement color picker for group chat
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Color customization coming soon for group chats'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    _changeGroupColor();
   }
 
-  /// Reset group chat color (placeholder)
+  /// Reset group chat color for all members
   void _resetColor() {
-    setState(() {
-      _showResetButton = false;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Color reset'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    _resetGroupColor();
   }
 
   /// Export chat history

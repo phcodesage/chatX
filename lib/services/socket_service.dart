@@ -40,6 +40,10 @@ class SocketService {
   final Map<String, Function(Map<String, dynamic>)> _colorChangedListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _colorResetListeners = {};
   final Map<String, Function(Map<String, dynamic>)>
+  _groupColorChangedListeners = {};
+  final Map<String, Function(Map<String, dynamic>)> _groupColorResetListeners =
+      {};
+  final Map<String, Function(Map<String, dynamic>)>
   _allMessagesDeletedListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _fileReceivedListeners = {};
   final Map<String, Function(Map<String, dynamic>)>
@@ -164,6 +168,14 @@ class SocketService {
         break;
       case 'colorReset':
         _colorResetListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupColorChanged':
+        _groupColorChangedListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'groupColorReset':
+        _groupColorResetListeners[key] =
+            callback as Function(Map<String, dynamic>);
         break;
       case 'allMessagesDeleted':
         _allMessagesDeletedListeners[key] =
@@ -366,6 +378,12 @@ class SocketService {
       case 'colorReset':
         _colorResetListeners.remove(key);
         break;
+      case 'groupColorChanged':
+        _groupColorChangedListeners.remove(key);
+        break;
+      case 'groupColorReset':
+        _groupColorResetListeners.remove(key);
+        break;
       case 'allMessagesDeleted':
         _allMessagesDeletedListeners.remove(key);
         break;
@@ -503,6 +521,8 @@ class SocketService {
     _messagesReadListeners.remove(key);
     _colorChangedListeners.remove(key);
     _colorResetListeners.remove(key);
+    _groupColorChangedListeners.remove(key);
+    _groupColorResetListeners.remove(key);
     _allMessagesDeletedListeners.remove(key);
     _fileReceivedListeners.remove(key);
     _voiceMessageReceivedListeners.remove(key);
@@ -947,6 +967,18 @@ class SocketService {
     _socket!.on('color_reset', (data) {
       debugPrint('🔄 Color reset: $data');
       _broadcast(_colorResetListeners, data as Map<String, dynamic>);
+    });
+
+    // Group color change event
+    _socket!.on('group_color_changed', (data) {
+      debugPrint('🎨 Group color changed: $data');
+      _broadcast(_groupColorChangedListeners, data as Map<String, dynamic>);
+    });
+
+    // Group color reset event
+    _socket!.on('group_color_reset', (data) {
+      debugPrint('🔄 Group color reset: $data');
+      _broadcast(_groupColorResetListeners, data as Map<String, dynamic>);
     });
 
     // Message delivery confirmation
@@ -1524,6 +1556,8 @@ class SocketService {
     _messagesReadListeners.clear();
     _colorChangedListeners.clear();
     _colorResetListeners.clear();
+    _groupColorChangedListeners.clear();
+    _groupColorResetListeners.clear();
     _allMessagesDeletedListeners.clear();
     _fileReceivedListeners.clear();
     _voiceMessageReceivedListeners.clear();
