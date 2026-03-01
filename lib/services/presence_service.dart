@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import 'storage_service.dart';
 import 'auth_error_handler.dart';
+import 'active_chat_service.dart';
 
 /// Service for managing user presence and heartbeat.
 ///
@@ -39,13 +40,17 @@ class PresenceService with WidgetsBindingObserver {
     super.didChangeAppLifecycleState(state);
     if (!_isActive) return;
 
-    debugPrint('📱 App lifecycle: $state (call=$isCallInProgress, status=$_currentStatus)');
+    debugPrint(
+      '📱 App lifecycle: $state (call=$isCallInProgress, status=$_currentStatus)',
+    );
 
     switch (state) {
       case AppLifecycleState.resumed:
         // App came to foreground → online
         _setStatusIfChanged('online');
         _restartHeartbeatTimer(const Duration(seconds: 30));
+        // Notify active chat service that app is in foreground
+        ActiveChatService().setAppForegroundState(true);
         break;
       case AppLifecycleState.inactive:
         // Transitional (app switcher, phone call overlay) — ignore
@@ -57,6 +62,8 @@ class PresenceService with WidgetsBindingObserver {
         }
         // Slow heartbeat in background
         _restartHeartbeatTimer(const Duration(seconds: 60));
+        // Notify active chat service that app is in background
+        ActiveChatService().setAppForegroundState(false);
         break;
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
@@ -65,6 +72,8 @@ class PresenceService with WidgetsBindingObserver {
           _setStatusIfChanged('offline');
         }
         _stopHeartbeatTimer();
+        // Notify active chat service that app is in background
+        ActiveChatService().setAppForegroundState(false);
         break;
     }
   }
@@ -79,21 +88,21 @@ class PresenceService with WidgetsBindingObserver {
   /// Start sending heartbeat and register lifecycle observer
   void startHeartbeat() {
     if (_isActive) return;
-    
+
     _isActive = true;
     _currentStatus = 'online';
     debugPrint('Starting heartbeat...');
-    
+
     // Register lifecycle observer for foreground/background detection
     if (!_observerRegistered) {
       WidgetsBinding.instance.addObserver(this);
       _observerRegistered = true;
       debugPrint('📱 PresenceService lifecycle observer registered');
     }
-    
+
     // Send initial heartbeat
     _sendHeartbeat();
-    
+
     // Start heartbeat timer
     _restartHeartbeatTimer(const Duration(seconds: 30));
   }
@@ -104,7 +113,7 @@ class PresenceService with WidgetsBindingObserver {
     _currentStatus = 'offline';
     debugPrint('Stopping heartbeat...');
     _stopHeartbeatTimer();
-    
+
     // Unregister lifecycle observer
     if (_observerRegistered) {
       WidgetsBinding.instance.removeObserver(this);
@@ -130,14 +139,16 @@ class PresenceService with WidgetsBindingObserver {
       final token = await StorageService.getToken();
       if (token == null) return;
 
-      final response = await http.post(
-        Uri.parse(ApiConfig.heartbeatUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 10));
-      
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.heartbeatUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
       if (response.statusCode == 401) {
         // Token expired - stop heartbeat and trigger auth error
         debugPrint('🔐 Heartbeat - Token expired');
@@ -147,7 +158,7 @@ class PresenceService with WidgetsBindingObserver {
         );
         return;
       }
-      
+
       debugPrint('💓 Heartbeat sent');
     } catch (e) {
       debugPrint('Heartbeat error: $e');
@@ -155,23 +166,28 @@ class PresenceService with WidgetsBindingObserver {
   }
 
   /// Update user status
-  static Future<void> updateStatus(String status, {String? statusMessage}) async {
+  static Future<void> updateStatus(
+    String status, {
+    String? statusMessage,
+  }) async {
     try {
       final token = await StorageService.getToken();
       if (token == null) return;
 
-      final response = await http.post(
-        Uri.parse(ApiConfig.presenceStatusUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'status': status,
-          if (statusMessage != null) 'status_message': statusMessage,
-        }),
-      ).timeout(ApiConfig.connectionTimeout);
-      
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.presenceStatusUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'status': status,
+              if (statusMessage != null) 'status_message': statusMessage,
+            }),
+          )
+          .timeout(ApiConfig.connectionTimeout);
+
       if (response.statusCode == 401) {
         // Token expired - trigger auth error
         debugPrint('🔐 Status update - Token expired');
@@ -180,7 +196,7 @@ class PresenceService with WidgetsBindingObserver {
         );
         return;
       }
-      
+
       debugPrint('Status updated to: $status');
     } catch (e) {
       debugPrint('Update status error: $e');

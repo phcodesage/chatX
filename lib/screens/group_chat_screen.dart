@@ -14,6 +14,7 @@ import '../services/socket_service.dart';
 import '../services/storage_service.dart';
 import '../services/chat_cache_service.dart';
 import '../services/translation_service.dart';
+import '../services/active_chat_service.dart';
 import '../widgets/reaction_picker.dart';
 
 /// Group chat screen for messaging in a group
@@ -85,6 +86,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _scrollController.addListener(_onScroll);
     _initialize();
 
+    // Set this group as active to prevent FCM notifications
+    ActiveChatService().setActiveGroup(widget.group.id);
+
     // Debug: Periodic connection check
     Timer.periodic(const Duration(seconds: 10), (timer) {
       if (mounted) {
@@ -152,11 +156,21 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     });
 
     // New message from another member
-    _socketService.addListener('group_new_message', key, (data) {
+    _socketService.addListener('groupNewMessage', key, (data) {
       debugPrint(
         '💬 [GROUP NEW MESSAGE] Event received for group ${widget.group.id}',
       );
+      debugPrint('💬 [GROUP NEW MESSAGE] Full data: $data');
+      debugPrint('💬 [GROUP NEW MESSAGE] Data type: ${data.runtimeType}');
+      debugPrint(
+        '💬 [GROUP NEW MESSAGE] Group ID in data: ${data['group_id']}',
+      );
+      debugPrint('💬 [GROUP NEW MESSAGE] Current group ID: ${widget.group.id}');
+
       if (data['group_id'] == widget.group.id) {
+        debugPrint(
+          '💬 [GROUP NEW MESSAGE] Processing message for current group',
+        );
         _handleNewMessage(data);
       } else {
         debugPrint(
@@ -166,57 +180,73 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     });
 
     // Message sent confirmation
-    _socketService.addListener('group_message_sent', key, (data) {
+    _socketService.addListener('groupMessageSent', key, (data) {
+      debugPrint('📤 [GROUP MESSAGE SENT] Event received: $data');
       if (data['group_id'] == widget.group.id) {
+        debugPrint('📤 [GROUP MESSAGE SENT] Processing for current group');
         _handleMessageSent(data);
       }
     });
 
-    // File message (also comes through group_new_message)
-    _socketService.addListener('group_file_message', key, (data) {
+    // File message (also comes through groupNewMessage)
+    _socketService.addListener('groupFileMessage', key, (data) {
+      debugPrint('📎 [GROUP FILE MESSAGE] Event received: $data');
       if (data['group_id'] == widget.group.id) {
+        debugPrint('📎 [GROUP FILE MESSAGE] Processing for current group');
         _handleNewMessage(data);
       }
     });
 
     // Message deleted
-    _socketService.addListener('group_message_deleted', key, (data) {
+    _socketService.addListener('groupMessageDeleted', key, (data) {
+      debugPrint('🗑️ [GROUP MESSAGE DELETED] Event received: $data');
       if (data['group_id'] == widget.group.id) {
+        debugPrint('🗑️ [GROUP MESSAGE DELETED] Processing for current group');
         _handleMessageDeleted(data);
       }
     });
 
     // Message edited
-    _socketService.addListener('group_message_edited', key, (data) {
+    _socketService.addListener('groupMessageEdited', key, (data) {
+      debugPrint('✏️ [GROUP MESSAGE EDITED] Event received: $data');
       if (data['group_id'] == widget.group.id) {
+        debugPrint('✏️ [GROUP MESSAGE EDITED] Processing for current group');
         _handleMessageEdited(data);
       }
     });
 
     // Reaction updated
-    _socketService.addListener('group_reaction_updated', key, (data) {
+    _socketService.addListener('groupReactionUpdated', key, (data) {
+      debugPrint('👍 [GROUP REACTION UPDATED] Event received: $data');
       if (data['group_id'] == widget.group.id) {
+        debugPrint('👍 [GROUP REACTION UPDATED] Processing for current group');
         _handleReactionUpdated(data);
       }
     });
 
     // Reaction cleared
-    _socketService.addListener('group_reaction_cleared', key, (data) {
+    _socketService.addListener('groupReactionCleared', key, (data) {
+      debugPrint('❌ [GROUP REACTION CLEARED] Event received: $data');
       if (data['group_id'] == widget.group.id) {
+        debugPrint('❌ [GROUP REACTION CLEARED] Processing for current group');
         _handleReactionCleared(data);
       }
     });
 
     // Doorbell notification
-    _socketService.addListener('group_doorbell', key, (data) {
+    _socketService.addListener('groupDoorbell', key, (data) {
+      debugPrint('🔔 [GROUP DOORBELL] Event received: $data');
       if (data['group_id'] == widget.group.id) {
+        debugPrint('🔔 [GROUP DOORBELL] Processing for current group');
         _handleGroupDoorbell(data);
       }
     });
 
     // Typing indicator
-    _socketService.addListener('group_user_typing', key, (data) {
+    _socketService.addListener('groupTyping', key, (data) {
+      debugPrint('⌨️ [GROUP TYPING] Event received: $data');
       if (data['group_id'] == widget.group.id) {
+        debugPrint('⌨️ [GROUP TYPING] Processing for current group');
         _handleGroupUserTyping(data);
       }
     });
@@ -267,45 +297,76 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   void _handleNewMessage(Map<String, dynamic> data) async {
     debugPrint('📨 [GROUP NEW MESSAGE] Received: data=$data');
-    final message = GroupMessage.fromJson(data);
+    debugPrint('📨 [GROUP NEW MESSAGE] Attempting to parse message...');
 
-    if (mounted) {
-      setState(() {
-        _messages.add(message);
-      });
+    try {
+      final message = GroupMessage.fromJson(data);
+      debugPrint(
+        '📨 [GROUP NEW MESSAGE] Successfully parsed message: ${message.id}',
+      );
+      debugPrint('📨 [GROUP NEW MESSAGE] Message content: ${message.content}');
+      debugPrint('📨 [GROUP NEW MESSAGE] Sender ID: ${message.senderId}');
+      debugPrint('📨 [GROUP NEW MESSAGE] Current user ID: $_currentUserId');
 
-      // Auto-translate incoming message if enabled and it's a text message from another user
-      if (_autoTranslate &&
-          message.senderId != _currentUserId &&
-          message.messageType == 'text' &&
-          message.content.isNotEmpty) {
-        _autoTranslateGroupMessage(message);
-      }
-
-      // Save to cache for offline access
-      await ChatCacheService.addGroupMessageToCache(widget.group.id, message);
-      debugPrint('💾 Cached group message ${message.id}');
-
-      // Play notification sound if not from current user
-      if (message.senderId != _currentUserId) {
-        _playNotificationSound();
-      }
-
-      // Mark as viewed if at bottom
-      if (_isAtBottom) {
-        _markMessagesAsViewed();
-      }
-
-      // Scroll to bottom
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients && _isAtBottom) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
+      if (mounted) {
+        debugPrint(
+          '📨 [GROUP NEW MESSAGE] Widget is mounted, adding to messages list',
+        );
+        setState(() {
+          _messages.add(message);
+          debugPrint(
+            '📨 [GROUP NEW MESSAGE] Messages count: ${_messages.length}',
           );
+        });
+
+        // Auto-translate incoming message if enabled and it's a text message from another user
+        if (_autoTranslate &&
+            message.senderId != _currentUserId &&
+            message.messageType == 'text' &&
+            message.content.isNotEmpty) {
+          _autoTranslateGroupMessage(message);
         }
-      });
+
+        // Save to cache for offline access
+        await ChatCacheService.addGroupMessageToCache(widget.group.id, message);
+        debugPrint('💾 Cached group message ${message.id}');
+
+        // Play notification sound if not from current user
+        if (message.senderId != _currentUserId) {
+          debugPrint(
+            '🔊 Playing notification sound for message from other user',
+          );
+          _playNotificationSound();
+        }
+
+        // Mark as viewed if at bottom
+        if (_isAtBottom) {
+          debugPrint(
+            '📨 [GROUP NEW MESSAGE] At bottom, marking messages as viewed',
+          );
+          _markMessagesAsViewed();
+        }
+
+        // Scroll to bottom
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients && _isAtBottom) {
+            debugPrint('📨 [GROUP NEW MESSAGE] Scrolling to bottom');
+            _scrollController.animateTo(
+              _scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
+          }
+        });
+      } else {
+        debugPrint(
+          '📨 [GROUP NEW MESSAGE] Widget not mounted, ignoring message',
+        );
+      }
+    } catch (e, stackTrace) {
+      debugPrint('❌ [GROUP NEW MESSAGE] Error parsing message: $e');
+      debugPrint('❌ [GROUP NEW MESSAGE] Stack trace: $stackTrace');
+      debugPrint('❌ [GROUP NEW MESSAGE] Raw data: $data');
     }
   }
 
@@ -716,6 +777,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   @override
   void dispose() {
+    // Clear active chat when leaving group chat screen
+    ActiveChatService().clearActiveChat();
+
     _socketService.removeListenersForKey('group_chat_${widget.group.id}');
     _socketService.leaveGroupChat(widget.group.id);
     _messageController.dispose();

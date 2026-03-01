@@ -25,7 +25,7 @@ import '../services/storage_service.dart';
 import '../services/chat_cache_service.dart';
 import '../services/translation_service.dart';
 import '../widgets/color_picker_modal.dart';
-import '../services/firebase_messaging_service.dart';
+import '../services/active_chat_service.dart';
 import '../widgets/call_setup_modal.dart';
 import '../widgets/outgoing_call_modal.dart';
 import '../widgets/incoming_call_setup_modal.dart';
@@ -130,8 +130,10 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _inputFocusNode.addListener(_onFocusChange);
     _scrollController.addListener(_onScroll);
-    // Suppress FCM notifications for this chat partner while screen is active
-    FirebaseMessagingService.instance.activeChatUserId = widget.otherUser.id;
+
+    // Set this user as active to prevent FCM notifications
+    ActiveChatService().setActiveUser(widget.otherUser.id);
+
     _initialize();
     // Periodically refresh "last seen" relative label in header (like the web app does)
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
@@ -4488,7 +4490,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.leaveChat(widget.otherUser.id);
 
     // Clear active chat so FCM notifications resume for this user
-    FirebaseMessagingService.instance.activeChatUserId = null;
+    ActiveChatService().clearActiveChat();
 
     // Clear all chat socket listeners (does NOT affect lobby listeners)
     _socketService.removeListenersForKey('chat');

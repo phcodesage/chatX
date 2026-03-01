@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'fcm_service.dart';
+import 'active_chat_service.dart';
 
 /// Top-level function for background message handling
 /// This runs in a separate isolate when app is terminated/background
@@ -177,10 +178,6 @@ class FirebaseMessagingService {
 
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
-
-  // Track the currently active chat user ID to suppress notifications
-  // Set this when entering a chat, clear when leaving
-  int? activeChatUserId;
 
   // Callback for when notification is tapped
   Function(Map<String, dynamic>)? onNotificationTapped;
@@ -375,13 +372,30 @@ class FirebaseMessagingService {
   Future<void> showNotification(RemoteMessage message) async {
     Map<String, dynamic> data = message.data;
 
-    // Suppress notification if the user is currently viewing the chat with this sender
+    // Smart notification filtering using ActiveChatService
+    final activeChat = ActiveChatService();
+
+    // Check if this is a group message
+    final groupId = int.tryParse(data['group_id']?.toString() ?? '');
+    if (groupId != null) {
+      if (!activeChat.shouldShowGroupNotification(groupId)) {
+        debugPrint(
+          '🔕 Suppressing group notification — user is viewing group $groupId',
+        );
+        return;
+      }
+    }
+
+    // Check if this is a 1-on-1 message
     final senderId = int.tryParse(data['sender_id']?.toString() ?? '');
-    if (senderId != null && activeChatUserId == senderId) {
-      debugPrint(
-        'Suppressing notification — user is in chat with sender $senderId',
-      );
-      return;
+    if (senderId != null && groupId == null) {
+      // Only for 1-on-1 chats, not group messages
+      if (!activeChat.shouldShowUserNotification(senderId)) {
+        debugPrint(
+          '🔕 Suppressing user notification — user is viewing chat with $senderId',
+        );
+        return;
+      }
     }
 
     // Persist color change to SharedPreferences so ChatScreen picks it up

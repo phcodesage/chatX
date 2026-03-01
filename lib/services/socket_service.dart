@@ -1400,12 +1400,14 @@ class SocketService {
 
   /// Join a group chat room
   void joinGroupChat(int groupId) {
-    emit('join_group', {'group_id': groupId});
+    debugPrint('📱 [SOCKET] Joining group chat: $groupId');
+    emit('join_group_chat', {'group_id': groupId});
   }
 
   /// Leave a group chat room
   void leaveGroupChat(int groupId) {
-    emit('leave_group', {'group_id': groupId});
+    debugPrint('📱 [SOCKET] Leaving group chat: $groupId');
+    emit('leave_group_chat', {'group_id': groupId});
   }
 
   /// Send a message to a group via Socket.IO
