@@ -2801,19 +2801,31 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // Navigate to connected call screen if call connected
     if (result == 'connected' && mounted) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (context) => ConnectedCallScreen(
-            remoteName: widget.otherUser.fullName,
-            callType: callTypeStr,
-            callService: callService,
-            localStream: localStream,
-            onChatPressed: () {
-              Navigator.of(context).pop(); // Return to chat
-            },
+      debugPrint(
+        '📞 Navigating to ConnectedCallScreen after modal returned: $result',
+      );
+      try {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (context) => ConnectedCallScreen(
+              remoteName: widget.otherUser.fullName,
+              callType: callTypeStr,
+              callService: callService,
+              localStream: localStream,
+              onChatPressed: () {
+                Navigator.of(context).pop(); // Return to chat
+              },
+            ),
           ),
-        ),
+        );
+        debugPrint('📞 ConnectedCallScreen navigation completed');
+      } catch (e) {
+        debugPrint('❌ Error navigating to ConnectedCallScreen: $e');
+      }
+    } else {
+      debugPrint(
+        '📞 Modal result: $result, mounted: $mounted - not navigating to ConnectedCallScreen',
       );
     }
   }
@@ -5034,81 +5046,34 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ),
                                 ),
                               ),
-                              // Clear (top) + Send (bottom) — always visible, vertically centred
-                              IntrinsicWidth(
-                                child: Container(
-                                  margin: const EdgeInsets.only(left: 6),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      // Clear button (top)
-                                      ElevatedButton(
-                                        onPressed: () {
-                                          _messageController.clear();
-                                          setState(() {});
-                                          _stopTyping();
-                                        },
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(
-                                            0xFFEF4444,
-                                          ),
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 3,
-                                          ),
-                                          minimumSize: const Size(0, 0),
-                                          tapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                          ),
-                                        ),
-                                        child: const Text(
-                                          'Clear',
-                                          style: TextStyle(fontSize: 12),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      // Send button (bottom)
-                                      ElevatedButton(
-                                        onPressed: _sendMessage,
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(
-                                            0xFF6D28D9,
-                                          ),
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 3,
-                                          ),
-                                          minimumSize: const Size(0, 0),
-                                          tapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                          ),
-                                        ),
-                                        child: const Text(
-                                          'Send',
-                                          style: TextStyle(fontSize: 12),
-                                        ),
-                                      ),
-                                    ],
+                              // Send button — always visible, vertically centred
+                              Container(
+                                margin: const EdgeInsets.only(left: 6),
+                                child: ElevatedButton(
+                                  onPressed: _sendMessage,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF6D28D9),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    minimumSize: const Size(0, 0),
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'Send',
+                                    style: TextStyle(fontSize: 12),
                                   ),
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        // Clear button only appears below Send (in the right-side Column) when multi-line.
                         // Inline emoji picker (shown when active)
                         if (_showEmojiPicker) _buildInlineEmojiPicker(),
                         // Collapsible action buttons panel
@@ -7807,7 +7772,7 @@ class _VoiceRecordingModal extends StatefulWidget {
 class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
   // Native channel — backed by Android MediaRecorder
   static const _ch = MethodChannel(
-    'com.example.flutter_messenger/audio_recorder',
+    'com.example.flutter_messenger_v2/audio_recorder',
   );
 
   // Keep FlutterSoundPlayer for pre-send playback preview

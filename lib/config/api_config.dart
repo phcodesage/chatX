@@ -3,7 +3,7 @@
 class ApiConfig {
   // Base URL for the API - change this to switch backends
   static const String baseUrl = 'https://www.flask-call-app.site';
-  //static const String baseUrl = 'https://m.flask-meet.site'; //production
+  //static const String baseUrl = 'https://web.flask-call-app.site'; //production
 
   // API endpoints
   static const String authPrefix = '/api/auth';

@@ -1023,7 +1023,7 @@ class CallService {
       // This is required for media projection on Android 10+
       try {
         const channel = MethodChannel(
-          'com.example.flutter_messenger/screen_share',
+          'com.example.flutter_messenger_v2/screen_share',
         );
         await channel.invokeMethod('startForegroundService', {
           'notificationTitle': 'Screen Sharing',
@@ -1147,7 +1147,7 @@ class CallService {
       // Stop the foreground service on Android
       try {
         const channel = MethodChannel(
-          'com.example.flutter_messenger/screen_share',
+          'com.example.flutter_messenger_v2/screen_share',
         );
         await channel.invokeMethod('stopForegroundService');
         debugPrint('🖥️ Foreground service stopped');

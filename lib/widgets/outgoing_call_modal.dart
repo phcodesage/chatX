@@ -31,19 +31,19 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
   Timer? _dotsTimer;
   int _dotsCount = 0;
   late AnimationController _pulseController;
-  
+
   static const Duration noAnswerTimeout = Duration(seconds: 45);
 
   @override
   void initState() {
     super.initState();
-    
+
     // Set up pulse animation
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-    
+
     // Set up dots animation
     _dotsTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
       if (mounted) {
@@ -52,10 +52,10 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
         });
       }
     });
-    
+
     // Listen to call state changes
     widget.callService.onCallStateChanged = _handleCallStateChanged;
-    
+
     // Start no-answer timer
     _startNoAnswerTimer();
   }
@@ -71,7 +71,7 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
   void _startNoAnswerTimer() {
     _noAnswerTimer?.cancel();
     _noAnswerTimer = Timer(noAnswerTimeout, () {
-      if (_currentState == CallState.initiating || 
+      if (_currentState == CallState.initiating ||
           _currentState == CallState.ringing) {
         debugPrint('📞 No answer timeout');
         _handleNoAnswer();
@@ -81,19 +81,21 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
 
   void _handleCallStateChanged(CallState state) {
     if (!mounted) return;
-    
+
     setState(() {
       _currentState = state;
     });
-    
+
     if (state == CallState.connected) {
       _noAnswerTimer?.cancel();
       widget.onConnected?.call();
       // Navigate to connected call screen (handled by parent)
-      // Pop this modal so the parent can show the connected call screen
-      if (mounted) {
-        Navigator.of(context).pop('connected');
-      }
+      // Add small delay to ensure UI is ready in release builds
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) {
+          Navigator.of(context).pop('connected');
+        }
+      });
     } else if (state == CallState.failed || state == CallState.ended) {
       _noAnswerTimer?.cancel();
       // Auto-close after showing status
@@ -107,14 +109,14 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
 
   void _handleNoAnswer() {
     if (!mounted) return;
-    
+
     // Cancel the call
     widget.callService.endCall();
-    
+
     setState(() {
       _currentState = CallState.ended;
     });
-    
+
     // Show "No Answer" then close
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) {
@@ -126,10 +128,10 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
   void _handleCancel() {
     debugPrint('📞 User cancelled outgoing call');
     _noAnswerTimer?.cancel();
-    
+
     // Cancel the call via service
     widget.callService.endCall();
-    
+
     widget.onCancel?.call();
     Navigator.of(context).pop();
   }
@@ -137,7 +139,7 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
   String _getStatusText() {
     final dots = '.' * _dotsCount;
     final padding = ' ' * (3 - _dotsCount);
-    
+
     switch (_currentState) {
       case CallState.initiating:
         return 'Calling$dots$padding';
@@ -192,7 +194,8 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
 
   @override
   Widget build(BuildContext context) {
-    final isActive = _currentState == CallState.initiating ||
+    final isActive =
+        _currentState == CallState.initiating ||
         _currentState == CallState.ringing ||
         _currentState == CallState.connecting;
 
@@ -231,7 +234,7 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
                   ],
                 ),
               ),
-              
+
               // Main content
               Expanded(
                 child: Column(
@@ -252,16 +255,16 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
                                   color: Color.fromRGBO(
-                                    139, 
-                                    92, 
-                                    246, 
+                                    139,
+                                    92,
+                                    246,
                                     0.3 - (_pulseController.value * 0.2),
                                   ),
                                 ),
                               );
                             },
                           ),
-                        
+
                         // Avatar circle
                         Container(
                           width: 120,
@@ -299,9 +302,9 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
                         ),
                       ],
                     ),
-                    
+
                     const SizedBox(height: 32),
-                    
+
                     // Recipient name
                     Text(
                       widget.recipientName,
@@ -311,9 +314,9 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    
+
                     const SizedBox(height: 16),
-                    
+
                     // Status indicator
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -337,7 +340,7 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
                   ],
                 ),
               ),
-              
+
               // Cancel button
               if (isActive)
                 Padding(

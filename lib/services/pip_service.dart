@@ -8,7 +8,9 @@ class PipService {
   factory PipService() => _instance;
   PipService._internal();
 
-  static const MethodChannel _channel = MethodChannel('com.example.flutter_messenger/pip');
+  static const MethodChannel _channel = MethodChannel(
+    'com.example.flutter_messenger_v2/pip',
+  );
 
   bool _isInPipMode = false;
   bool _isPipAvailable = false;
@@ -21,7 +23,8 @@ class PipService {
   /// Initialize PiP service and check availability
   Future<void> initialize() async {
     try {
-      _isPipAvailable = await _channel.invokeMethod<bool>('isPipAvailable') ?? false;
+      _isPipAvailable =
+          await _channel.invokeMethod<bool>('isPipAvailable') ?? false;
       debugPrint('📱 PiP available: $_isPipAvailable');
 
       // Listen for PiP mode changes from native side
@@ -54,7 +57,7 @@ class PipService {
 
   // Callback for PiP mode changes
   Function(bool isInPip)? onPipModeChanged;
-  
+
   // Callbacks for PiP action buttons
   VoidCallback? onToggleMic;
   VoidCallback? onEndCall;

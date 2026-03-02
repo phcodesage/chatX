@@ -33,26 +33,26 @@ class _IncomingCallModalState extends State<IncomingCallModal>
   Timer? _autoDeclineTimer;
   MediaStream? _localStream;
   bool _isAccepting = false;
-  
+
   static const Duration autoDeclineTimeout = Duration(seconds: 45);
 
   @override
   void initState() {
     super.initState();
-    
+
     // Set up pulse animation
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-    
+
     // Auto-decline after timeout
     _autoDeclineTimer = Timer(autoDeclineTimeout, () {
       if (mounted) {
         _handleDecline();
       }
     });
-    
+
     // Listen for call state changes
     widget.callService.onCallStateChanged = _handleCallStateChanged;
   }
@@ -66,43 +66,52 @@ class _IncomingCallModalState extends State<IncomingCallModal>
 
   void _handleCallStateChanged(CallState state) {
     if (!mounted) return;
-    
+
     if (state == CallState.ended || state == CallState.failed) {
       // Call was ended/cancelled by caller
       Navigator.of(context).pop('ended');
     } else if (state == CallState.connected) {
       // Call connected - navigate to connected screen
-      Navigator.of(context).pop('connected');
+      // Add small delay to ensure UI is ready in release builds
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) {
+          Navigator.of(context).pop('connected');
+        }
+      });
     }
   }
 
   Future<void> _handleAccept() async {
     if (_isAccepting) return;
-    
+
     setState(() {
       _isAccepting = true;
     });
-    
+
     _autoDeclineTimer?.cancel();
-    
+
     try {
       // Get local media stream
       final mediaConstraints = {
         'audio': true,
-        'video': widget.callType == 'video' ? {
-          'facingMode': 'user',
-          'width': {'ideal': 1280},
-          'height': {'ideal': 720},
-        } : false,
+        'video': widget.callType == 'video'
+            ? {
+                'facingMode': 'user',
+                'width': {'ideal': 1280},
+                'height': {'ideal': 720},
+              }
+            : false,
       };
-      
-      _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-      
+
+      _localStream = await navigator.mediaDevices.getUserMedia(
+        mediaConstraints,
+      );
+
       // Answer the call
       await widget.callService.answerCall(localStream: _localStream!);
-      
+
       widget.onAccept?.call();
-      
+
       // Pop with 'accepted' result - parent will show connected call screen
       if (mounted) {
         Navigator.of(context).pop('accepted');
@@ -112,7 +121,7 @@ class _IncomingCallModalState extends State<IncomingCallModal>
       setState(() {
         _isAccepting = false;
       });
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -128,7 +137,7 @@ class _IncomingCallModalState extends State<IncomingCallModal>
     _autoDeclineTimer?.cancel();
     widget.callService.declineCall();
     widget.onDecline?.call();
-    
+
     if (mounted) {
       Navigator.of(context).pop('declined');
     }
@@ -171,7 +180,7 @@ class _IncomingCallModalState extends State<IncomingCallModal>
                   ],
                 ),
               ),
-              
+
               // Main content
               Expanded(
                 child: Column(
@@ -191,16 +200,16 @@ class _IncomingCallModalState extends State<IncomingCallModal>
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: Color.fromRGBO(
-                                  76, 
-                                  175, 
-                                  80, 
+                                  76,
+                                  175,
+                                  80,
                                   0.3 - (_pulseController.value * 0.2),
                                 ),
                               ),
                             );
                           },
                         ),
-                        
+
                         // Avatar circle
                         Container(
                           width: 120,
@@ -238,9 +247,9 @@ class _IncomingCallModalState extends State<IncomingCallModal>
                         ),
                       ],
                     ),
-                    
+
                     const SizedBox(height: 32),
-                    
+
                     // Caller name
                     Text(
                       widget.callerName,
@@ -250,9 +259,9 @@ class _IncomingCallModalState extends State<IncomingCallModal>
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    
+
                     const SizedBox(height: 16),
-                    
+
                     // Status text
                     Text(
                       _isAccepting ? 'Connecting...' : 'Incoming call...',
@@ -265,7 +274,7 @@ class _IncomingCallModalState extends State<IncomingCallModal>
                   ],
                 ),
               ),
-              
+
               // Accept/Decline buttons
               if (!_isAccepting)
                 Padding(
@@ -297,7 +306,7 @@ class _IncomingCallModalState extends State<IncomingCallModal>
                           ),
                         ),
                       ),
-                      
+
                       // Accept button
                       GestureDetector(
                         onTap: _handleAccept,
@@ -316,7 +325,9 @@ class _IncomingCallModalState extends State<IncomingCallModal>
                             ],
                           ),
                           child: Icon(
-                            widget.callType == 'video' ? Icons.videocam : Icons.call,
+                            widget.callType == 'video'
+                                ? Icons.videocam
+                                : Icons.call,
                             color: Colors.white,
                             size: 32,
                           ),
@@ -325,14 +336,12 @@ class _IncomingCallModalState extends State<IncomingCallModal>
                     ],
                   ),
                 ),
-              
+
               // Loading indicator when accepting
               if (_isAccepting)
                 const Padding(
                   padding: EdgeInsets.all(32),
-                  child: CircularProgressIndicator(
-                    color: Color(0xFF4CAF50),
-                  ),
+                  child: CircularProgressIndicator(color: Color(0xFF4CAF50)),
                 ),
             ],
           ),

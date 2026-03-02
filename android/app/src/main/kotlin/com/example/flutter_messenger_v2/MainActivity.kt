@@ -1,4 +1,4 @@
-package com.example.flutter_messenger
+package com.example.flutter_messenger_v2
 
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
@@ -19,8 +19,8 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val TAG = "PiP"
-    private val CHANNEL = "com.example.flutter_messenger/pip"
-    private val AUDIO_CHANNEL = "com.example.flutter_messenger/audio_recorder"
+    private val CHANNEL = "com.example.flutter_messenger_v2/pip"
+    private val AUDIO_CHANNEL = "com.example.flutter_messenger_v2/audio_recorder"
     private var methodChannel: MethodChannel? = null
     private var isInCall = false
     private var isMuted = false
@@ -31,8 +31,8 @@ class MainActivity : FlutterActivity() {
     private var currentRecordingPath: String? = null
 
     companion object {
-        private const val ACTION_TOGGLE_MIC = "com.example.flutter_messenger.PIP_TOGGLE_MIC"
-        private const val ACTION_END_CALL = "com.example.flutter_messenger.PIP_END_CALL"
+        private const val ACTION_TOGGLE_MIC = "com.example.flutter_messenger_v2.PIP_TOGGLE_MIC"
+        private const val ACTION_END_CALL = "com.example.flutter_messenger_v2.PIP_END_CALL"
         private const val REQUEST_TOGGLE_MIC = 1001
         private const val REQUEST_END_CALL = 1002
     }
@@ -152,7 +152,7 @@ class MainActivity : FlutterActivity() {
             }
 
         // ── Screen share foreground service channel ────────────────────────
-        val screenShareChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.example.flutter_messenger/screen_share")
+        val screenShareChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.example.flutter_messenger_v2/screen_share")
         screenShareChannel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "startForegroundService" -> {

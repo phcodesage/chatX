@@ -38,7 +38,7 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
     
     <application
-        android:label="flutter_messenger"
+        android:label="Flutter Messenger v2"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false">
