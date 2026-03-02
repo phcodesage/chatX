@@ -829,7 +829,11 @@ class SocketService {
 
     // Add a catch-all event listener for debugging
     _socket!.onAny((event, data) {
-      debugPrint('🔍 [SOCKET DEBUG] Received event: $event with data: $data');
+      // Only log color-related events to reduce noise
+      if (event.toString().contains('color') ||
+          event.toString().contains('group_color')) {
+        debugPrint('🔍 [SOCKET DEBUG] Received event: $event with data: $data');
+      }
     });
 
     // Connection events
@@ -971,14 +975,28 @@ class SocketService {
 
     // Group color change event
     _socket!.on('group_color_changed', (data) {
-      debugPrint('🎨 Group color changed: $data');
+      debugPrint('🎨 [SOCKET SERVICE] Group color changed received: $data');
+      debugPrint(
+        '🎨 [SOCKET SERVICE] Broadcasting to ${_groupColorChangedListeners.length} listeners',
+      );
+      debugPrint(
+        '🎨 [SOCKET SERVICE] Listener keys: ${_groupColorChangedListeners.keys.toList()}',
+      );
       _broadcast(_groupColorChangedListeners, data as Map<String, dynamic>);
+      debugPrint('🎨 [SOCKET SERVICE] Broadcast completed');
     });
 
     // Group color reset event
     _socket!.on('group_color_reset', (data) {
-      debugPrint('🔄 Group color reset: $data');
+      debugPrint('🔄 [SOCKET SERVICE] Group color reset received: $data');
+      debugPrint(
+        '🔄 [SOCKET SERVICE] Broadcasting to ${_groupColorResetListeners.length} listeners',
+      );
+      debugPrint(
+        '🔄 [SOCKET SERVICE] Listener keys: ${_groupColorResetListeners.keys.toList()}',
+      );
       _broadcast(_groupColorResetListeners, data as Map<String, dynamic>);
+      debugPrint('🔄 [SOCKET SERVICE] Reset broadcast completed');
     });
 
     // Message delivery confirmation
@@ -1270,6 +1288,18 @@ class SocketService {
       debugPrint('🧪 [SOCKET DEBUG] Test response broadcast completed');
     });
 
+    // Debug: Catch-all listener for color-related events
+    _socket!.onAny((event, data) {
+      if (event.toString().toLowerCase().contains('color')) {
+        debugPrint('🎨 [CATCH-ALL] Color-related event received: $event');
+        debugPrint('🎨 [CATCH-ALL] Event data: $data');
+      }
+      if (event.toString().toLowerCase().contains('reset')) {
+        debugPrint('🔄 [CATCH-ALL] Reset-related event received: $event');
+        debugPrint('🔄 [CATCH-ALL] Event data: $data');
+      }
+    });
+
     // WebRTC signaling (offer/answer/ICE candidates)
     _socket!.on('signal', (data) {
       debugPrint('📡 Signal received: $data');
@@ -1310,8 +1340,18 @@ class SocketService {
     if (_socket?.connected ?? false) {
       debugPrint('📤 Emitting $event: $data');
       _socket!.emit(event, data);
+
+      // Add extra debugging for color change events
+      if (event.contains('color')) {
+        debugPrint('🎨 [SOCKET DEBUG] Color event emitted successfully');
+        debugPrint('🎨 [SOCKET DEBUG] Socket connected: ${_socket?.connected}');
+        debugPrint('🎨 [SOCKET DEBUG] Socket ID: ${_socket?.id}');
+      }
     } else {
       debugPrint('⚠️ Cannot emit $event - socket not connected');
+      debugPrint(
+        '⚠️ Socket state: connected=${_socket?.connected}, socket=${_socket != null}',
+      );
     }
   }
 

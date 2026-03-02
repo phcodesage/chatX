@@ -94,7 +94,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     // Set this group as active to prevent FCM notifications
     ActiveChatService().setActiveGroup(widget.group.id);
 
-    // Debug: Periodic connection check
+    // Debug: Periodic connection check (commented out to reduce noise)
+    /*
     Timer.periodic(const Duration(seconds: 10), (timer) {
       if (mounted) {
         debugPrint(
@@ -104,16 +105,24 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         timer.cancel();
       }
     });
+    */
   }
 
   Future<void> _initialize() async {
+    debugPrint(
+      '🎨 [INIT] Starting initialization for group ${widget.group.id}',
+    );
     _currentUserId = await StorageService.getUserId();
+    debugPrint('🎨 [INIT] Current user ID: $_currentUserId');
     await _loadMessages();
     await _loadSavedGroupChatColor(); // Load saved color
+    debugPrint('🎨 [INIT] Setting up realtime listeners...');
     _setupRealtimeListeners();
+    debugPrint('🎨 [INIT] Joining group chat...');
     _socketService.joinGroupChat(widget.group.id);
 
-    // Debug: Test socket connection with multiple approaches
+    // Debug: Test socket connection with multiple approaches (commented out to reduce noise)
+    /*
     debugPrint('🧪 [GROUP CHAT] Testing socket connection...');
     _socketService.emit('test_connection', {'test': 'mobile_group_chat'});
 
@@ -124,6 +133,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       });
     });
+    */
   }
 
   void _onFocusChange() {
@@ -143,23 +153,31 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   void _setupRealtimeListeners() {
     final key = 'group_chat_${widget.group.id}';
 
-    // Debug: Check socket connection status
+    debugPrint('🎨 [SETUP] Setting up listeners with key: $key');
+
+    // Debug: Check socket connection status (commented out to reduce noise)
+    /*
     debugPrint(
       '🔌 [GROUP CHAT] Setting up listeners, socket connected: ${_socketService.isConnected}',
     );
+    */
 
-    // Debug: Test response listener
+    // Debug: Test response listener (commented out to reduce noise)
+    /*
     _socketService.addListener('test_response', key, (data) {
       debugPrint('🧪 [TEST RESPONSE] Received in group chat screen: $data');
       debugPrint(
         '🧪 [TEST RESPONSE] This confirms mobile can receive Socket.IO events!',
       );
     });
+    */
 
-    // Debug: Connection change listener
+    // Debug: Connection change listener (commented out to reduce noise)
+    /*
     _socketService.addListener('connectionChanged', key, (data) {
       debugPrint('🔌 [GROUP CHAT] Connection changed: $data');
     });
+    */
 
     // New message from another member
     _socketService.addListener('groupNewMessage', key, (data) {
@@ -196,9 +214,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     // File message (also comes through groupNewMessage)
     _socketService.addListener('groupFileMessage', key, (data) {
-      debugPrint('📎 [GROUP FILE MESSAGE] Event received: $data');
+      // debugPrint('📎 [GROUP FILE MESSAGE] Event received: $data');
       if (data['group_id'] == widget.group.id) {
-        debugPrint('📎 [GROUP FILE MESSAGE] Processing for current group');
+        // debugPrint('📎 [GROUP FILE MESSAGE] Processing for current group');
         _handleNewMessage(data);
       }
     });
@@ -262,22 +280,58 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     });
 
     // Group color change events
+    debugPrint('🎨 [SETUP] Adding groupColorChanged listener with key: $key');
     _socketService.addListener('groupColorChanged', key, (data) {
       debugPrint('🎨 [GROUP COLOR CHANGED] Event received: $data');
+      debugPrint(
+        '🎨 [GROUP COLOR CHANGED] Current group ID: ${widget.group.id}',
+      );
+      debugPrint(
+        '🎨 [GROUP COLOR CHANGED] Event group ID: ${data['group_id']}',
+      );
+      debugPrint('🎨 [GROUP COLOR CHANGED] Listener key: $key');
       if (data['group_id'] == widget.group.id) {
         debugPrint('🎨 [GROUP COLOR CHANGED] Processing for current group');
         _handleGroupColorChange(data);
+      } else {
+        debugPrint('🎨 [GROUP COLOR CHANGED] Ignoring - different group');
       }
     });
 
     // Group color reset events
     _socketService.addListener('groupColorReset', key, (data) {
       debugPrint('🔄 [GROUP COLOR RESET] Event received: $data');
+      debugPrint('🔄 [GROUP COLOR RESET] Current group ID: ${widget.group.id}');
+      debugPrint('🔄 [GROUP COLOR RESET] Event group ID: ${data['group_id']}');
+      debugPrint('🔄 [GROUP COLOR RESET] Event data type: ${data.runtimeType}');
+      debugPrint('🔄 [GROUP COLOR RESET] Full event data: $data');
       if (data['group_id'] == widget.group.id) {
         debugPrint('🔄 [GROUP COLOR RESET] Processing for current group');
         _handleGroupColorReset(data);
+      } else {
+        debugPrint('🔄 [GROUP COLOR RESET] Ignoring - different group');
       }
     });
+
+    // All messages deleted event (admin delete all)
+    debugPrint('📭 [SETUP] Adding allMessagesDeleted listener with key: $key');
+    _socketService.addListener('allMessagesDeleted', key, (data) {
+      debugPrint('📭 [ALL MESSAGES DELETED] Event received: $data');
+      debugPrint(
+        '📭 [ALL MESSAGES DELETED] Current group ID: ${widget.group.id}',
+      );
+      debugPrint(
+        '📭 [ALL MESSAGES DELETED] Event group ID: ${data['group_id']}',
+      );
+      if (data['group_id'] == widget.group.id) {
+        debugPrint('📭 [ALL MESSAGES DELETED] Processing for current group');
+        _handleAllMessagesDeleted(data);
+      } else {
+        debugPrint('📭 [ALL MESSAGES DELETED] Ignoring - different group');
+      }
+    });
+
+    debugPrint('🎨 [SETUP] All listeners registered for key: $key');
   }
 
   Future<void> _loadMessages() async {
@@ -300,7 +354,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           _isLoadingMessages = false;
         });
 
-        // Debug: Log file messages
+        // Debug: Log file messages (commented out to reduce noise)
+        /*
         final fileMessages = messages
             .where((m) => m.messageType != 'text' && m.messageType != 'system')
             .toList();
@@ -314,6 +369,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             );
           }
         }
+        */
 
         // Mark messages as viewed
         _markMessagesAsViewed();
@@ -399,7 +455,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           _markMessagesAsViewed();
         }
 
-        // Scroll to bottom
+        // Only auto-scroll if user is at bottom, otherwise just show unread badge
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scrollController.hasClients && _isAtBottom) {
             debugPrint('📨 [GROUP NEW MESSAGE] Scrolling to bottom');
@@ -583,9 +639,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       _messages.add(doorbellMessage);
     });
 
-    // Scroll to bottom to show the notification
+    // Only auto-scroll if user is at bottom, otherwise just show unread badge
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
+      if (_scrollController.hasClients && _isAtBottom) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
           duration: const Duration(milliseconds: 300),
@@ -671,7 +727,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         final hexColor = colorHex.replaceAll('#', '');
         final color = Color(int.parse('FF$hexColor', radix: 16));
 
-        // Only apply color change if we are NOT the sender
+        // Only apply color change if we are NOT the sender (matches 1-on-1 behavior)
         if (!isFromSelf) {
           setState(() {
             _headerColor = color;
@@ -710,9 +766,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           _messages.add(colorMessage);
         });
 
-        // Scroll to bottom to show the message
+        // Only auto-scroll if user is at bottom, otherwise just show unread badge
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
+          if (_scrollController.hasClients && _isAtBottom) {
             _scrollController.animateTo(
               _scrollController.position.maxScrollExtent,
               duration: const Duration(milliseconds: 300),
@@ -735,7 +791,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final timestampMs =
         data['timestamp_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch;
 
-    // Only apply color reset if we are NOT the sender
+    // Only apply color reset if we are NOT the sender (matches 1-on-1 behavior)
     if (!isFromSelf) {
       setState(() {
         _headerColor = const Color(0xFF4C1D95); // Reset to default
@@ -787,6 +843,71 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     debugPrint(
       '🔄 [GROUP COLOR RESET] Color reset by ${senderName ?? "Someone"}',
+    );
+  }
+
+  void _handleAllMessagesDeleted(Map<String, dynamic> data) {
+    final adminName = data['admin_name'] as String?;
+    final adminId = data['admin_id'] as int?;
+    final isFromSelf = adminId == _currentUserId;
+    final timestampMs =
+        data['timestamp_ms'] as int? ?? DateTime.now().millisecondsSinceEpoch;
+
+    debugPrint('📭 [ALL MESSAGES DELETED] Admin: ${adminName ?? "Someone"}');
+    debugPrint('📭 [ALL MESSAGES DELETED] Is from self: $isFromSelf');
+    debugPrint(
+      '📭 [ALL MESSAGES DELETED] Current messages count: ${_messages.length}',
+    );
+
+    // Clear all messages from the UI
+    setState(() {
+      _messages.clear();
+    });
+
+    // Clear cached messages
+    ChatCacheService.clearGroupCache(widget.group.id);
+
+    // Create system message about deletion
+    final deleteMessage = GroupMessage(
+      id: timestampMs,
+      messageId: timestampMs,
+      groupId: widget.group.id,
+      senderId: adminId ?? 0,
+      sender: GroupMessageSender(
+        id: adminId ?? 0,
+        username: adminName ?? 'Admin',
+        firstName: adminName ?? 'Admin',
+        lastName: '',
+        fullName: adminName ?? 'Admin',
+      ),
+      content: isFromSelf
+          ? 'You deleted all messages'
+          : '${adminName ?? "Admin"} deleted all messages',
+      messageType: 'system',
+      timestamp: DateTime.fromMillisecondsSinceEpoch(
+        timestampMs,
+      ).toIso8601String(),
+      timestampMs: timestampMs,
+      reactions: {},
+    );
+
+    setState(() {
+      _messages.add(deleteMessage);
+    });
+
+    // Only auto-scroll if user is at bottom, otherwise just show unread badge
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients && _isAtBottom) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+
+    debugPrint(
+      '📭 [ALL MESSAGES DELETED] Messages cleared and system message added',
     );
   }
 
@@ -1065,9 +1186,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       await GroupService.uploadFile(groupId: widget.group.id, file: file);
 
       // Don't add message here - wait for socket confirmation
-      debugPrint(
-        '📎 File uploaded successfully, waiting for socket confirmation',
-      );
+      // debugPrint(
+      //   '📎 File uploaded successfully, waiting for socket confirmation',
+      // );
     } catch (e) {
       debugPrint('Error uploading file: $e');
 
@@ -1440,6 +1561,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     // Debug logging for file message display
     if (message.messageType != 'text' && message.messageType != 'system') {
+      // Commented out to reduce log noise - uncomment if needed for file debugging
+      /*
       debugPrint('🎨 [MESSAGE DISPLAY] Rendering file message:');
       debugPrint('🎨 [MESSAGE DISPLAY] - ID: ${message.id}');
       debugPrint('🎨 [MESSAGE DISPLAY] - Type: ${message.messageType}');
@@ -1451,6 +1574,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       debugPrint('🎨 [MESSAGE DISPLAY] - fileName: ${message.fileName}');
       debugPrint('🎨 [MESSAGE DISPLAY] - fileType: ${message.fileType}');
       debugPrint('🎨 [MESSAGE DISPLAY] - content: ${message.content}');
+      */
     }
 
     // Check if this message has reactions to adjust bottom margin
@@ -1594,10 +1718,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                           );
                         },
                         errorBuilder: (context, error, stackTrace) {
-                          debugPrint(
-                            '❌ [IMAGE ERROR] Failed to load image: $error',
-                          );
-                          debugPrint('❌ [IMAGE ERROR] URL: ${message.fileUrl}');
+                          // debugPrint(
+                          //   '❌ [IMAGE ERROR] Failed to load image: $error',
+                          // );
+                          // debugPrint('❌ [IMAGE ERROR] URL: ${message.fileUrl}');
                           return Container(
                             height: 100,
                             color: Colors.grey[800],
@@ -3211,7 +3335,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               .toUpperCase();
 
           // Emit group color change event
-          _socketService.emit('change_group_color', {
+          debugPrint(
+            '🎨 [MOBILE] Emitting group_color_changed for group ${widget.group.id} with color #$colorHex',
+          );
+          _socketService.emit('group_color_changed', {
             'group_id': widget.group.id,
             'color': '#$colorHex',
             'sender_name': 'You',
@@ -3253,10 +3380,28 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
+  /// Reset group chat color locally (only for current user)
+  void _resetGroupColorLocally() {
+    debugPrint('🔄 [LOCAL RESET] Resetting group chat color locally');
+
+    setState(() {
+      _headerColor = const Color(0xFF4C1D95); // Reset to default
+      _showResetButton = false;
+    });
+
+    // Clear saved color
+    _clearGroupChatColor();
+
+    debugPrint('🔄 [LOCAL RESET] Group chat color reset locally');
+  }
+
   /// Reset group chat color for all members
   void _resetGroupColor() {
     // Emit group color reset event
-    _socketService.emit('reset_group_color', {
+    debugPrint(
+      '🔄 [MOBILE] Emitting group_color_reset for group ${widget.group.id}',
+    );
+    _socketService.emit('group_color_reset', {
       'group_id': widget.group.id,
       'sender_name': 'You',
     });
@@ -3684,7 +3829,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   /// Reset group chat color for all members
   void _resetColor() {
-    _resetGroupColor();
+    _resetGroupColorLocally(); // Use local reset instead of group reset
   }
 
   /// Export chat history

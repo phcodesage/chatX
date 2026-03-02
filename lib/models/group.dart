@@ -240,7 +240,8 @@ class GroupMessage {
       String? fileType = json['file_type'] as String?;
       int? fileSize = json['file_size'] as int?;
 
-      // Debug logging for file messages
+      // Debug logging for file messages (commented out to reduce noise)
+      /*
       if (messageType != 'text' && messageType != 'system') {
         debugPrint('📎 [GROUP MESSAGE PARSE] File message detected:');
         debugPrint('📎 [GROUP MESSAGE PARSE] - Type: $messageType');
@@ -251,26 +252,34 @@ class GroupMessage {
         debugPrint('📎 [GROUP MESSAGE PARSE] - File Size: $fileSize');
         debugPrint('📎 [GROUP MESSAGE PARSE] - Raw JSON: $json');
       }
+      */
 
       // If content contains HTML and no file info is provided, parse it
       if (content.contains('<') && content.contains('>') && fileUrl == null) {
-        debugPrint(
-          '📎 [GROUP MESSAGE PARSE] Parsing HTML content for file info',
-        );
-        final htmlParseResult = _parseHtmlContent(content);
-        if (htmlParseResult != null) {
-          debugPrint(
-            '📎 [GROUP MESSAGE PARSE] HTML parsing successful: $htmlParseResult',
-          );
-          messageType = htmlParseResult['messageType'] ?? messageType;
-          fileUrl = htmlParseResult['fileUrl'];
-          fileName = htmlParseResult['fileName'];
-          fileType = htmlParseResult['fileType'];
-          fileSize = htmlParseResult['fileSize'];
+        // Check if this is a color change message first
+        if (content.contains('Changed background color to') ||
+            content.contains('Reset background color')) {
+          // Clean up color change HTML content
+          content = _cleanColorChangeContent(content);
         } else {
-          debugPrint(
-            '📎 [GROUP MESSAGE PARSE] HTML parsing failed for content: $content',
-          );
+          // debugPrint(
+          //   '📎 [GROUP MESSAGE PARSE] Parsing HTML content for file info',
+          // );
+          final htmlParseResult = _parseHtmlContent(content);
+          if (htmlParseResult != null) {
+            // debugPrint(
+            //   '📎 [GROUP MESSAGE PARSE] HTML parsing successful: $htmlParseResult',
+            // );
+            messageType = htmlParseResult['messageType'] ?? messageType;
+            fileUrl = htmlParseResult['fileUrl'];
+            fileName = htmlParseResult['fileName'];
+            fileType = htmlParseResult['fileType'];
+            fileSize = htmlParseResult['fileSize'];
+          } else {
+            // debugPrint(
+            //   '📎 [GROUP MESSAGE PARSE] HTML parsing failed for content: $content',
+            // );
+          }
         }
       }
 
@@ -279,9 +288,9 @@ class GroupMessage {
         final fullFileUrl = fileUrl.startsWith('http')
             ? fileUrl
             : '${ApiConfig.baseUrl}$fileUrl';
-        debugPrint(
-          '📎 [GROUP MESSAGE PARSE] Converting URL: $fileUrl -> $fullFileUrl',
-        );
+        // debugPrint(
+        //   '📎 [GROUP MESSAGE PARSE] Converting URL: $fileUrl -> $fullFileUrl',
+        // );
         fileUrl = fullFileUrl;
       }
 
@@ -427,6 +436,31 @@ class GroupMessage {
     return match?.group(1);
   }
 
+  /// Clean up color change HTML content to display clean text
+  static String _cleanColorChangeContent(String htmlContent) {
+    // Handle "Changed background color to <span...>" messages
+    if (htmlContent.contains('Changed background color to')) {
+      // Extract the color from the span's background style
+      final colorRegex = RegExp(r'background:#([a-fA-F0-9]{6})');
+      final colorMatch = colorRegex.firstMatch(htmlContent);
+
+      if (colorMatch != null) {
+        final colorHex = colorMatch.group(1)?.toUpperCase();
+        return 'Changed background color to #$colorHex';
+      } else {
+        return 'Changed background color';
+      }
+    }
+
+    // Handle "Reset background color" messages
+    if (htmlContent.contains('Reset background color')) {
+      return 'Reset background color';
+    }
+
+    // Fallback: strip all HTML tags
+    return htmlContent.replaceAll(RegExp(r'<[^>]*>'), '');
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -452,11 +486,11 @@ class GroupMessage {
   /// Format timestamp for display
   String get formattedTime {
     try {
-      debugPrint('🕐 [TIMESTAMP DEBUG] Raw timestamp: "$timestamp"');
+      // debugPrint('🕐 [TIMESTAMP DEBUG] Raw timestamp: "$timestamp"');
       final dateTime = DateTime.parse(timestamp).toLocal();
-      debugPrint('🕐 [TIMESTAMP DEBUG] Parsed dateTime: $dateTime');
+      // debugPrint('🕐 [TIMESTAMP DEBUG] Parsed dateTime: $dateTime');
       final now = DateTime.now();
-      debugPrint('🕐 [TIMESTAMP DEBUG] Current time: $now');
+      // debugPrint('🕐 [TIMESTAMP DEBUG] Current time: $now');
       final difference = now.difference(dateTime);
 
       if (difference.inDays == 0) {
@@ -465,7 +499,7 @@ class GroupMessage {
         final period = hour >= 12 ? 'PM' : 'AM';
         final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
         final result = '$displayHour:$minute $period';
-        debugPrint('🕐 [TIMESTAMP DEBUG] Formatted result: "$result"');
+        // debugPrint('🕐 [TIMESTAMP DEBUG] Formatted result: "$result"');
         return result;
       } else if (difference.inDays == 1) {
         return 'Yesterday';
@@ -475,9 +509,9 @@ class GroupMessage {
         return '${dateTime.month}/${dateTime.day}/${dateTime.year}';
       }
     } catch (e) {
-      debugPrint(
-        '🕐 [TIMESTAMP DEBUG] Error parsing timestamp "$timestamp": $e',
-      );
+      // debugPrint(
+      //   '🕐 [TIMESTAMP DEBUG] Error parsing timestamp "$timestamp": $e',
+      // );
       return '';
     }
   }

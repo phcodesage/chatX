@@ -468,13 +468,16 @@ class _ChatScreenState extends State<ChatScreen> {
         }
 
         // Mark as read whenever chat is open and message is from partner.
-        // Don't guard on _isAtBottom — inserting into the list shifts the
-        // scroll offset momentarily, making _isAtBottom transiently false.
+        // Only auto-scroll if user is already at bottom to avoid interrupting reading
         if (message.senderId == widget.otherUser.id) {
           _socketService.markMessagesRead(widget.otherUser.id);
           _socketService.markMessagesViewed(widget.otherUser.id);
           debugPrint('📧 Marked message ${message.id} as seen (chat is open)');
-          _scrollToBottom();
+
+          // Only auto-scroll if user is at bottom, otherwise just show unread badge
+          if (_isAtBottom) {
+            _scrollToBottom();
+          }
         }
       }
     });
@@ -512,7 +515,10 @@ class _ChatScreenState extends State<ChatScreen> {
             setState(() {
               _messages.insert(0, message);
             });
-            _scrollToBottom();
+            // Only auto-scroll if user is at bottom, otherwise just show unread badge
+            if (_isAtBottom) {
+              _scrollToBottom();
+            }
             debugPrint('📤 Cross-device: added own sent message to chat');
           }
         }
@@ -806,8 +812,10 @@ class _ChatScreenState extends State<ChatScreen> {
           debugPrint('📎 Cross-device: added own sent file to chat');
         }
 
-        // Scroll to bottom
-        _scrollToBottom();
+        // Only auto-scroll if user is at bottom, otherwise just show unread badge
+        if (_isAtBottom) {
+          _scrollToBottom();
+        }
       }
     });
 
@@ -880,8 +888,10 @@ class _ChatScreenState extends State<ChatScreen> {
           debugPrint('🎤 Cross-device: added own sent voice message to chat');
         }
 
-        // Scroll to bottom
-        _scrollToBottom();
+        // Only auto-scroll if user is at bottom, otherwise just show unread badge
+        if (_isAtBottom) {
+          _scrollToBottom();
+        }
       }
     });
 
@@ -1390,9 +1400,11 @@ class _ChatScreenState extends State<ChatScreen> {
           _messages.insert(0, colorMessage);
         });
 
-        // Scroll to bottom to show the message
+        // Only auto-scroll if user is at bottom, otherwise just show unread badge
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          _scrollToBottom();
+          if (_isAtBottom) {
+            _scrollToBottom();
+          }
         });
 
         debugPrint(
@@ -1454,8 +1466,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.insert(0, resetMessage);
     });
 
+    // Only auto-scroll if user is at bottom, otherwise just show unread badge
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
+      if (_isAtBottom) {
+        _scrollToBottom();
+      }
     });
 
     debugPrint(
@@ -1507,9 +1522,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.insert(0, doorbellMessage);
     });
 
-    // Scroll to bottom to show the notification
+    // Only auto-scroll if user is at bottom, otherwise just show unread badge
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
+      if (_isAtBottom) {
+        _scrollToBottom();
+      }
     });
   }
 
@@ -1553,8 +1570,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.insert(0, doorbellMessage);
     });
 
+    // Only auto-scroll if user is at bottom, otherwise just show unread badge
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
+      if (_isAtBottom) {
+        _scrollToBottom();
+      }
     });
   }
 
@@ -2354,9 +2374,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.insert(0, resetMessage);
     });
 
-    // Scroll to bottom
+    // Only auto-scroll if user is at bottom, otherwise just show unread badge
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
+      if (_isAtBottom) {
+        _scrollToBottom();
+      }
     });
 
     debugPrint('🎨 Color reset to default');
@@ -2401,9 +2423,11 @@ class _ChatScreenState extends State<ChatScreen> {
             _messages.insert(0, colorMessage);
           });
 
-          // Scroll to bottom to show the message
+          // Only auto-scroll if user is at bottom, otherwise just show unread badge
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            _scrollToBottom();
+            if (_isAtBottom) {
+              _scrollToBottom();
+            }
           });
 
           debugPrint(
@@ -2448,9 +2472,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.insert(0, doorbellMessage);
     });
 
-    // Scroll to bottom to show the notification message
+    // Only auto-scroll if user is at bottom, otherwise just show unread badge
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
+      if (_isAtBottom) {
+        _scrollToBottom();
+      }
     });
   }
 
@@ -2828,9 +2854,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.insert(0, message);
     });
 
-    // Scroll to bottom to show the new message
+    // Only auto-scroll if user is at bottom, otherwise just show unread badge
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
+      if (_isAtBottom) {
+        _scrollToBottom();
+      }
     });
 
     // Play notification sound
