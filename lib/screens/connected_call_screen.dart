@@ -93,6 +93,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   @override
   void initState() {
     super.initState();
+    debugPrint(
+      '📞 ConnectedCallScreen: Initializing for ${widget.callType} call with ${widget.remoteName}',
+    );
     WidgetsBinding.instance.addObserver(this);
     // Mark call in progress so PresenceService keeps status 'online' when backgrounded
     PresenceService().isCallInProgress = true;
@@ -105,34 +108,49 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
   /// Initialize ongoing call notification and PiP
   Future<void> _initCallServices() async {
-    // Show ongoing call notification in status bar
-    await _callNotificationService.initialize();
-    await _callNotificationService.show(
-      remoteName: widget.remoteName,
-      callType: widget.callType,
-    );
-    _callNotificationService.onEndCallFromNotification = () {
-      _endCall();
-    };
+    try {
+      debugPrint(
+        '📞 ConnectedCallScreen: Initializing call services for ${widget.callType} call',
+      );
 
-    // Initialize PiP and mark as in-call (await so native flag is set)
-    await _pipService.initialize();
-    await _pipService.setInCall(true);
-    _pipService.onPipModeChanged = (isInPip) {
-      if (mounted) {
-        setState(() {
-          _isInPipMode = isInPip;
-        });
-      }
-    };
-    // Handle PiP action buttons (mute/end call from PiP overlay)
-    _pipService.onToggleMic = () {
-      _toggleMic();
-      _pipService.updateMuteState(_isMicMuted);
-    };
-    _pipService.onEndCall = () {
-      _endCall();
-    };
+      // Show ongoing call notification in status bar
+      await _callNotificationService.initialize();
+      await _callNotificationService.show(
+        remoteName: widget.remoteName,
+        callType: widget.callType,
+      );
+      _callNotificationService.onEndCallFromNotification = () {
+        _endCall();
+      };
+
+      // Initialize PiP and mark as in-call (await so native flag is set)
+      await _pipService.initialize();
+      await _pipService.setInCall(true);
+      _pipService.onPipModeChanged = (isInPip) {
+        if (mounted) {
+          setState(() {
+            _isInPipMode = isInPip;
+          });
+        }
+      };
+      // Handle PiP action buttons (mute/end call from PiP overlay)
+      _pipService.onToggleMic = () {
+        _toggleMic();
+        _pipService.updateMuteState(_isMicMuted);
+      };
+      _pipService.onEndCall = () {
+        _endCall();
+      };
+
+      debugPrint(
+        '📞 ConnectedCallScreen: Call services initialized successfully for ${widget.callType} call',
+      );
+    } catch (e) {
+      debugPrint(
+        '❌ ConnectedCallScreen: Error initializing call services for ${widget.callType} call: $e',
+      );
+      // Continue without PiP/notification if they fail
+    }
   }
 
   @override
@@ -144,22 +162,47 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   }
 
   Future<void> _initializeRenderers() async {
-    await _localRenderer.initialize();
-    await _remoteRenderer.initialize();
+    try {
+      debugPrint(
+        '📞 ConnectedCallScreen: Initializing renderers for ${widget.callType} call',
+      );
 
-    // Set local stream
-    if (widget.localStream != null) {
-      _localRenderer.srcObject = widget.localStream;
-    } else if (widget.callService.localStream != null) {
-      _localRenderer.srcObject = widget.callService.localStream;
+      await _localRenderer.initialize();
+      await _remoteRenderer.initialize();
+
+      // Set local stream - handle audio calls gracefully
+      if (widget.localStream != null) {
+        debugPrint('📞 ConnectedCallScreen: Setting local stream from widget');
+        _localRenderer.srcObject = widget.localStream;
+      } else if (widget.callService.localStream != null) {
+        debugPrint(
+          '📞 ConnectedCallScreen: Setting local stream from call service',
+        );
+        _localRenderer.srcObject = widget.callService.localStream;
+      } else {
+        debugPrint(
+          '⚠️ ConnectedCallScreen: No local stream available for ${widget.callType} call',
+        );
+      }
+
+      // Set remote stream if already available
+      if (widget.callService.remoteStream != null) {
+        debugPrint('📞 ConnectedCallScreen: Setting remote stream');
+        _remoteRenderer.srcObject = widget.callService.remoteStream;
+      } else {
+        debugPrint('📞 ConnectedCallScreen: No remote stream available yet');
+      }
+
+      debugPrint(
+        '📞 ConnectedCallScreen: Renderer initialization completed for ${widget.callType} call',
+      );
+      setState(() {});
+    } catch (e) {
+      debugPrint(
+        '❌ ConnectedCallScreen: Error initializing renderers for ${widget.callType} call: $e',
+      );
+      // Don't rethrow - continue with call even if video fails
     }
-
-    // Set remote stream if already available
-    if (widget.callService.remoteStream != null) {
-      _remoteRenderer.srcObject = widget.callService.remoteStream;
-    }
-
-    setState(() {});
   }
 
   void _setupCallListeners() {

@@ -2802,8 +2802,15 @@ class _ChatScreenState extends State<ChatScreen> {
     // Navigate to connected call screen if call connected
     if (result == 'connected' && mounted) {
       debugPrint(
-        '📞 Navigating to ConnectedCallScreen after modal returned: $result',
+        '📞 Navigating to ConnectedCallScreen after modal returned: $result (callType: $callTypeStr)',
       );
+
+      // Add extra delay for audio calls in release builds
+      if (callTypeStr == 'audio') {
+        debugPrint('📞 Adding extra delay for audio call navigation');
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+
       try {
         await Navigator.of(context).push(
           MaterialPageRoute(
@@ -2819,13 +2826,17 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         );
-        debugPrint('📞 ConnectedCallScreen navigation completed');
+        debugPrint(
+          '📞 ConnectedCallScreen navigation completed for $callTypeStr call',
+        );
       } catch (e) {
-        debugPrint('❌ Error navigating to ConnectedCallScreen: $e');
+        debugPrint(
+          '❌ Error navigating to ConnectedCallScreen for $callTypeStr call: $e',
+        );
       }
     } else {
       debugPrint(
-        '📞 Modal result: $result, mounted: $mounted - not navigating to ConnectedCallScreen',
+        '📞 Modal result: $result, mounted: $mounted, callType: $callTypeStr - not navigating to ConnectedCallScreen',
       );
     }
   }

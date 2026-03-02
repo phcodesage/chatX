@@ -82,6 +82,10 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
   void _handleCallStateChanged(CallState state) {
     if (!mounted) return;
 
+    debugPrint(
+      '📞 OutgoingCallModal: Call state changed to $state for ${widget.callType} call',
+    );
+
     setState(() {
       _currentState = state;
     });
@@ -89,6 +93,9 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
     if (state == CallState.connected) {
       _noAnswerTimer?.cancel();
       widget.onConnected?.call();
+      debugPrint(
+        '📞 OutgoingCallModal: Call connected, popping modal for ${widget.callType} call',
+      );
       // Navigate to connected call screen (handled by parent)
       // Add small delay to ensure UI is ready in release builds
       Future.delayed(const Duration(milliseconds: 100), () {
@@ -98,6 +105,7 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
       });
     } else if (state == CallState.failed || state == CallState.ended) {
       _noAnswerTimer?.cancel();
+      debugPrint('📞 OutgoingCallModal: Call failed/ended, closing modal');
       // Auto-close after showing status
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) {
