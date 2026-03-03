@@ -210,7 +210,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
     // Listen for remote stream
     widget.callService.onRemoteStream = (stream) {
-      debugPrint('🎥 Connected call screen received remote stream');
+      debugPrint(
+        '🎥 Connected call screen received remote stream (callType: ${widget.callType})',
+      );
       _remoteRenderer.srcObject = stream;
       setState(() {});
     };
@@ -225,12 +227,15 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
     // Listen for screen share changes (local or remote)
     widget.callService.onScreenShareChanged = (isSharing) {
-      debugPrint('🖥️ Screen share changed: $isSharing');
+      debugPrint(
+        '🖥️ Screen share changed: $isSharing (callType: ${widget.callType})',
+      );
       if (mounted) {
         setState(() {
           // If we're not sharing, it means remote started/stopped
           if (!_isScreenSharing) {
             _remoteIsScreenSharing = isSharing;
+            debugPrint('🖥️ Remote screen sharing: $_remoteIsScreenSharing');
           }
         });
       }
@@ -578,8 +583,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   Widget _buildRemoteVideo() {
     final hasRemoteStream = _remoteRenderer.srcObject != null;
 
-    if (!hasRemoteStream || widget.callType == 'audio') {
-      // Audio call or no remote stream - show avatar
+    // For audio calls, show video only if remote is screen sharing
+    if (widget.callType == 'audio' && !_remoteIsScreenSharing) {
+      // Audio call without screen share - show avatar
       return Container(
         color: const Color(0xFF1A1A2E),
         child: Center(

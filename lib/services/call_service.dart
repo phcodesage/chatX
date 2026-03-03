@@ -504,7 +504,14 @@ class CallService {
         _callState == CallState.connected ||
         (_callState == CallState.connecting && hasActiveConnection);
 
-    if (isRenegotiation || (hasActiveConnection && isCallActive)) {
+    // Process renegotiation more permissively - if it's marked as renegotiation and we have a peer connection, try to handle it
+    if (isRenegotiation && _peerConnection != null) {
+      debugPrint(
+        '🔄 Renegotiation offer detected (renegotiate flag: $isRenegotiation, activePC: $hasActiveConnection, callActive: $isCallActive) - auto-answering',
+      );
+      await _processRenegotiationOffer(signal);
+      return;
+    } else if (hasActiveConnection && isCallActive) {
       debugPrint(
         '🔄 Renegotiation offer detected (renegotiate flag: $isRenegotiation, activePC: $hasActiveConnection, callActive: $isCallActive) - auto-answering',
       );
