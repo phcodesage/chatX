@@ -31,6 +31,7 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
   Timer? _dotsTimer;
   int _dotsCount = 0;
   late AnimationController _pulseController;
+  bool _hasBeenConnected = false; // Track if call was ever connected
 
   static const Duration noAnswerTimeout = Duration(seconds: 45);
 
@@ -65,6 +66,10 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
     _noAnswerTimer?.cancel();
     _dotsTimer?.cancel();
     _pulseController.dispose();
+
+    // Clear the call state listener to prevent it from firing after disposal
+    widget.callService.onCallStateChanged = null;
+
     super.dispose();
   }
 
@@ -91,11 +96,16 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
     });
 
     if (state == CallState.connected) {
+      _hasBeenConnected = true; // Mark that we've been connected
       _noAnswerTimer?.cancel();
       widget.onConnected?.call();
       debugPrint(
         '📞 OutgoingCallModal: Call connected, popping modal for ${widget.callType} call',
       );
+
+      // Clear the listener BEFORE popping to prevent duplicate navigation
+      widget.callService.onCallStateChanged = null;
+
       // Navigate to connected call screen (handled by parent)
       // Add small delay to ensure UI is ready in release builds
       Future.delayed(const Duration(milliseconds: 100), () {
@@ -103,15 +113,44 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
           Navigator.of(context).pop('connected');
         }
       });
-    } else if (state == CallState.failed || state == CallState.ended) {
+    } else if (state == CallState.failed) {
       _noAnswerTimer?.cancel();
-      debugPrint('📞 OutgoingCallModal: Call failed/ended, closing modal');
+      debugPrint('📞 OutgoingCallModal: Call failed, closing modal');
+
+      // Clear the listener before closing
+      widget.callService.onCallStateChanged = null;
+
       // Auto-close after showing status
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) {
           Navigator.of(context).pop();
         }
       });
+    } else if (state == CallState.ended) {
+      _noAnswerTimer?.cancel();
+      debugPrint('📞 OutgoingCallModal: Call ended, closing modal');
+
+      // Clear the listener before any navigation
+      widget.callService.onCallStateChanged = null;
+
+      // For video calls, if we reached connected state before ending,
+      // DON'T navigate again - the ConnectedCallScreen should already be showing
+      if (widget.callType == 'video' && _hasBeenConnected) {
+        debugPrint(
+          '📞 OutgoingCallModal: Video call was already connected, not navigating again',
+        );
+        // Just close the modal without navigating
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      } else {
+        // Auto-close after showing status
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) {
+            Navigator.of(context).pop();
+          }
+        });
+      }
     }
   }
 

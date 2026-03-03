@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'fcm_service.dart';
 import 'active_chat_service.dart';
+import '../utils/notification_handler.dart';
 
 /// Top-level function for background message handling
 /// This runs in a separate isolate when app is terminated/background
@@ -258,14 +259,6 @@ class FirebaseMessagingService {
         debugPrint('🔔 Notification tapped (app in background)');
         _handleNotificationTap(message.data);
       });
-
-      // Check if app was opened from a terminated state
-      RemoteMessage? initialMessage = await _firebaseMessaging
-          .getInitialMessage();
-      if (initialMessage != null) {
-        debugPrint('🔔 App opened from terminated state via notification');
-        _handleNotificationTap(initialMessage.data);
-      }
 
       debugPrint('✅ Firebase Messaging initialized successfully');
     } catch (e) {
@@ -531,5 +524,66 @@ class FirebaseMessagingService {
     } catch (e) {
       debugPrint('❌ Error clearing FCM token: $e');
     }
+  }
+
+  /// Check if app was opened from a terminated state via notification
+  /// Call this after the navigator is ready (e.g., after login/auth check)
+  Future<void> checkInitialMessage() async {
+    try {
+      // First check FCM initial message
+      RemoteMessage? initialMessage = await _firebaseMessaging
+          .getInitialMessage();
+      if (initialMessage != null) {
+        debugPrint('🔔 App opened from terminated state via FCM notification');
+        debugPrint(
+          'Initial message notification: ${initialMessage.notification?.toMap()}',
+        );
+        debugPrint('Initial message data: ${initialMessage.data}');
+        debugPrint('Data keys: ${initialMessage.data.keys.toList()}');
+        debugPrint('Data values: ${initialMessage.data.values.toList()}');
+        // Store as pending — don't navigate now because the auth flow
+        // will pushReplacement(HomePage) which destroys any pushed route.
+        // LobbyScreen will pick this up via _checkPendingNotification().
+        _storePendingForLobby(initialMessage.data);
+        return;
+      }
+
+      // Also check local notification launch details
+      // This handles cases where background handler showed the notification
+      final notificationAppLaunchDetails = await _localNotifications
+          .getNotificationAppLaunchDetails();
+
+      if (notificationAppLaunchDetails?.didNotificationLaunchApp ?? false) {
+        debugPrint(
+          '🔔 App opened from terminated state via LOCAL notification',
+        );
+        final payload =
+            notificationAppLaunchDetails?.notificationResponse?.payload;
+        if (payload != null) {
+          debugPrint('Local notification payload: $payload');
+          // Store as pending instead of navigating immediately
+          try {
+            final data = jsonDecode(payload) as Map<String, dynamic>;
+            _storePendingForLobby(data);
+          } catch (e) {
+            debugPrint('Error parsing notification payload: $e');
+          }
+          return;
+        }
+      }
+
+      debugPrint('ℹ️ No initial message found');
+    } catch (e) {
+      debugPrint('❌ Error checking initial message: $e');
+    }
+  }
+
+  /// Store notification data as pending for LobbyScreen to process
+  /// This is used when the app launches from terminated state — we can't
+  /// navigate immediately because the auth flow will pushReplacement and
+  /// destroy any route we push now.
+  void _storePendingForLobby(Map<String, dynamic> data) {
+    debugPrint('📌 Storing terminated-state notification as pending for LobbyScreen');
+    NotificationHandler.storePendingNotification(data);
   }
 }

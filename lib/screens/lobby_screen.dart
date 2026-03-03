@@ -24,6 +24,7 @@ import '../services/storage_service.dart';
 import '../config/api_config.dart';
 import '../services/presence_service.dart';
 import '../services/chat_cache_service.dart';
+import '../utils/notification_handler.dart';
 
 /// Lobby/Chat list screen
 class LobbyScreen extends StatefulWidget {
@@ -86,6 +87,33 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted) setState(() {});
     });
+
+    // Check for pending notification navigation after lobby is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkPendingNotification();
+    });
+  }
+
+  /// Check if there's a pending notification to handle
+  void _checkPendingNotification() {
+    debugPrint('📱 LobbyScreen: Checking for pending notifications...');
+    final pendingData = NotificationHandler.getPendingNotificationData();
+    if (pendingData != null) {
+      debugPrint(
+        '📱 LobbyScreen: Processing pending notification: $pendingData',
+      );
+      // Wait a bit to ensure lobby is fully rendered
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          NotificationHandler.handleNotificationTap(
+            pendingData,
+            fromPending: true,
+          );
+        }
+      });
+    } else {
+      debugPrint('📱 LobbyScreen: No pending notifications found');
+    }
   }
 
   Future<void> _loadAdminStatus() async {

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../screens/chat_screen.dart';
 import '../screens/connected_call_screen.dart';
-import '../screens/lobby_screen.dart';
 import '../widgets/incoming_call_setup_modal.dart';
 import '../models/lobby_user.dart';
 import '../services/call_service.dart';
@@ -19,11 +18,30 @@ class NotificationHandler {
   // Callback for incoming call from FCM (set by lobby/chat screens)
   static Function(Map<String, dynamic>)? onIncomingCallFromFCM;
 
+  /// Check if there's a pending notification waiting for lobby
+  static bool get hasPendingNavigation => _pendingNotificationData != null;
+
+  /// Get and clear pending notification data
+  static Map<String, dynamic>? getPendingNotificationData() {
+    debugPrint('🔍 getPendingNotificationData called');
+    debugPrint('🔍 Current pending data: $_pendingNotificationData');
+    final data = _pendingNotificationData;
+    _pendingNotificationData = null;
+    return data;
+  }
+
   /// Handle notification tap and navigate to the appropriate screen
-  static void handleNotificationTap(Map<String, dynamic> data) {
+  static void handleNotificationTap(
+    Map<String, dynamic> data, {
+    bool fromPending = false,
+  }) {
     debugPrint(
-      '🔔 NotificationHandler.handleNotificationTap called with: $data',
+      '🔔 NotificationHandler.handleNotificationTap called with: $data (fromPending: $fromPending)',
     );
+    debugPrint('🔔 Data type: ${data['type']}');
+    debugPrint('🔔 Sender ID: ${data['sender_id']}');
+    debugPrint('🔔 Sender Name: ${data['sender_name']}');
+    debugPrint('🔔 All keys: ${data.keys.toList()}');
 
     final type = data['type'] as String?;
     final senderId = int.tryParse(data['sender_id']?.toString() ?? '');
@@ -31,8 +49,14 @@ class NotificationHandler {
 
     if (senderId == null) {
       debugPrint('❌ Invalid sender_id in notification data');
+      debugPrint('❌ Raw sender_id value: ${data['sender_id']}');
+      debugPrint('❌ sender_id type: ${data['sender_id'].runtimeType}');
       return;
     }
+
+    debugPrint(
+      '✅ Parsed senderId: $senderId, senderName: $senderName, type: $type',
+    );
 
     // Check if navigator is ready
     if (navigatorKey.currentState == null) {
@@ -40,6 +64,10 @@ class NotificationHandler {
       _pendingNotificationData = data;
       return;
     }
+
+    debugPrint(
+      '✅ Navigator ready, proceeding with notification handling (fromPending: $fromPending)',
+    );
 
     switch (type) {
       case 'message':
@@ -233,6 +261,14 @@ class NotificationHandler {
         });
   }
 
+  /// Store notification data for later processing
+  /// Used when the app is starting from terminated state and the
+  /// navigation stack isn't ready yet (LobbyScreen hasn't mounted)
+  static void storePendingNotification(Map<String, dynamic> data) {
+    debugPrint('📌 Storing pending notification for later processing: $data');
+    _pendingNotificationData = data;
+  }
+
   /// Check and process any pending notification navigation
   /// Call this after the app is fully initialized
   static void processPendingNotification() {
@@ -245,7 +281,7 @@ class NotificationHandler {
 
       // Delay slightly to ensure navigation stack is ready
       Future.delayed(const Duration(milliseconds: 500), () {
-        handleNotificationTap(data);
+        handleNotificationTap(data, fromPending: true);
       });
     }
   }
@@ -253,6 +289,18 @@ class NotificationHandler {
   /// Navigate to chat screen with the specified user
   static void _navigateToChat(int userId, String userName) {
     debugPrint('🚀 Navigating to chat with user: $userId ($userName)');
+
+    // Check if we have a valid context
+    final context = navigatorKey.currentContext;
+    if (context == null) {
+      debugPrint('❌ No context available, storing as pending notification');
+      _pendingNotificationData = {
+        'type': 'message',
+        'sender_id': userId.toString(),
+        'sender_name': userName,
+      };
+      return;
+    }
 
     // Create a LobbyUser object with minimal information
     final user = LobbyUser(
@@ -275,18 +323,10 @@ class NotificationHandler {
       isAdminUser: false,
     );
 
-    // Ensure proper navigation stack by going to lobby first, then chat
-    // This prevents black screen issues when app is opened from terminated state
-    navigatorKey.currentState?.pushNamedAndRemoveUntil(
-      LobbyScreen.route,
-      (route) => false, // Clear all previous routes
+    // Navigate directly to chat - don't try to manipulate the navigation stack
+    // The LobbyScreen should already be loaded at this point
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (context) => ChatScreen(otherUser: user)),
     );
-
-    // Small delay to ensure lobby screen is loaded, then navigate to chat
-    Future.delayed(const Duration(milliseconds: 300), () {
-      navigatorKey.currentState?.push(
-        MaterialPageRoute(builder: (context) => ChatScreen(otherUser: user)),
-      );
-    });
   }
 }

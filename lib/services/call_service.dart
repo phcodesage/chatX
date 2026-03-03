@@ -90,6 +90,18 @@ class CallService {
   /// Reset call state (for cleaning up stale state)
   void reset() {
     debugPrint('🔄 Resetting CallService state');
+
+    // Clear all callbacks first
+    onCallStateChanged = null;
+    onLocalStream = null;
+    onRemoteStream = null;
+    onIncomingCall = null;
+    onCallError = null;
+    onScreenShareChanged = null;
+    onRemoteScreenShare = null;
+    onDataChannelMessage = null;
+
+    // Then do full cleanup
     _cleanup();
   }
 
@@ -488,8 +500,11 @@ class CallService {
 
   /// Handle incoming offer
   Future<void> _handleOffer(Map<String, dynamic> signal) async {
+    final callType = signal['callType'] as String?;
+    final reason = signal['reason'] as String?;
+
     debugPrint(
-      '📥 Received WebRTC offer (callDirection: $_callDirection, callState: $_callState, remoteDescSet: $_remoteDescriptionSet)',
+      '📥 Received WebRTC offer (callDirection: $_callDirection, callState: $_callState, remoteDescSet: $_remoteDescriptionSet, callType: $callType, reason: $reason)',
     );
 
     // RENEGOTIATION DETECTION: If we already have an active peer connection
@@ -562,8 +577,23 @@ class CallService {
       return;
     }
 
+    // Additional check: ensure we're in a valid call state for renegotiation
+    if (_callState != CallState.connected &&
+        _callState != CallState.connecting) {
+      debugPrint(
+        '⚠️ Cannot process renegotiation - invalid call state: $_callState',
+      );
+      return;
+    }
+
     try {
       final sdp = signal['sdp'] as String;
+      final callType = signal['callType'] as String?;
+      final reason = signal['reason'] as String?;
+
+      debugPrint(
+        '🔄 Processing renegotiation offer (callType: $callType, reason: $reason)',
+      );
 
       // Reset remote description flag so ICE candidates are queued during transition
       _remoteDescriptionSet = false;
@@ -954,6 +984,16 @@ class CallService {
   /// Call this when the call UI is being completely closed
   void fullCleanup() {
     debugPrint('🧹 Full cleanup - stopping all tracks and disposing streams');
+
+    // DON'T clear onCallStateChanged here - let the UI handle the state change first
+    // Only clear other callbacks that aren't needed for cleanup notification
+    onLocalStream = null;
+    onRemoteStream = null;
+    onIncomingCall = null;
+    onCallError = null;
+    onScreenShareChanged = null;
+    onRemoteScreenShare = null;
+    onDataChannelMessage = null;
 
     // Close data channel
     _dataChannel?.close();

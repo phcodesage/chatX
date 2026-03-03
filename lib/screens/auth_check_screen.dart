@@ -4,7 +4,6 @@ import '../services/socket_service.dart';
 import '../services/presence_service.dart';
 import '../services/fcm_service.dart';
 import '../services/firebase_messaging_service.dart';
-import '../utils/notification_handler.dart';
 import 'sign_in_page.dart';
 import 'home_page.dart';
 
@@ -47,7 +46,8 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         await PresenceService.updateStatus('online');
 
         // Send FCM token to backend for push notifications (on app restart)
-        final fcmToken = await FirebaseMessagingService.instance.getSavedFCMToken();
+        final fcmToken = await FirebaseMessagingService.instance
+            .getSavedFCMToken();
         if (fcmToken != null) {
           await FCMService.updateFCMToken(fcmToken);
         }
@@ -55,7 +55,9 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         // Re-check credentials before navigating (in case auth error cleared them)
         final stillLoggedIn = await StorageService.isLoggedIn();
         if (!stillLoggedIn) {
-          debugPrint('🔐 Credentials were cleared during startup, skipping HomePage navigation');
+          debugPrint(
+            '🔐 Credentials were cleared during startup, skipping HomePage navigation',
+          );
           // Auth error handler already navigated to sign-in
           if (mounted) {
             Navigator.of(context).pushReplacement(
@@ -65,16 +67,15 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
           return;
         }
 
+        // Check if app was opened from terminated state via notification BEFORE navigating
+        // This ensures the notification is stored as pending before LobbyScreen checks for it
+        await FirebaseMessagingService.instance.checkInitialMessage();
+
         // Navigate to home page
         if (mounted) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const HomePage()),
           );
-          
-          // Process any pending notification after navigation is complete
-          Future.delayed(const Duration(milliseconds: 300), () {
-            NotificationHandler.processPendingNotification();
-          });
         }
       } else {
         // Token or userId is missing, go to sign in
@@ -112,11 +113,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.message_rounded,
-                size: 80,
-                color: Colors.white,
-              ),
+              Icon(Icons.message_rounded, size: 80, color: Colors.white),
               SizedBox(height: 24),
               Text(
                 'Flutter Messenger',

@@ -33,45 +33,62 @@ class AuthService {
     String? lastName,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse(ApiConfig.registerUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': username,
-          'email': email,
-          'password': password,
-          'first_name': firstName,
-          if (lastName != null && lastName.isNotEmpty) 'last_name': lastName,
-        }),
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.registerUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'username': username,
+              'email': email,
+              'password': password,
+              'first_name': firstName,
+              if (lastName != null && lastName.isNotEmpty)
+                'last_name': lastName,
+            }),
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 201) {
         final authResponse = AuthResponse.fromJson(jsonDecode(response.body));
-        
+
         // Save token and user info
         await StorageService.saveToken(authResponse.token);
         await StorageService.saveUserId(authResponse.user.id);
         await StorageService.saveUsername(authResponse.user.username);
         await StorageService.saveIsAdmin(authResponse.user.isAdmin);
-        
+
         // Initialize Socket.IO connection
         SocketService().initialize(authResponse.token, authResponse.user.id);
-        
+
         // Start heartbeat to maintain online status
         PresenceService().startHeartbeat();
-        
+
         // Set status to online
         await PresenceService.updateStatus('online');
-        
+
         // Send FCM token to backend for push notifications
-        final fcmToken = await FirebaseMessagingService.instance.getSavedFCMToken();
+        final fcmToken = await FirebaseMessagingService.instance
+            .getSavedFCMToken();
         if (fcmToken != null) {
           await FCMService.updateFCMToken(fcmToken);
         }
-        
+
+        // Process any pending notification after registration
+        Future.delayed(const Duration(milliseconds: 500), () {
+          NotificationHandler.processPendingNotification();
+        });
+
+        // Check if app was opened from terminated state via notification
+        // Use longer delay to ensure navigation is complete
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          FirebaseMessagingService.instance.checkInitialMessage();
+        });
+
         return authResponse;
       } else {
-        throw Exception(_extractErrorMessage(response.body, 'Registration failed'));
+        throw Exception(
+          _extractErrorMessage(response.body, 'Registration failed'),
+        );
       }
     } catch (e) {
       debugPrint('Registration error: $e');
@@ -85,44 +102,50 @@ class AuthService {
     required String password,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse(ApiConfig.loginUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': username,
-          'password': password,
-        }),
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.loginUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'username': username, 'password': password}),
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 200) {
         final authResponse = AuthResponse.fromJson(jsonDecode(response.body));
-        
+
         // Save token and user info
         await StorageService.saveToken(authResponse.token);
         await StorageService.saveUserId(authResponse.user.id);
         await StorageService.saveUsername(authResponse.user.username);
         await StorageService.saveIsAdmin(authResponse.user.isAdmin);
-        
+
         // Initialize Socket.IO connection
         SocketService().initialize(authResponse.token, authResponse.user.id);
-        
+
         // Start heartbeat to maintain online status
         PresenceService().startHeartbeat();
-        
+
         // Set status to online
         await PresenceService.updateStatus('online');
-        
+
         // Send FCM token to backend for push notifications
-        final fcmToken = await FirebaseMessagingService.instance.getSavedFCMToken();
+        final fcmToken = await FirebaseMessagingService.instance
+            .getSavedFCMToken();
         if (fcmToken != null) {
           await FCMService.updateFCMToken(fcmToken);
         }
-        
+
         // Process any pending notification after login
         Future.delayed(const Duration(milliseconds: 500), () {
           NotificationHandler.processPendingNotification();
         });
-        
+
+        // Check if app was opened from terminated state via notification
+        // Use longer delay to ensure navigation is complete
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          FirebaseMessagingService.instance.checkInitialMessage();
+        });
+
         return authResponse;
       } else {
         throw Exception(_extractErrorMessage(response.body, 'Login failed'));
@@ -138,26 +161,28 @@ class AuthService {
     try {
       // Set status to offline before logout
       await PresenceService.updateStatus('offline');
-      
+
       // Stop heartbeat
       PresenceService().stopHeartbeat();
-      
+
       // Disconnect Socket.IO
       SocketService().disconnect();
-      
+
       // Remove FCM token from backend to stop receiving push notifications
       await FCMService.removeFCMToken();
-      
+
       final token = await StorageService.getToken();
-      
+
       if (token != null) {
-        await http.post(
-          Uri.parse(ApiConfig.logoutUrl),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-        ).timeout(ApiConfig.connectionTimeout);
+        await http
+            .post(
+              Uri.parse(ApiConfig.logoutUrl),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+            )
+            .timeout(ApiConfig.connectionTimeout);
       }
     } catch (e) {
       debugPrint('Logout error: $e');
@@ -171,24 +196,28 @@ class AuthService {
   static Future<User> getCurrentUser() async {
     try {
       final token = await StorageService.getToken();
-      
+
       if (token == null) {
         throw Exception('No authentication token found');
       }
 
-      final response = await http.get(
-        Uri.parse(ApiConfig.meUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .get(
+            Uri.parse(ApiConfig.meUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return User.fromJson(data['user']);
       } else {
-        throw Exception(_extractErrorMessage(response.body, 'Failed to get user info'));
+        throw Exception(
+          _extractErrorMessage(response.body, 'Failed to get user info'),
+        );
       }
     } catch (e) {
       debugPrint('Get current user error: $e');
@@ -201,19 +230,21 @@ class AuthService {
     required String emailOrUsername,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse(ApiConfig.forgotPasswordUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'email_or_username': emailOrUsername,
-        }),
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.forgotPasswordUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'email_or_username': emailOrUsername}),
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return data['message'] ?? 'Password reset link sent';
       } else {
-        throw Exception(_extractErrorMessage(response.body, 'Failed to send reset link'));
+        throw Exception(
+          _extractErrorMessage(response.body, 'Failed to send reset link'),
+        );
       }
     } catch (e) {
       debugPrint('Forgot password error: $e');
@@ -227,20 +258,21 @@ class AuthService {
     required String newPassword,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse(ApiConfig.resetPasswordUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'token': token,
-          'new_password': newPassword,
-        }),
-      ).timeout(ApiConfig.connectionTimeout);
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.resetPasswordUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'token': token, 'new_password': newPassword}),
+          )
+          .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return data['message'] ?? 'Password reset successful';
       } else {
-        throw Exception(_extractErrorMessage(response.body, 'Failed to reset password'));
+        throw Exception(
+          _extractErrorMessage(response.body, 'Failed to reset password'),
+        );
       }
     } catch (e) {
       debugPrint('Reset password error: $e');

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:io';
@@ -1264,6 +1265,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // Initialize call service (fetches ICE servers) and set up the call state
     final callService = CallService();
+
+    // Reset the singleton to ensure clean state for new call
+    callService.reset();
+
     await callService.initialize();
     callService.handleIncomingCall(data);
 
@@ -2719,6 +2724,10 @@ class _ChatScreenState extends State<ChatScreen> {
     bool videoEnabled,
   ) async {
     final callService = CallService();
+
+    // Reset the singleton to ensure clean state for new call
+    callService.reset();
+
     final callTypeStr = callType == CallType.video ? 'video' : 'audio';
 
     // Set up socket signal handler
@@ -2805,39 +2814,166 @@ class _ChatScreenState extends State<ChatScreen> {
         '📞 Navigating to ConnectedCallScreen after modal returned: $result (callType: $callTypeStr)',
       );
 
-      // Add extra delay for audio calls in release builds
-      if (callTypeStr == 'audio') {
-        debugPrint('📞 Adding extra delay for audio call navigation');
-        await Future.delayed(const Duration(milliseconds: 300));
+      // Ensure call is still connected before navigating
+      if (callService.callState != CallState.connected) {
+        debugPrint(
+          '⚠️ Call state changed to ${callService.callState} - not navigating to ConnectedCallScreen',
+        );
+        return;
       }
 
-      try {
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (context) => ConnectedCallScreen(
-              remoteName: widget.otherUser.fullName,
+      // Add extra delay for release builds to prevent race conditions
+      debugPrint('📞 Navigating immediately with post-frame callback');
+
+      // Use post-frame callback to ensure widget tree is stable for release builds
+      // This is much faster than Future.delayed and prevents the 18-second delay issue
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // Final check: ensure call is still connected
+        if (!mounted || callService.callState != CallState.connected) {
+          debugPrint(
+            '❌ Call state changed to ${callService.callState} or widget unmounted - aborting navigation',
+          );
+          return;
+        }
+
+        _performNavigation(callService, localStream, callTypeStr);
+      });
+    } else {
+      debugPrint(
+        '📞 Modal result: $result, mounted: $mounted, callType: $callTypeStr - not navigating to ConnectedCallScreen',
+      );
+    }
+  }
+
+  /// Perform navigation to ConnectedCallScreen with proper error handling
+  Future<void> _performNavigation(
+    CallService callService,
+    dynamic localStream,
+    String callTypeStr,
+  ) async {
+    debugPrint('📞 _performNavigation called for $callTypeStr call');
+
+    if (!mounted) {
+      debugPrint('❌ Widget unmounted in navigation method - aborting');
+      return;
+    }
+
+    try {
+      debugPrint('📞 About to push ConnectedCallScreen route');
+      debugPrint('📞 Current call state: ${callService.callState}');
+
+      // Use the safest possible navigation approach
+      final navigator = Navigator.maybeOf(context);
+      if (navigator == null) {
+        debugPrint('❌ Navigator is null - aborting navigation');
+        return;
+      }
+
+      // Validate parameters before navigation
+      if (callService == null) {
+        debugPrint('❌ CallService is null - aborting navigation');
+        return;
+      }
+
+      // Check localStream more thoroughly
+      debugPrint('📞 localStream type: ${localStream.runtimeType}');
+      debugPrint(
+        '📞 localStream is MediaStream: ${localStream is MediaStream}',
+      );
+      if (localStream != null && localStream is! MediaStream) {
+        debugPrint(
+          '⚠️ localStream is not a MediaStream: ${localStream.runtimeType}',
+        );
+      }
+
+      // Check widget state
+      debugPrint('📞 widget: ${widget != null ? 'available' : 'null'}');
+      debugPrint(
+        '📞 widget.otherUser: ${widget.otherUser != null ? 'available' : 'null'}',
+      );
+
+      debugPrint('📞 Parameters validated - proceeding with navigation');
+      debugPrint('📞 remoteName: ${widget.otherUser.fullName}');
+      debugPrint('📞 callType: $callTypeStr');
+      debugPrint(
+        '📞 localStream: ${localStream != null ? 'available' : 'null'}',
+      );
+      debugPrint('📞 callService.callState: ${callService.callState}');
+      debugPrint('📞 callService.remoteUserId: ${callService.remoteUserId}');
+      debugPrint(
+        '📞 callService.localStream: ${callService.localStream != null ? 'available' : 'null'}',
+      );
+      debugPrint(
+        '📞 callService.remoteStream: ${callService.remoteStream != null ? 'available' : 'null'}',
+      );
+
+      debugPrint('📞 Creating MaterialPageRoute...');
+      final route = MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (context) {
+          debugPrint('📞 Building ConnectedCallScreen widget');
+
+          try {
+            final remoteName = widget.otherUser?.fullName ?? 'Unknown User';
+            debugPrint('📞 Using remoteName: $remoteName');
+
+            return ConnectedCallScreen(
+              remoteName: remoteName,
               callType: callTypeStr,
               callService: callService,
               localStream: localStream,
               onChatPressed: () {
                 Navigator.of(context).pop(); // Return to chat
               },
-            ),
+            );
+          } catch (e) {
+            debugPrint('❌ Error creating ConnectedCallScreen: $e');
+            // Return a fallback widget
+            return Scaffold(
+              appBar: AppBar(title: const Text('Call Error')),
+              body: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error, size: 64, color: Colors.red),
+                    const SizedBox(height: 16),
+                    const Text('Failed to initialize call screen'),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Go Back'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+        },
+      );
+
+      debugPrint('📞 MaterialPageRoute created, pushing...');
+      final navigationResult = await navigator.push(route);
+
+      debugPrint(
+        '📞 ConnectedCallScreen navigation completed for $callTypeStr call with result: $navigationResult',
+      );
+    } catch (e) {
+      debugPrint(
+        '❌ Error navigating to ConnectedCallScreen for $callTypeStr call: $e',
+      );
+      debugPrint('❌ Error type: ${e.runtimeType}');
+      debugPrint('❌ Stack trace: ${StackTrace.current}');
+
+      // Try to show a user-friendly error
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to open call screen: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
           ),
         );
-        debugPrint(
-          '📞 ConnectedCallScreen navigation completed for $callTypeStr call',
-        );
-      } catch (e) {
-        debugPrint(
-          '❌ Error navigating to ConnectedCallScreen for $callTypeStr call: $e',
-        );
       }
-    } else {
-      debugPrint(
-        '📞 Modal result: $result, mounted: $mounted, callType: $callTypeStr - not navigating to ConnectedCallScreen',
-      );
     }
   }
 

@@ -17,14 +17,28 @@ class ConnectedCallScreen extends StatefulWidget {
   final MediaStream? localStream;
   final VoidCallback? onChatPressed;
 
-  const ConnectedCallScreen({
+  ConnectedCallScreen({
     super.key,
     required this.remoteName,
     required this.callType,
     required this.callService,
     this.localStream,
     this.onChatPressed,
-  });
+  }) {
+    debugPrint(
+      '📞 ConnectedCallScreen constructor called for $callType call with $remoteName',
+    );
+
+    // Validate required parameters
+    if (remoteName.isEmpty) {
+      debugPrint('⚠️ ConnectedCallScreen: remoteName is empty');
+    }
+    if (callType.isEmpty) {
+      debugPrint('⚠️ ConnectedCallScreen: callType is empty');
+    }
+
+    debugPrint('📞 ConnectedCallScreen constructor completed successfully');
+  }
 
   @override
   State<ConnectedCallScreen> createState() => _ConnectedCallScreenState();
@@ -53,6 +67,10 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
   // Prevent multiple pops
   bool _isEnding = false;
+
+  // Track when call screen was initialized to prevent premature ending
+  late DateTime _initTime;
+  bool _isFullyInitialized = false; // Track if async initialization completed
 
   // Device lists
   List<MediaDeviceInfo> _microphones = [];
@@ -93,17 +111,97 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   @override
   void initState() {
     super.initState();
+    _initTime = DateTime.now();
     debugPrint(
-      '📞 ConnectedCallScreen: Initializing for ${widget.callType} call with ${widget.remoteName}',
+      '📞 ConnectedCallScreen: initState called for ${widget.callType} call with ${widget.remoteName}',
     );
+    debugPrint('📞 ConnectedCallScreen: Widget mounted: $mounted');
+    debugPrint(
+      '📞 ConnectedCallScreen: Current call state: ${widget.callService.callState}',
+    );
+    debugPrint('📞 ConnectedCallScreen: Init time: $_initTime');
+
     WidgetsBinding.instance.addObserver(this);
     // Mark call in progress so PresenceService keeps status 'online' when backgrounded
     PresenceService().isCallInProgress = true;
-    _initializeRenderers();
-    _startCallDurationTimer();
-    _loadDevices();
+
+    // Initialize synchronously first
     _setupCallListeners();
-    _initCallServices();
+    _startCallDurationTimer();
+
+    debugPrint(
+      '📞 ConnectedCallScreen: Sync initialization completed, starting async init',
+    );
+
+    // Then initialize async components
+    _initializeAsync();
+
+    debugPrint(
+      '📞 ConnectedCallScreen: initState completed for ${widget.callType} call',
+    );
+  }
+
+  /// Initialize async components after sync setup
+  Future<void> _initializeAsync() async {
+    try {
+      debugPrint(
+        '📞 ConnectedCallScreen: Starting async initialization for ${widget.callType} call',
+      );
+
+      // For video calls, initialize renderers first
+      if (widget.callType == 'video') {
+        try {
+          await _initializeRenderers();
+          debugPrint(
+            '📞 ConnectedCallScreen: Video renderers initialized successfully',
+          );
+        } catch (e) {
+          debugPrint(
+            '⚠️ ConnectedCallScreen: Video renderer initialization failed: $e',
+          );
+          // Continue without video renderers - audio will still work
+        }
+      }
+
+      // Load devices (but don't fail if this errors)
+      try {
+        await _loadDevices();
+        debugPrint('📞 ConnectedCallScreen: Devices loaded successfully');
+      } catch (e) {
+        debugPrint(
+          '⚠️ ConnectedCallScreen: Device loading failed, continuing anyway: $e',
+        );
+      }
+
+      // Initialize call services last
+      try {
+        await _initCallServices();
+        debugPrint(
+          '📞 ConnectedCallScreen: Call services initialized successfully',
+        );
+      } catch (e) {
+        debugPrint(
+          '⚠️ ConnectedCallScreen: Call services initialization failed: $e',
+        );
+        // Continue without PiP/notification if they fail
+      }
+
+      debugPrint(
+        '📞 ConnectedCallScreen: Async initialization completed for ${widget.callType} call',
+      );
+
+      // Mark as fully initialized
+      _isFullyInitialized = true;
+    } catch (e) {
+      debugPrint(
+        '❌ ConnectedCallScreen: Async initialization failed for ${widget.callType} call: $e',
+      );
+      // Don't rethrow - continue with call even if some initialization fails
+      // The widget should remain visible even if some features don't work
+
+      // Still mark as initialized even if some parts failed
+      _isFullyInitialized = true;
+    }
   }
 
   /// Initialize ongoing call notification and PiP
@@ -120,6 +218,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         callType: widget.callType,
       );
       _callNotificationService.onEndCallFromNotification = () {
+        debugPrint(
+          '📞 ConnectedCallScreen: End call requested from notification',
+        );
         _endCall();
       };
 
@@ -139,6 +240,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         _pipService.updateMuteState(_isMicMuted);
       };
       _pipService.onEndCall = () {
+        debugPrint('📞 ConnectedCallScreen: End call requested from PiP');
         _endCall();
       };
 
@@ -167,41 +269,74 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         '📞 ConnectedCallScreen: Initializing renderers for ${widget.callType} call',
       );
 
-      await _localRenderer.initialize();
-      await _remoteRenderer.initialize();
+      // Initialize renderers with timeout protection
+      await Future.wait([
+        _localRenderer.initialize(),
+        _remoteRenderer.initialize(),
+      ]).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          debugPrint(
+            '⚠️ ConnectedCallScreen: Renderer initialization timed out',
+          );
+          throw TimeoutException('Renderer initialization timed out');
+        },
+      );
 
-      // Set local stream - handle audio calls gracefully
-      if (widget.localStream != null) {
-        debugPrint('📞 ConnectedCallScreen: Setting local stream from widget');
-        _localRenderer.srcObject = widget.localStream;
-      } else if (widget.callService.localStream != null) {
-        debugPrint(
-          '📞 ConnectedCallScreen: Setting local stream from call service',
-        );
-        _localRenderer.srcObject = widget.callService.localStream;
-      } else {
-        debugPrint(
-          '⚠️ ConnectedCallScreen: No local stream available for ${widget.callType} call',
-        );
+      debugPrint('📞 ConnectedCallScreen: Renderers initialized successfully');
+
+      // Set local stream - handle gracefully if not available
+      try {
+        if (widget.localStream != null) {
+          debugPrint(
+            '📞 ConnectedCallScreen: Setting local stream from widget',
+          );
+          _localRenderer.srcObject = widget.localStream;
+        } else if (widget.callService.localStream != null) {
+          debugPrint(
+            '📞 ConnectedCallScreen: Setting local stream from call service',
+          );
+          _localRenderer.srcObject = widget.callService.localStream;
+        } else {
+          debugPrint(
+            '⚠️ ConnectedCallScreen: No local stream available for ${widget.callType} call - will set later',
+          );
+        }
+      } catch (e) {
+        debugPrint('⚠️ Error setting local stream: $e - continuing anyway');
       }
 
-      // Set remote stream if already available
-      if (widget.callService.remoteStream != null) {
-        debugPrint('📞 ConnectedCallScreen: Setting remote stream');
-        _remoteRenderer.srcObject = widget.callService.remoteStream;
-      } else {
-        debugPrint('📞 ConnectedCallScreen: No remote stream available yet');
+      // Set remote stream - handle gracefully if not available
+      try {
+        if (widget.callService.remoteStream != null) {
+          debugPrint('📞 ConnectedCallScreen: Setting remote stream');
+          _remoteRenderer.srcObject = widget.callService.remoteStream;
+        } else {
+          debugPrint(
+            '📞 ConnectedCallScreen: No remote stream available yet - will set when received',
+          );
+        }
+      } catch (e) {
+        debugPrint('⚠️ Error setting remote stream: $e - continuing anyway');
       }
 
       debugPrint(
         '📞 ConnectedCallScreen: Renderer initialization completed for ${widget.callType} call',
       );
-      setState(() {});
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
       debugPrint(
         '❌ ConnectedCallScreen: Error initializing renderers for ${widget.callType} call: $e',
       );
       // Don't rethrow - continue with call even if video fails
+      // Audio calls can still work without video renderers
+
+      // For video calls, we still want to show the UI even if renderers fail
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
@@ -213,15 +348,60 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
       debugPrint(
         '🎥 Connected call screen received remote stream (callType: ${widget.callType})',
       );
-      _remoteRenderer.srcObject = stream;
-      setState(() {});
+      if (mounted) {
+        try {
+          _remoteRenderer.srcObject = stream;
+          setState(() {});
+          debugPrint('✅ Remote stream set successfully');
+        } catch (e) {
+          debugPrint('❌ Error setting remote stream: $e');
+          // Continue anyway - the call can still work without video
+        }
+      } else {
+        debugPrint(
+          '⚠️ ConnectedCallScreen not mounted when remote stream received',
+        );
+      }
     };
 
     // Listen for call state changes
     widget.callService.onCallStateChanged = (state) {
-      debugPrint('📞 Call state changed to: $state');
+      debugPrint(
+        '📞 ConnectedCallScreen: Call state changed to: $state (callType: ${widget.callType})',
+      );
+
       if (state == CallState.ended || state == CallState.failed) {
+        // Add protection against premature call ending ONLY during initialization
+        final timeSinceInit = DateTime.now().difference(_initTime);
+        debugPrint(
+          '📞 ConnectedCallScreen: Time since init: ${timeSinceInit.inMilliseconds}ms, fully initialized: $_isFullyInitialized',
+        );
+
+        // Only protect during the first 3 seconds OR if not fully initialized
+        // This prevents premature closing during connection setup but allows legitimate endings
+        final minProtectionTime = 3000; // Reduced from 10000/8000
+
+        if (timeSinceInit.inMilliseconds < minProtectionTime &&
+            !_isFullyInitialized) {
+          debugPrint(
+            '📞 ConnectedCallScreen: IGNORING premature call end (${timeSinceInit.inMilliseconds}ms since init, initialized: $_isFullyInitialized) - call state: $state',
+          );
+          debugPrint(
+            '📞 ConnectedCallScreen: Protection active for ${minProtectionTime - timeSinceInit.inMilliseconds}ms more',
+          );
+          return;
+        }
+
+        debugPrint('📞 ConnectedCallScreen: Call ended/failed, ending call UI');
         _endCall();
+      } else if (state == CallState.connected) {
+        debugPrint(
+          '📞 ConnectedCallScreen: Call state is connected - screen should stay visible',
+        );
+      } else {
+        debugPrint(
+          '📞 ConnectedCallScreen: Call state changed to $state - monitoring',
+        );
       }
     };
 
@@ -268,23 +448,33 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   Future<void> _loadDevices() async {
     try {
       final devices = await navigator.mediaDevices.enumerateDevices();
-      setState(() {
-        _microphones = devices.where((d) => d.kind == 'audioinput').toList();
-        _cameras = devices.where((d) => d.kind == 'videoinput').toList();
-        _speakers = devices.where((d) => d.kind == 'audiooutput').toList();
+      if (mounted) {
+        setState(() {
+          _microphones = devices.where((d) => d.kind == 'audioinput').toList();
+          _cameras = devices.where((d) => d.kind == 'videoinput').toList();
+          _speakers = devices.where((d) => d.kind == 'audiooutput').toList();
 
-        if (_microphones.isNotEmpty) {
-          _selectedMicId = _microphones.first.deviceId;
-        }
-        if (_cameras.isNotEmpty) {
-          _selectedCameraId = _cameras.first.deviceId;
-        }
-        if (_speakers.isNotEmpty) {
-          _selectedSpeakerId = _speakers.first.deviceId;
-        }
-      });
+          if (_microphones.isNotEmpty) {
+            _selectedMicId = _microphones.first.deviceId;
+          }
+          if (_cameras.isNotEmpty) {
+            _selectedCameraId = _cameras.first.deviceId;
+          }
+          if (_speakers.isNotEmpty) {
+            _selectedSpeakerId = _speakers.first.deviceId;
+          }
+        });
+      }
     } catch (e) {
       debugPrint('Error loading devices: $e');
+      // Continue without device enumeration - use defaults
+      if (mounted) {
+        setState(() {
+          _microphones = [];
+          _cameras = [];
+          _speakers = [];
+        });
+      }
     }
   }
 
@@ -366,6 +556,12 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   void _endCall() {
     if (_isEnding) return; // Prevent multiple calls
     _isEnding = true;
+
+    // Get stack trace to see what's calling _endCall
+    final stackTrace = StackTrace.current;
+    debugPrint('📞 ConnectedCallScreen: _endCall called from:');
+    debugPrint(stackTrace.toString().split('\n').take(5).join('\n'));
+
     debugPrint('📞 Ending call from connected screen');
 
     // Clear call-in-progress flag so presence resumes normal behavior
@@ -524,6 +720,14 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
   @override
   void dispose() {
+    debugPrint(
+      '📞 ConnectedCallScreen: dispose() called - screen is being removed',
+    );
+    debugPrint('📞 ConnectedCallScreen: _isEnding: $_isEnding');
+    debugPrint(
+      '📞 ConnectedCallScreen: Time alive: ${DateTime.now().difference(_initTime).inMilliseconds}ms',
+    );
+
     WidgetsBinding.instance.removeObserver(this);
     _durationTimer?.cancel();
 
@@ -544,11 +748,16 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     // Ensure call flag is cleared even if _endCall wasn't called
     PresenceService().isCallInProgress = false;
 
+    debugPrint('📞 ConnectedCallScreen: dispose() completed');
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    debugPrint(
+      '📞 ConnectedCallScreen: build() called for ${widget.callType} call (mounted: $mounted)',
+    );
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -581,8 +790,6 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   }
 
   Widget _buildRemoteVideo() {
-    final hasRemoteStream = _remoteRenderer.srcObject != null;
-
     // For audio calls, show video only if remote is screen sharing
     if (widget.callType == 'audio' && !_remoteIsScreenSharing) {
       // Audio call without screen share - show avatar
