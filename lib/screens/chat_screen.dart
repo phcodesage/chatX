@@ -2823,29 +2823,20 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.removeListener('callDeclined', callListenerKey);
 
     // Navigate to connected call screen if call connected
+    // Trust the modal result 'connected' as authoritative — the call was connected.
+    // Do NOT re-check callService.callState here because ICE renegotiation can
+    // briefly set it to 'connecting' after initial connection, creating a race
+    // condition that blocks navigation.
     if (result == 'connected' && mounted) {
       debugPrint(
         '📞 Navigating to ConnectedCallScreen after modal returned: $result (callType: $callTypeStr)',
       );
 
-      // Ensure call is still connected before navigating
-      if (callService.callState != CallState.connected) {
-        debugPrint(
-          '⚠️ Call state changed to ${callService.callState} - not navigating to ConnectedCallScreen',
-        );
-        return;
-      }
-
-      // Add extra delay for release builds to prevent race conditions
-      debugPrint('📞 Navigating immediately with post-frame callback');
-
       // Use post-frame callback to ensure widget tree is stable for release builds
-      // This is much faster than Future.delayed and prevents the 18-second delay issue
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        // Final check: ensure call is still connected
-        if (!mounted || callService.callState != CallState.connected) {
+        if (!mounted) {
           debugPrint(
-            '❌ Call state changed to ${callService.callState} or widget unmounted - aborting navigation',
+            '❌ Widget unmounted - aborting navigation to ConnectedCallScreen',
           );
           return;
         }

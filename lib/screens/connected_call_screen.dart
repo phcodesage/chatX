@@ -440,7 +440,22 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     });
 
     // Listen for signals during the call
+    // Also directly detect termination signals here as a safety net in case
+    // onCallStateChanged is temporarily null during navigation transitions.
     socketService.onSignal = (data) {
+      final signal = data['signal'];
+      final signalType = signal is Map ? signal['type'] : null;
+
+      // Directly handle call termination signals from remote user
+      if (signalType == 'call-ended' || signalType == 'call-declined') {
+        debugPrint('📴 ConnectedCallScreen: Termination signal detected: $signalType');
+        if (!_isEnding) {
+          widget.callService.handleCallEnded();
+          _endCall();
+        }
+        return; // Don't route further — call is over
+      }
+
       widget.callService.handleSignal(data);
     };
   }

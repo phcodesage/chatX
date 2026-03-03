@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:audioplayers/audioplayers.dart';
 import '../services/call_service.dart';
 
 /// Outgoing call modal that shows call status when initiating a call
@@ -32,6 +33,7 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
   int _dotsCount = 0;
   late AnimationController _pulseController;
   bool _hasBeenConnected = false; // Track if call was ever connected
+  final AudioPlayer _ringingPlayer = AudioPlayer();
 
   static const Duration noAnswerTimeout = Duration(seconds: 45);
 
@@ -57,6 +59,9 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
     // Listen to call state changes
     widget.callService.onCallStateChanged = _handleCallStateChanged;
 
+    // Start ringing sound (loop until call ends)
+    _startRingingSound();
+
     // Start no-answer timer
     _startNoAnswerTimer();
   }
@@ -66,11 +71,38 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
     _noAnswerTimer?.cancel();
     _dotsTimer?.cancel();
     _pulseController.dispose();
+    _stopRingingSound();
 
-    // Clear the call state listener to prevent it from firing after disposal
-    widget.callService.onCallStateChanged = null;
+    // Clear the call state listener ONLY if the call never connected.
+    // If the call connected, ConnectedCallScreen owns the listener — nullifying
+    // it here would break remote-end detection in ConnectedCallScreen.
+    if (_currentState != CallState.connected) {
+      widget.callService.onCallStateChanged = null;
+    }
 
     super.dispose();
+  }
+
+  /// Start playing the ringing sound in a loop
+  void _startRingingSound() async {
+    try {
+      await _ringingPlayer.setReleaseMode(ReleaseMode.loop);
+      await _ringingPlayer.play(AssetSource('sounds/ringing(gain-down).mp3'));
+      debugPrint('🔊 Ringing sound started');
+    } catch (e) {
+      debugPrint('Error playing ringing sound: $e');
+    }
+  }
+
+  /// Stop the ringing sound
+  void _stopRingingSound() {
+    try {
+      _ringingPlayer.stop();
+      _ringingPlayer.dispose();
+      debugPrint('🔇 Ringing sound stopped');
+    } catch (e) {
+      debugPrint('Error stopping ringing sound: $e');
+    }
   }
 
   void _startNoAnswerTimer() {
@@ -94,6 +126,11 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
     setState(() {
       _currentState = state;
     });
+
+    // Stop ringing when call is no longer in initiating/ringing/connecting state
+    if (state != CallState.initiating && state != CallState.ringing && state != CallState.connecting) {
+      _stopRingingSound();
+    }
 
     if (state == CallState.connected) {
       _hasBeenConnected = true; // Mark that we've been connected

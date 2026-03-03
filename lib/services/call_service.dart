@@ -348,9 +348,28 @@ class CallService {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
         _callState = CallState.connected;
         onCallStateChanged?.call(_callState);
-      } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
-          state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
-        debugPrint('⚠️ ICE connection failed or disconnected');
+      } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+        debugPrint('❌ ICE connection failed — ending call');
+        _callState = CallState.failed;
+        onCallStateChanged?.call(_callState);
+        endCall();
+      } else if (state ==
+          RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+        debugPrint(
+          '⚠️ ICE connection disconnected — waiting 5s before ending call',
+        );
+        // Give 5 seconds for ICE to self-recover before ending
+        Future.delayed(const Duration(seconds: 5), () {
+          if (_callState == CallState.connected ||
+              _callState == CallState.connecting) {
+            debugPrint(
+              '❌ ICE still disconnected after 5s — ending call',
+            );
+            _callState = CallState.failed;
+            onCallStateChanged?.call(_callState);
+            endCall();
+          }
+        });
       }
     };
 
