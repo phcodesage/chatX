@@ -595,6 +595,38 @@ class CallService {
     }
   }
 
+  /// Trigger renegotiation when adding new tracks (e.g., screen share in audio call)
+  Future<void> _triggerRenegotiation() async {
+    if (_peerConnection == null || _callRoomId == null) {
+      debugPrint(
+        '❌ Cannot trigger renegotiation - no peer connection or room ID',
+      );
+      return;
+    }
+
+    try {
+      debugPrint('🔄 Triggering renegotiation for screen share');
+
+      // Create new offer with the added video track
+      final offer = await _peerConnection!.createOffer();
+      await _peerConnection!.setLocalDescription(offer);
+
+      // Send renegotiation offer
+      _socketService.emit('signal', {
+        'room': _callRoomId,
+        'signal': {
+          'type': 'offer',
+          'sdp': offer.sdp,
+          'renegotiate': true, // Mark as renegotiation
+        },
+      });
+
+      debugPrint('✅ Renegotiation offer sent for screen share');
+    } catch (e) {
+      debugPrint('❌ Error triggering renegotiation: $e');
+    }
+  }
+
   /// Process the offer and create answer (called after user answers incoming call)
   Future<void> _processOffer(Map<String, dynamic> signal) async {
     if (_peerConnection == null) {
@@ -1063,12 +1095,27 @@ class CallService {
 
       // Replace the video track in the peer connection
       final senders = await _peerConnection!.getSenders();
+      RTCRtpSender? videoSender;
+
+      // Find existing video sender
       for (final sender in senders) {
         if (sender.track?.kind == 'video') {
-          await sender.replaceTrack(screenTrack);
-          debugPrint('🖥️ Replaced video track with screen share');
+          videoSender = sender;
           break;
         }
+      }
+
+      if (videoSender != null) {
+        // Replace existing video track (video calls)
+        await videoSender.replaceTrack(screenTrack);
+        debugPrint('🖥️ Replaced existing video track with screen share');
+      } else {
+        // Add new video track (audio calls that want to share screen)
+        await _peerConnection!.addTrack(screenTrack, _screenStream!);
+        debugPrint('🖥️ Added new video track for screen share (audio call)');
+
+        // Trigger renegotiation for audio calls
+        await _triggerRenegotiation();
       }
 
       // Listen for when user stops sharing via system UI
@@ -1108,13 +1155,29 @@ class CallService {
     try {
       debugPrint('🖥️ Stopping screen share...');
 
-      // Restore original video track if available
+      // Handle video track restoration/removal
       if (_originalVideoTrack != null && _peerConnection != null) {
+        // Video call - restore original camera track
         final senders = await _peerConnection!.getSenders();
         for (final sender in senders) {
           if (sender.track?.kind == 'video') {
             await sender.replaceTrack(_originalVideoTrack);
             debugPrint('🖥️ Restored original video track');
+            break;
+          }
+        }
+      } else if (_peerConnection != null) {
+        // Audio call - remove the video sender we added for screen share
+        final senders = await _peerConnection!.getSenders();
+        for (final sender in senders) {
+          if (sender.track?.kind == 'video') {
+            await _peerConnection!.removeTrack(sender);
+            debugPrint(
+              '🖥️ Removed video track (audio call screen share ended)',
+            );
+
+            // Trigger renegotiation to notify remote peer
+            await _triggerRenegotiation();
             break;
           }
         }
