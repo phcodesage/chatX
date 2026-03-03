@@ -1500,9 +1500,11 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // Play doorbell notification sound
+    // Play doorbell notification sound (create new player so rapid rings overlap)
     try {
-      _audioPlayer.play(AssetSource('sounds/notif-sound.wav'));
+      final player = AudioPlayer();
+      player.play(AssetSource('sounds/notif-sound.wav'));
+      player.onPlayerComplete.listen((_) => player.dispose());
     } catch (e) {
       debugPrint('Error playing doorbell sound: $e');
     }
@@ -2460,9 +2462,11 @@ class _ChatScreenState extends State<ChatScreen> {
     // Send doorbell via Socket.IO
     _socketService.ringDoorbell(widget.otherUser.id);
 
-    // Play doorbell notification sound
+    // Play doorbell notification sound (create new player so rapid rings overlap)
     try {
-      _audioPlayer.play(AssetSource('sounds/notif-sound.wav'));
+      final player = AudioPlayer();
+      player.play(AssetSource('sounds/notif-sound.wav'));
+      player.onPlayerComplete.listen((_) => player.dispose());
     } catch (e) {
       debugPrint('Error playing doorbell sound: $e');
     }

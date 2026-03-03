@@ -606,9 +606,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       return;
     }
 
-    // Play doorbell notification sound
+    // Play doorbell notification sound (create new player so rapid rings overlap)
     try {
-      _audioPlayer.play(AssetSource('sounds/notif-sound.wav'));
+      final player = AudioPlayer();
+      player.play(AssetSource('sounds/notif-sound.wav'));
+      player.onPlayerComplete.listen((_) => player.dispose());
     } catch (e) {
       debugPrint('Error playing doorbell sound: $e');
     }
@@ -974,7 +976,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   Future<void> _playNotificationSound() async {
     try {
-      await _audioPlayer.play(AssetSource('sounds/notif-sound.wav'));
+      final player = AudioPlayer();
+      await player.play(AssetSource('sounds/notif-sound.wav'));
+      player.onPlayerComplete.listen((_) => player.dispose());
     } catch (e) {
       debugPrint('Error playing notification sound: $e');
     }
