@@ -101,14 +101,23 @@ class MessageService {
             .map((json) => Message.fromJson(json))
             .toList();
 
-        // Cache the messages for offline access
-        if (currentUserId != null && messages.isNotEmpty) {
-          await ChatCacheService.saveConversationMessages(
-            currentUserId,
-            userId,
-            messages,
-          );
-          debugPrint('💾 Cached ${messages.length} messages');
+        // Sync cache with server response
+        if (currentUserId != null) {
+          if (messages.isNotEmpty) {
+            await ChatCacheService.saveConversationMessages(
+              currentUserId,
+              userId,
+              messages,
+            );
+            debugPrint('💾 Cached ${messages.length} messages');
+          } else {
+            // Server returned 0 messages — clear stale cache
+            await ChatCacheService.clearConversationCache(
+              currentUserId,
+              userId,
+            );
+            debugPrint('🗑️ Server returned 0 messages — cache cleared');
+          }
         }
 
         return messages;

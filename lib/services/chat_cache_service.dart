@@ -280,6 +280,17 @@ class ChatCacheService {
     await _groupChatBox.clear();
   }
 
+  /// Clear cache for a specific 1-on-1 conversation.
+  static Future<void> clearConversationCache(
+    int currentUserId,
+    int otherUserId,
+  ) async {
+    if (!_initialized) return;
+    final key = _conversationKey(currentUserId, otherUserId);
+    debugPrint('🗑️ Clearing conversation cache for key: $key');
+    await _chatBox.delete(key);
+  }
+
   /// Clear cache for a specific group.
   static Future<void> clearGroupCache(int groupId) async {
     if (!_initialized) return;

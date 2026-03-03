@@ -1617,6 +1617,15 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.clear();
     });
 
+    // Clear the local cache so stale messages don't reload
+    if (_currentUserId != null) {
+      ChatCacheService.clearConversationCache(
+        _currentUserId!,
+        widget.otherUser.id,
+      );
+      debugPrint('🗑️ Conversation cache cleared for room: $currentRoomId');
+    }
+
     // Show a snackbar notification
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1682,6 +1691,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final messages = await MessageService.getConversationMessages(
         userId: widget.otherUser.id,
         limit: 50,
+        offlineFirst: false, // Cache was already shown by _loadCachedMessages
       );
       debugPrint('✅ Successfully loaded ${messages.length} messages');
 
