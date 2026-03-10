@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'dart:async';
+import 'dart:convert';
 import '../services/call_service.dart';
+import '../services/storage_service.dart';
 import '../services/call_overlay_manager.dart';
 import '../services/socket_service.dart';
 import '../services/call_notification_service.dart';
@@ -89,6 +91,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   final PipService _pipService = PipService();
   bool _isInPipMode = false;
 
+  // Local user's display name (for data channel 'from' field)
+  String _localUserName = '';
+
   // Listener key for socket events
   static const String _listenerKey = 'connected_call_screen';
 
@@ -171,6 +176,13 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         debugPrint(
           '⚠️ ConnectedCallScreen: Device loading failed, continuing anyway: $e',
         );
+      }
+
+      // Load local username for data channel messages
+      try {
+        _localUserName = await StorageService.getUsername() ?? '';
+      } catch (e) {
+        debugPrint('⚠️ ConnectedCallScreen: Could not load local username: $e');
       }
 
       // Initialize call services last
@@ -521,8 +533,15 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         track.enabled = _isMicMuted;
       }
     }
+    final newMicState = !_isMicMuted;
     setState(() {
-      _isMicMuted = !_isMicMuted;
+      _isMicMuted = newMicState;
+    });
+    // Send data channel message to remote peer
+    _sendDataChannelMessage({
+      'type': 'mic-state',
+      'enabled': newMicState,
+      if (_localUserName.isNotEmpty) 'from': _localUserName,
     });
   }
 
@@ -533,8 +552,15 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         track.enabled = _isVideoHidden;
       }
     }
+    final newVideoState = !_isVideoHidden;
     setState(() {
-      _isVideoHidden = !_isVideoHidden;
+      _isVideoHidden = newVideoState;
+    });
+    // Send data channel message to remote peer
+    _sendDataChannelMessage({
+      'type': 'cam-state',
+      'enabled': newVideoState,
+      if (_localUserName.isNotEmpty) 'from': _localUserName,
     });
   }
 
@@ -559,13 +585,49 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     });
     // On mobile, toggle between earpiece and speaker
     Helper.setSpeakerphoneOn(_isSpeakerOn);
+    // Send data channel message to remote peer
+    _sendDataChannelMessage({
+      'type': 'speaker-state',
+      'enabled': _isSpeakerOn,
+      if (_localUserName.isNotEmpty) 'from': _localUserName,
+    });
   }
 
   Future<void> _toggleScreenShare() async {
+    // Send planning phase before starting
+    if (!_isScreenSharing) {
+      _sendDataChannelMessage({
+        'type': 'screen-share',
+        'phase': 'planning',
+        if (_localUserName.isNotEmpty) 'from': _localUserName,
+      });
+    }
+
     final result = await widget.callService.toggleScreenShare();
     setState(() {
       _isScreenSharing = result;
+      // Clear remote screen sharing indicator when we start sharing
+      if (_isScreenSharing) {
+        _remoteIsScreenSharing = false;
+      }
     });
+
+    // Send appropriate phase message
+    _sendDataChannelMessage({
+      'type': 'screen-share',
+      'phase': result ? 'started' : 'ended',
+      if (_localUserName.isNotEmpty) 'from': _localUserName,
+    });
+  }
+
+  void _sendDataChannelMessage(Map<String, dynamic> message) {
+    try {
+      final jsonMessage = jsonEncode(message);
+      widget.callService.sendDataChannelMessage(jsonMessage);
+      debugPrint('📤 Sent data channel message: ${message['type']}');
+    } catch (e) {
+      debugPrint('❌ Error sending data channel message: $e');
+    }
   }
 
   void _endCall() {
@@ -602,6 +664,12 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     final newState = await widget.callService.toggleNoiseFilter();
     setState(() {
       _isNoiseFilterEnabled = newState;
+    });
+    // Send data channel message to remote peer (matches web 'noise-filter' handler)
+    _sendDataChannelMessage({
+      'type': 'noise-filter',
+      'enabled': _isNoiseFilterEnabled,
+      if (_localUserName.isNotEmpty) 'from': _localUserName,
     });
     // Show brief toast so user knows it took effect
     if (mounted) {
@@ -809,33 +877,41 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: GestureDetector(
-          onTap: _toggleControls,
-          child: Stack(
-            children: [
-              // Remote video (fullscreen background)
-              _buildRemoteVideo(),
+        body: Column(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: _toggleControls,
+                child: Stack(
+                  children: [
+                    // Remote video (fullscreen background)
+                    _buildRemoteVideo(),
 
-              // Local video (PiP, draggable) - hide in PiP mode
-              if (!_isInPipMode) _buildLocalVideoPiP(),
+                    // Local video (PiP, draggable) - hide in PiP mode
+                    if (!_isInPipMode) _buildLocalVideoPiP(),
 
-              // Top bar with call info - hide in PiP mode
-              if (_showControls && !_isInPipMode) _buildTopBar(),
+                    // Top bar with call info - hide in PiP mode
+                    if (_showControls && !_isInPipMode) _buildTopBar(),
+                  ],
+                ),
+              ),
+            ),
 
-              // Bottom controls - hide in PiP mode
-              if (_showControls && !_isInPipMode) _buildBottomControls(),
-            ],
-          ),
+            // Bottom controls are outside the video area to avoid overlap.
+            if (_showControls && !_isInPipMode) _buildBottomControls(),
+          ],
         ),
       ),
     );
   }
 
   Widget _buildRemoteVideo() {
+    Widget content;
+
     // For audio calls, show video only if remote is screen sharing
     if (widget.callType == 'audio' && !_remoteIsScreenSharing) {
       // Audio call without screen share - show avatar
-      return Container(
+      content = Container(
         color: const Color(0xFF1A1A2E),
         child: Center(
           child: Column(
@@ -884,56 +960,58 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
           ),
         ),
       );
-    }
-
-    // Use RTCVideoViewObjectFitContain to show full width video without cropping
-    return Stack(
-      children: [
-        Container(
-          color: Colors.black,
-          width: double.infinity,
-          height: double.infinity,
-          child: RTCVideoView(
-            _remoteRenderer,
-            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+    } else {
+      // Use RTCVideoViewObjectFitContain to show full width video without cropping
+      content = Stack(
+        children: [
+          Container(
+            color: Colors.black,
+            width: double.infinity,
+            height: double.infinity,
+            child: RTCVideoView(
+              _remoteRenderer,
+              objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+            ),
           ),
-        ),
-        // Screen share indicator
-        if (_remoteIsScreenSharing)
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 60,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF8B5CF6).withValues(alpha: 0.9),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.screen_share, color: Colors.white, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Screen is being shared',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
+          // Screen share indicator
+          if (_remoteIsScreenSharing)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 60,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8B5CF6).withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.screen_share, color: Colors.white, size: 18),
+                      SizedBox(width: 8),
+                      Text(
+                        'Screen is being shared',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-      ],
-    );
+        ],
+      );
+    }
+
+    return content;
   }
 
   Widget _buildLocalVideoPiP() {
@@ -1049,163 +1127,128 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   }
 
   Widget _buildBottomControls() {
-    return Positioned(
-      bottom: 0,
-      left: 0,
-      right: 0,
-      child: Container(
-        padding: EdgeInsets.only(
-          top: 24,
-          left: 16,
-          right: 16,
-          bottom: MediaQuery.of(context).padding.bottom + 24,
+    final controls = <Widget>[
+      _buildControlButton(
+        label: _isMicMuted ? 'Unmute mic' : 'Mute mic',
+        backgroundColor: _isMicMuted
+            ? const Color(0xFF64748B)
+            : const Color(0xFF22C55E),
+        onTap: _toggleMic,
+        onLongPress: () => _showDeviceSelector('mic'),
+      ),
+      if (widget.callType == 'video')
+        _buildControlButton(
+          label: _isVideoHidden ? 'Show video' : 'Hide video',
+          backgroundColor: _isVideoHidden
+              ? const Color(0xFF64748B)
+              : const Color(0xFF3B82F6),
+          onTap: _toggleVideo,
+          onLongPress: () => _showDeviceSelector('camera'),
         ),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [Colors.black.withValues(alpha: 0.8), Colors.transparent],
-          ),
+      if (widget.callType == 'video' && _cameras.length > 1)
+        _buildControlButton(
+          label: 'Switch cam',
+          backgroundColor: const Color(0xFF06B6D4),
+          onTap: _switchCamera,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Main control row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                // Mute mic
-                _buildControlButton(
-                  icon: _isMicMuted ? Icons.mic_off : Icons.mic,
-                  label: _isMicMuted ? 'Unmute' : 'Mute',
-                  isActive: !_isMicMuted,
-                  onTap: _toggleMic,
-                  onLongPress: () => _showDeviceSelector('mic'),
-                ),
-
-                // Video toggle
-                if (widget.callType == 'video')
-                  _buildControlButton(
-                    icon: _isVideoHidden ? Icons.videocam_off : Icons.videocam,
-                    label: _isVideoHidden ? 'Show' : 'Hide',
-                    isActive: !_isVideoHidden,
-                    onTap: _toggleVideo,
-                    onLongPress: () => _showDeviceSelector('camera'),
-                  ),
-
-                // Switch camera
-                if (widget.callType == 'video' && _cameras.length > 1)
-                  _buildControlButton(
-                    icon: Icons.flip_camera_ios,
-                    label: 'Flip',
-                    isActive: true,
-                    onTap: _switchCamera,
-                  ),
-
-                // Speaker
-                _buildControlButton(
-                  icon: _isSpeakerOn ? Icons.volume_up : Icons.hearing,
-                  label: _isSpeakerOn ? 'Speaker' : 'Earpiece',
-                  isActive: _isSpeakerOn,
-                  onTap: _toggleSpeaker,
-                  onLongPress: () => _showDeviceSelector('speaker'),
-                ),
-
-                // Screen share
-                _buildControlButton(
-                  icon: _isScreenSharing
-                      ? Icons.stop_screen_share
-                      : Icons.screen_share,
-                  label: _isScreenSharing ? 'Stop Share' : 'Share',
-                  isActive: _isScreenSharing,
-                  onTap: _toggleScreenShare,
-                ),
-
-                // Noise filter
-                _buildControlButton(
-                  icon: _isNoiseFilterEnabled
-                      ? Icons.noise_aware
-                      : Icons.noise_control_off,
-                  label: _isNoiseFilterEnabled ? 'Noise: On' : 'Noise: Off',
-                  isActive: _isNoiseFilterEnabled,
-                  activeColor: Colors.green,
-                  onTap: _toggleNoiseFilter,
-                ),
-                // Chat (minimizes to overlay)
-                if (widget.onChatPressed != null)
-                  _buildControlButton(
-                    icon: Icons.chat_bubble_outline,
-                    label: 'Chat',
-                    isActive: true,
-                    onTap: _minimizeToOverlay,
-                  ),
-              ],
-            ),
-
-            const SizedBox(height: 24),
-
-            // End call button
-            GestureDetector(
-              onTap: _endCall,
-              child: Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.red,
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color.fromRGBO(244, 67, 54, 0.4),
-                      blurRadius: 15,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.call_end,
-                  color: Colors.white,
-                  size: 32,
-                ),
-              ),
-            ),
-          ],
+      _buildControlButton(
+        label: _isSpeakerOn ? 'Speakers' : 'Earpiece',
+        backgroundColor: const Color(0xFFF97316),
+        onTap: _toggleSpeaker,
+        onLongPress: () => _showDeviceSelector('speaker'),
+      ),
+      _buildControlButton(
+        label: _isScreenSharing ? 'Stop sharing' : 'Share screen',
+        backgroundColor: const Color(0xFF8B5CF6),
+        onTap: _toggleScreenShare,
+      ),
+      _buildControlButton(
+        label: _isNoiseFilterEnabled ? 'Noise filter ON' : 'Noise reduction',
+        backgroundColor: _isNoiseFilterEnabled
+            ? const Color(0xFF16A34A)
+            : const Color(0xFF14B8A6),
+        onTap: _toggleNoiseFilter,
+      ),
+      if (widget.onChatPressed != null)
+        _buildControlButton(
+          label: 'Open my chat',
+          backgroundColor: const Color(0xFFEC4899),
+          onTap: _minimizeToOverlay,
         ),
+      _buildControlButton(
+        label: 'End Call',
+        backgroundColor: const Color(0xFFEF4444),
+        onTap: _endCall,
+      ),
+    ];
+
+    final width = MediaQuery.of(context).size.width;
+    final crossAxisCount = width >= 760
+        ? 6
+        : width >= 620
+        ? 5
+        : width >= 500
+        ? 4
+        : width >= 380
+        ? 3
+        : 2;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.only(
+        top: 8,
+        left: 10,
+        right: 10,
+        bottom: MediaQuery.of(context).padding.bottom + 8,
+      ),
+      decoration: const BoxDecoration(
+        color: Color(0xFF0B1530),
+        border: Border(top: BorderSide(color: Color(0xFF2D3748), width: 1)),
+      ),
+      child: GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: controls.length,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: crossAxisCount,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+          childAspectRatio: 2.6,
+        ),
+        itemBuilder: (context, index) => controls[index],
       ),
     );
   }
 
   Widget _buildControlButton({
-    required IconData icon,
     required String label,
-    required bool isActive,
     required VoidCallback onTap,
     VoidCallback? onLongPress,
-    Color? activeColor,
+    Color backgroundColor = const Color(0xFF22C55E),
+    Color textColor = Colors.white,
   }) {
-    final Color bgColor = isActive
-        ? (activeColor != null
-            ? activeColor.withValues(alpha: 0.8)
-            : const Color.fromRGBO(255, 255, 255, 0.2))
-        : const Color.fromRGBO(255, 82, 82, 0.7);
-
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: bgColor,
-            ),
-            child: Icon(icon, color: Colors.white, size: 24),
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: textColor,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            height: 1.1,
           ),
-          const SizedBox(height: 8),
-          Text(label, style: TextStyle(color: Colors.grey[300], fontSize: 11)),
-        ],
+        ),
       ),
     );
   }

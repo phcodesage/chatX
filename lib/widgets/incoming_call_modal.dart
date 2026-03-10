@@ -143,6 +143,35 @@ class _IncomingCallModalState extends State<IncomingCallModal>
     }
   }
 
+  Widget _buildControlButton({
+    required String label,
+    required VoidCallback onPressed,
+    required Color backgroundColor,
+  }) {
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -275,65 +304,46 @@ class _IncomingCallModalState extends State<IncomingCallModal>
                 ),
               ),
 
-              // Accept/Decline buttons
+              // Accept/Decline buttons with grid layout
               if (!_isAccepting)
-                Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      // Decline button
-                      GestureDetector(
-                        onTap: _handleDecline,
-                        child: Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.red,
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color.fromRGBO(244, 67, 54, 0.4),
-                                blurRadius: 15,
-                                spreadRadius: 2,
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.call_end,
-                            color: Colors.white,
-                            size: 32,
-                          ),
-                        ),
+                Container(
+                  padding: const EdgeInsets.only(top: 8, left: 10, right: 10, bottom: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0B1530),
+                    border: Border(
+                      top: BorderSide(
+                        color: const Color(0xFF2D3748),
+                        width: 1,
                       ),
-
-                      // Accept button
-                      GestureDetector(
-                        onTap: _handleAccept,
-                        child: Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.green,
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color.fromRGBO(76, 175, 80, 0.4),
-                                blurRadius: 15,
-                                spreadRadius: 2,
-                              ),
-                            ],
-                          ),
-                          child: Icon(
-                            widget.callType == 'video'
-                                ? Icons.videocam
-                                : Icons.call,
-                            color: Colors.white,
-                            size: 32,
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
+                  ),
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: 2,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 2.6,
+                    ),
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        // Decline button
+                        return _buildControlButton(
+                          label: 'Decline',
+                          onPressed: _handleDecline,
+                          backgroundColor: const Color(0xFFEF4444),
+                        );
+                      } else {
+                        // Accept button
+                        return _buildControlButton(
+                          label: widget.callType == 'video' ? 'Answer Video' : 'Answer Call',
+                          onPressed: _handleAccept,
+                          backgroundColor: const Color(0xFF22C55E),
+                        );
+                      }
+                    },
                   ),
                 ),
 
