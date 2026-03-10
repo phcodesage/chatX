@@ -178,8 +178,9 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
         'video': _videoEnabled && _selectedCameraId != null
             ? {
                 'deviceId': _selectedCameraId,
-                'width': {'ideal': 640},
-                'height': {'ideal': 480},
+                'width': {'ideal': 1280},
+                'height': {'ideal': 720},
+                'frameRate': {'ideal': 30, 'max': 30},
                 'facingMode': 'user',
               }
             : _videoEnabled,

@@ -28,6 +28,8 @@ class CallService {
   factory CallService() => _instance;
   CallService._internal();
 
+  static const String _screenShareListenerKey = 'call_service_screen_share';
+
   final SocketService _socketService = SocketService();
 
   // WebRTC components
@@ -193,9 +195,49 @@ class CallService {
     // Listen for incoming call
     socket.emit('subscribe_calls', {});
 
-    // Listen for screen share started/stopped via dedicated socket events
-    // (Web client sends these to notify us when they start/stop screen sharing)
-    // Note: We don't set up callbacks here since we are the sender, not receiver
+    // Listen for dedicated screen share events from the remote peer.
+    // Some web clients rely on these events for UI/state even when using signal messages.
+    socket.addListener('screenShareStarted', _screenShareListenerKey, (
+      Map<String, dynamic> data,
+    ) {
+      if (!_isScreenShareEventForCurrentCall(data)) {
+        return;
+      }
+
+      debugPrint('🖥️ Remote screen share started (socket event): $data');
+      _remoteIsScreenSharing = true;
+      onScreenShareChanged?.call(true);
+    });
+
+    socket.addListener('screenShareStopped', _screenShareListenerKey, (
+      Map<String, dynamic> data,
+    ) {
+      if (!_isScreenShareEventForCurrentCall(data)) {
+        return;
+      }
+
+      debugPrint('🎥 Remote screen share stopped (socket event): $data');
+      _remoteIsScreenSharing = false;
+      _screenShareStreamId = null;
+      if (_primaryRemoteStream != null) {
+        _remoteStream = _primaryRemoteStream;
+        onRemoteStream?.call(_remoteStream!);
+      }
+      onScreenShareChanged?.call(false);
+    });
+  }
+
+  bool _isScreenShareEventForCurrentCall(Map<String, dynamic> data) {
+    if (_callRoomId == null || _callRoomId!.isEmpty) {
+      return false;
+    }
+
+    final eventRoom =
+        data['room']?.toString() ?? data['call_room_id']?.toString();
+
+    // If the backend does not include room metadata, assume the event belongs
+    // to the active call service instance.
+    return eventRoom == null || eventRoom.isEmpty || eventRoom == _callRoomId;
   }
 
   /// Initiate a call to another user
@@ -1052,6 +1094,15 @@ class CallService {
   void _cleanup() {
     debugPrint('🧹 Cleaning up call resources');
 
+    _socketService.removeListener(
+      'screenShareStarted',
+      _screenShareListenerKey,
+    );
+    _socketService.removeListener(
+      'screenShareStopped',
+      _screenShareListenerKey,
+    );
+
     // Close data channel
     _dataChannel?.close();
     _dataChannel = null;
@@ -1090,6 +1141,15 @@ class CallService {
   /// Call this when the call UI is being completely closed
   void fullCleanup() {
     debugPrint('🧹 Full cleanup - stopping all tracks and disposing streams');
+
+    _socketService.removeListener(
+      'screenShareStarted',
+      _screenShareListenerKey,
+    );
+    _socketService.removeListener(
+      'screenShareStopped',
+      _screenShareListenerKey,
+    );
 
     // DON'T clear onCallStateChanged here - let the UI handle the state change first
     // Only clear other callbacks that aren't needed for cleanup notification
@@ -1241,6 +1301,54 @@ class CallService {
     }
   }
 
+  Future<void> _applyScreenTrackConstraints(MediaStreamTrack track) async {
+    try {
+      await track.applyConstraints({
+        'width': {'ideal': 1920, 'max': 1920},
+        'height': {'ideal': 1080, 'max': 1080},
+        'frameRate': {'ideal': 30, 'max': 30},
+      });
+      debugPrint('🖥️ Applied screen-share track constraints (1080p/30fps)');
+    } catch (e) {
+      debugPrint('⚠️ Could not apply screen-share track constraints: $e');
+    }
+  }
+
+  Future<void> _applyVideoSenderProfile(
+    RTCRtpSender sender, {
+    required int maxBitrate,
+    required int minBitrate,
+    required int maxFramerate,
+    required RTCDegradationPreference degradationPreference,
+  }) async {
+    try {
+      final parameters = sender.parameters;
+      final encodings = parameters.encodings ?? <RTCRtpEncoding>[];
+      if (encodings.isEmpty) {
+        encodings.add(RTCRtpEncoding());
+      }
+
+      for (final encoding in encodings) {
+        encoding.maxBitrate = maxBitrate;
+        encoding.minBitrate = minBitrate;
+        encoding.maxFramerate = maxFramerate;
+        encoding.scaleResolutionDownBy = 1.0;
+        encoding.priority = RTCPriorityType.high;
+        encoding.networkPriority = RTCPriorityType.high;
+      }
+
+      parameters.encodings = encodings;
+      parameters.degradationPreference = degradationPreference;
+      await sender.setParameters(parameters);
+
+      debugPrint(
+        '🎚️ Updated video sender params (maxBitrate=$maxBitrate, maxFramerate=$maxFramerate)',
+      );
+    } catch (e) {
+      debugPrint('⚠️ Failed to update video sender params: $e');
+    }
+  }
+
   /// Start screen sharing
   Future<bool> startScreenShare() async {
     if (_peerConnection == null) {
@@ -1275,8 +1383,14 @@ class CallService {
 
       // Get screen capture stream
       _screenStream = await navigator.mediaDevices.getDisplayMedia({
-        'video': true,
-        'audio': true, // Include system audio if available
+        'video': {
+          'width': {'ideal': 1920, 'max': 1920},
+          'height': {'ideal': 1080, 'max': 1080},
+          'frameRate': {'ideal': 30, 'max': 30},
+        },
+        // Keep the existing microphone track for call audio.
+        // Capturing system audio on Android is less reliable and can hurt FPS.
+        'audio': false,
       });
 
       if (_screenStream == null) {
@@ -1292,6 +1406,8 @@ class CallService {
         _screenStream = null;
         return false;
       }
+
+      await _applyScreenTrackConstraints(screenTrack);
 
       // Store original video track for later restoration
       if (_localStream != null) {
@@ -1324,6 +1440,14 @@ class CallService {
         // Replace existing video track (video calls)
         try {
           await videoSender.replaceTrack(screenTrack);
+          await _applyVideoSenderProfile(
+            videoSender,
+            maxBitrate: 3000000,
+            minBitrate: 800000,
+            maxFramerate: 30,
+            degradationPreference:
+                RTCDegradationPreference.MAINTAIN_RESOLUTION,
+          );
           debugPrint('🖥️ Replaced existing video track with screen share');
 
           // Set screen sharing flag BEFORE renegotiation so it's included in signal
@@ -1335,7 +1459,18 @@ class CallService {
         } catch (e) {
           debugPrint('❌ Failed to replace video track with screen share: $e');
           // Fallback: add the screen track as a new sender if replace fails
-          await _peerConnection!.addTrack(screenTrack, _screenStream!);
+          final screenSender = await _peerConnection!.addTrack(
+            screenTrack,
+            _screenStream!,
+          );
+          await _applyVideoSenderProfile(
+            screenSender,
+            maxBitrate: 3000000,
+            minBitrate: 800000,
+            maxFramerate: 30,
+            degradationPreference:
+                RTCDegradationPreference.MAINTAIN_RESOLUTION,
+          );
           debugPrint('🖥️ Fallback: added screen track as new sender');
 
           // Set screen sharing flag BEFORE renegotiation
@@ -1345,7 +1480,17 @@ class CallService {
         }
       } else {
         // Add new video track (audio calls that want to share screen)
-        await _peerConnection!.addTrack(screenTrack, _screenStream!);
+        final screenSender = await _peerConnection!.addTrack(
+          screenTrack,
+          _screenStream!,
+        );
+        await _applyVideoSenderProfile(
+          screenSender,
+          maxBitrate: 3000000,
+          minBitrate: 800000,
+          maxFramerate: 30,
+          degradationPreference: RTCDegradationPreference.MAINTAIN_RESOLUTION,
+        );
         debugPrint('🖥️ Added new video track for screen share (audio call)');
 
         // Set screen sharing flag BEFORE renegotiation
@@ -1370,7 +1515,14 @@ class CallService {
         'signal': {'type': 'screen-share-started'},
       });
 
-      // Note: Socket events disabled to prevent conflicts with signal handler
+      // Compatibility event for web clients that listen to dedicated events.
+      _socketService.emit('screen_share_started', {
+        'room': _callRoomId,
+        'call_room_id': _callRoomId,
+        'call_id': _callId,
+      });
+
+      // Also send the normal signal path above for backward compatibility.
       debugPrint('✅ Screen sharing started');
       return true;
     } catch (e) {
@@ -1403,6 +1555,13 @@ class CallService {
           if (sender.track?.kind == 'video') {
             try {
               await sender.replaceTrack(_originalVideoTrack);
+              await _applyVideoSenderProfile(
+                sender,
+                maxBitrate: 1800000,
+                minBitrate: 400000,
+                maxFramerate: 30,
+                degradationPreference: RTCDegradationPreference.BALANCED,
+              );
               debugPrint('🖥️ Restored original video track');
 
               // CRITICAL FIX: Trigger renegotiation when restoring camera
@@ -1450,7 +1609,14 @@ class CallService {
         'signal': {'type': 'screen-share-stopped'},
       });
 
-      // Note: Socket events disabled to prevent conflicts with signal handler
+      // Compatibility event for web clients that listen to dedicated events.
+      _socketService.emit('screen_share_stopped', {
+        'room': _callRoomId,
+        'call_room_id': _callRoomId,
+        'call_id': _callId,
+      });
+
+      // Also send the normal signal path above for backward compatibility.
 
       // Stop the foreground service on Android
       try {
