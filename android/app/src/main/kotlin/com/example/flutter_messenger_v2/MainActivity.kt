@@ -1,5 +1,7 @@
 package com.example.flutter_messenger_v2
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
@@ -13,6 +15,10 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
 import android.util.Rational
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
+import androidx.core.app.RemoteInput
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -21,6 +27,7 @@ class MainActivity : FlutterActivity() {
     private val TAG = "PiP"
     private val CHANNEL = "com.example.flutter_messenger_v2/pip"
     private val AUDIO_CHANNEL = "com.example.flutter_messenger_v2/audio_recorder"
+    private val QUICK_REPLY_CHANNEL = "com.example.flutter_messenger_v2/quick_reply"
     private var methodChannel: MethodChannel? = null
     private var isInCall = false
     private var isMuted = false
@@ -35,6 +42,7 @@ class MainActivity : FlutterActivity() {
         private const val ACTION_END_CALL = "com.example.flutter_messenger_v2.PIP_END_CALL"
         private const val REQUEST_TOGGLE_MIC = 1001
         private const val REQUEST_END_CALL = 1002
+        private const val REQUEST_QUICK_REPLY = 2001
     }
 
     private val pipActionReceiver = object : BroadcastReceiver() {
@@ -190,6 +198,29 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // ── Native quick-reply notification bridge ───────────────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, QUICK_REPLY_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "showChatQuickReplyNotification" -> {
+                        try {
+                            val args = call.arguments as? Map<*, *>
+                            if (args == null) {
+                                result.error("BAD_ARGS", "Expected Map arguments", null)
+                                return@setMethodCallHandler
+                            }
+
+                            showChatQuickReplyNotification(args)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to show native quick-reply notification", e)
+                            result.error("NATIVE_NOTIFICATION_ERROR", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -290,6 +321,125 @@ class MainActivity : FlutterActivity() {
                 Log.e(TAG, "Error updating PiP actions: ${e.message}", e)
             }
         }
+    }
+
+    private fun showChatQuickReplyNotification(args: Map<*, *>) {
+        val notificationId = (args["notificationId"] as? Number)?.toInt() ?: return
+        val channelId = (args["channelId"] as? String)?.ifBlank { "chat_messages" } ?: "chat_messages"
+        val channelName = (args["channelName"] as? String)?.ifBlank { "Chat Messages" } ?: "Chat Messages"
+        val title = (args["title"] as? String)?.ifBlank { "New message" } ?: "New message"
+        val body = (args["body"] as? String)?.ifBlank { "" } ?: ""
+        val senderName = (args["senderName"] as? String)?.ifBlank { "Someone" } ?: "Someone"
+        val groupName = (args["groupName"] as? String).orEmpty()
+        val isGroup = args["isGroup"] as? Boolean ?: false
+        val replyEndpoint = (args["replyEndpoint"] as? String).orEmpty()
+        val replyRecipientId = (args["replyRecipientId"] as? String).orEmpty()
+        val conversationType = (args["conversationType"] as? String)?.ifBlank { "direct" } ?: "direct"
+        val groupId = (args["groupId"] as? String).orEmpty()
+        val baseUrl = (args["baseUrl"] as? String).orEmpty()
+        val payloadJson = (args["payloadJson"] as? String).orEmpty()
+
+        ensureNotificationChannel(channelId, channelName)
+
+        val replyIntent = Intent(this, ReplyReceiver::class.java).apply {
+            putExtra("notification_id", notificationId)
+            putExtra("reply_endpoint", replyEndpoint)
+            putExtra("reply_recipient_id", replyRecipientId)
+            putExtra("conversation_type", conversationType)
+            putExtra("group_id", groupId)
+            putExtra("base_url", baseUrl)
+            putExtra("channel_id", channelId)
+            putExtra("payload_json", payloadJson)
+        }
+
+        val replyPendingIntentFlags =
+            PendingIntent.FLAG_UPDATE_CURRENT or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_MUTABLE
+                } else {
+                    0
+                }
+
+        val replyPendingIntent = PendingIntent.getBroadcast(
+            this,
+            notificationId + REQUEST_QUICK_REPLY,
+            replyIntent,
+            replyPendingIntentFlags,
+        )
+
+        val remoteInput = RemoteInput.Builder(ReplyReceiver.KEY_TEXT_REPLY)
+            .setLabel("Write a reply...")
+            .build()
+
+        val replyAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_send,
+            "Reply",
+            replyPendingIntent,
+        )
+            .addRemoteInput(remoteInput)
+            .setAllowGeneratedReplies(true)
+            .build()
+
+        val senderPerson = Person.Builder().setName(senderName).build()
+        val mePerson = Person.Builder().setName("You").build()
+
+        val style = NotificationCompat.MessagingStyle(mePerson)
+            .addMessage(body, System.currentTimeMillis(), senderPerson)
+
+        if (isGroup && groupName.isNotBlank()) {
+            style.setConversationTitle(groupName)
+            style.setGroupConversation(true)
+        }
+
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (payloadJson.isNotBlank()) {
+                putExtra("notification_payload", payloadJson)
+            }
+        }
+
+        val contentPendingIntent = launchIntent?.let {
+            PendingIntent.getActivity(
+                this,
+                notificationId,
+                it,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+
+        val builder = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(android.R.drawable.sym_action_chat)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setStyle(style)
+            .setOnlyAlertOnce(false)
+            .addAction(replyAction)
+            .setAllowSystemGeneratedContextualActions(true)
+
+        if (contentPendingIntent != null) {
+            builder.setContentIntent(contentPendingIntent)
+        }
+
+        NotificationManagerCompat.from(this).notify(notificationId, builder.build())
+    }
+
+    private fun ensureNotificationChannel(channelId: String, channelName: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        val channel = NotificationChannel(
+            channelId,
+            channelName,
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            enableVibration(true)
+        }
+        manager.createNotificationChannel(channel)
     }
 
     private fun enterPipMode(): Boolean {

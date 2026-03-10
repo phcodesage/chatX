@@ -1,12 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'socket_service.dart';
 import '../config/api_config.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'storage_service.dart';
 
 /// Call state enum
 enum CallState {
@@ -114,8 +114,7 @@ class CallService {
   Future<void> _fetchIceServers() async {
     try {
       // Get auth token from storage
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('auth_token');
+      final token = await StorageService.getToken();
 
       final headers = <String, String>{'Content-Type': 'application/json'};
       if (token != null) {

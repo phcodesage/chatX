@@ -46,6 +46,7 @@ android {
 dependencies {
     // Temporarily disabled for v2 build: implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
     // Temporarily disabled for v2 build: implementation("com.google.firebase:firebase-messaging")
+    compileOnly("com.google.firebase:firebase-messaging:23.4.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
 

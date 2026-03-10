@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'chat_cache_service.dart';
@@ -13,6 +14,9 @@ class StorageService {
   static const String _rememberedUsernameKey = 'remembered_username';
 
   static SharedPreferences? _prefs;
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
 
   /// Warm up the SharedPreferences instance so the first write doesn't
   /// block a frame later during app usage.
@@ -38,7 +42,9 @@ class StorageService {
   static Future<void> saveToken(String token) async {
     try {
       final prefs = await _getPrefs();
-      if (prefs.getString(_tokenKey) == token) return;
+      final secureToken = await _secureStorage.read(key: _tokenKey);
+      if (secureToken == token && prefs.getString(_tokenKey) == token) return;
+      await _secureStorage.write(key: _tokenKey, value: token);
       await prefs.setString(_tokenKey, token);
     } catch (e) {
       debugPrint('Error saving token: $e');
@@ -48,8 +54,22 @@ class StorageService {
   /// Get authentication token
   static Future<String?> getToken() async {
     try {
+      final secureToken = await _secureStorage.read(key: _tokenKey);
+      if (secureToken != null && secureToken.isNotEmpty) {
+        final prefs = await _getPrefs();
+        // Keep legacy storage in sync for existing code paths outside StorageService.
+        if (prefs.getString(_tokenKey) != secureToken) {
+          await prefs.setString(_tokenKey, secureToken);
+        }
+        return secureToken;
+      }
+
       final prefs = await _getPrefs();
-      return prefs.getString(_tokenKey);
+      final legacyToken = prefs.getString(_tokenKey);
+      if (legacyToken != null && legacyToken.isNotEmpty) {
+        await _secureStorage.write(key: _tokenKey, value: legacyToken);
+      }
+      return legacyToken;
     } catch (e) {
       debugPrint('Error getting token: $e');
       return null;
@@ -166,6 +186,7 @@ class StorageService {
     try {
       final prefs = await _getPrefs();
       final userId = prefs.getInt(_userIdKey);
+      await _secureStorage.delete(key: _tokenKey);
       await prefs.remove(_tokenKey);
       await prefs.remove(_userIdKey);
       await prefs.remove(_usernameKey);
@@ -183,7 +204,7 @@ class StorageService {
   static Future<StoredSession?> getUserSession() async {
     try {
       final prefs = await _getPrefs();
-      final token = prefs.getString(_tokenKey);
+      final token = await getToken();
       final userId = prefs.getInt(_userIdKey);
 
       if (token == null || token.isEmpty || userId == null) {

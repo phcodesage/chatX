@@ -41,6 +41,7 @@ dependencies:
   
   # Local storage for tokens and user data
   shared_preferences: ^2.2.2
+  flutter_secure_storage: ^9.2.2
   
   # Socket.IO client for real-time features
   socket_io_client: ^2.0.3+1

@@ -73,12 +73,22 @@
         
         <!-- Firebase Cloud Messaging Service -->
         <service
-            android:name="com.google.firebase.messaging.FirebaseMessagingService"
+            android:name=".NativeFirebaseMessagingService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT"/>
             </intent-filter>
         </service>
+
+        <!-- Native chat receiver for Android background/terminated quick reply notifications -->
+        <receiver
+            android:name=".ChatFirebaseMessagingReceiver"
+            android:exported="true"
+            android:permission="com.google.android.c2dm.permission.SEND">
+            <intent-filter android:priority="999">
+                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+            </intent-filter>
+        </receiver>
         
         <!-- FCM Notification Icon -->
         <meta-data
@@ -94,6 +104,11 @@
         <service
             android:name="com.cloudwebrtc.webrtc.FlutterWebRTCForegroundService"
             android:foregroundServiceType="mediaProjection"
+            android:exported="false" />
+
+        <!-- Native inline reply receiver for chat notifications -->
+        <receiver
+            android:name=".ReplyReceiver"
             android:exported="false" />
         
         <!-- FileProvider for APK installation on Android 7+ -->
