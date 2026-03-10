@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
+import '../models/bulk_send_response.dart';
 import '../models/message.dart';
 import 'storage_service.dart';
 import 'auth_error_handler.dart';
@@ -10,6 +11,12 @@ import 'chat_cache_service.dart';
 /// Service for handling message API calls
 /// Enhanced with offline-first capabilities
 class MessageService {
+  static void _trace(String message) {
+    if (kDebugMode) {
+      debugPrint(message);
+    }
+  }
+
   /// Get conversation messages with offline-first approach
   /// Returns cached messages immediately, then syncs with server
   static Future<List<Message>> getConversationMessages({
@@ -18,42 +25,42 @@ class MessageService {
     int? beforeId,
     bool offlineFirst = true,
   }) async {
-    debugPrint(
+    _trace(
       '🔍 getConversationMessages called for userId: $userId, offlineFirst: $offlineFirst',
     );
 
     // Get current user ID for cache
     final currentUserId = await StorageService.getUserId();
-    debugPrint('🔍 Current user ID: $currentUserId');
+    _trace('🔍 Current user ID: $currentUserId');
 
     // Load from cache first for instant display
     if (offlineFirst && currentUserId != null) {
-      debugPrint('🔍 Attempting to load from cache...');
+      _trace('🔍 Attempting to load from cache...');
       final cachedMessages = await ChatCacheService.loadConversationMessages(
         currentUserId,
         userId,
       );
-      debugPrint('🔍 Cache returned ${cachedMessages.length} messages');
+      _trace('🔍 Cache returned ${cachedMessages.length} messages');
 
       // Return cached messages immediately if available
       if (cachedMessages.isNotEmpty) {
-        debugPrint('📦 Loaded ${cachedMessages.length} messages from cache');
+        _trace('📦 Loaded ${cachedMessages.length} messages from cache');
 
         // Fetch fresh data in background (don't await)
         _syncMessagesInBackground(userId, currentUserId, limit, beforeId);
 
         return cachedMessages;
       } else {
-        debugPrint('📦 Cache is empty, will try server');
+        _trace('📦 Cache is empty, will try server');
       }
     } else {
-      debugPrint(
+      _trace(
         '🔍 Skipping cache: offlineFirst=$offlineFirst, currentUserId=$currentUserId',
       );
     }
 
     // No cache or offline mode disabled - fetch from server
-    debugPrint('🔍 Fetching from server...');
+    _trace('🔍 Fetching from server...');
     return await _fetchMessagesFromServer(
       userId: userId,
       currentUserId: currentUserId,
@@ -109,14 +116,14 @@ class MessageService {
               userId,
               messages,
             );
-            debugPrint('💾 Cached ${messages.length} messages');
+            _trace('💾 Cached ${messages.length} messages');
           } else {
             // Server returned 0 messages — clear stale cache
             await ChatCacheService.clearConversationCache(
               currentUserId,
               userId,
             );
-            debugPrint('🗑️ Server returned 0 messages — cache cleared');
+            _trace('🗑️ Server returned 0 messages — cache cleared');
           }
         }
 
@@ -132,7 +139,7 @@ class MessageService {
         throw Exception(error['error'] ?? 'Failed to load messages');
       }
     } catch (e) {
-      debugPrint('Get conversation messages error: $e');
+      _trace('Get conversation messages error: $e');
 
       // If network error and we have currentUserId, try returning cached data
       if (currentUserId != null) {
@@ -141,7 +148,7 @@ class MessageService {
           userId,
         );
         if (cachedMessages.isNotEmpty) {
-          debugPrint(
+          _trace(
             '📦 Network error - returning ${cachedMessages.length} cached messages',
           );
           return cachedMessages;
@@ -167,7 +174,7 @@ class MessageService {
         beforeId: beforeId,
       );
     } catch (e) {
-      debugPrint('Background sync failed: $e');
+      _trace('Background sync failed: $e');
       // Silently fail - user already has cached data
     }
   }
@@ -218,6 +225,87 @@ class MessageService {
       }
     } catch (e) {
       debugPrint('Send message error: $e');
+      rethrow;
+    }
+  }
+
+  /// Send the same message to multiple recipients in a single request.
+  /// The backend can return partial success, surfaced in [BulkSendResponse.results].
+  static Future<BulkSendResponse> sendManyMessages({
+    required List<int> recipientIds,
+    required String content,
+    String messageType = 'text',
+    int? replyToId,
+    String? bulkBatchId,
+  }) async {
+    try {
+      if (recipientIds.isEmpty) {
+        throw Exception('recipientIds cannot be empty');
+      }
+
+      final trimmedContent = content.trim();
+      if (trimmedContent.isEmpty) {
+        throw Exception('content cannot be empty');
+      }
+
+      final token = await StorageService.getToken();
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      // Keep recipient order stable while removing accidental duplicates.
+      final normalizedRecipientIds = recipientIds.toSet().toList();
+
+      final payload = <String, dynamic>{
+        'recipient_ids': normalizedRecipientIds,
+        'content': trimmedContent,
+        'message_type': messageType,
+        if (replyToId != null) 'reply_to_id': replyToId,
+        if (bulkBatchId != null && bulkBatchId.trim().isNotEmpty)
+          'bulk_batch_id': bulkBatchId.trim(),
+      };
+
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.sendManyMessagesUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(ApiConfig.connectionTimeout);
+
+      if (response.statusCode == 200 ||
+          response.statusCode == 201 ||
+          response.statusCode == 207) {
+        final body = jsonDecode(response.body);
+        if (body is Map<String, dynamic>) {
+          return BulkSendResponse.fromJson(body);
+        }
+        throw Exception('Invalid bulk send response format');
+      } else if (response.statusCode == 401) {
+        debugPrint('🔐 Token expired - redirecting to sign in');
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        throw Exception('Session expired');
+      } else {
+        String errorMessage = 'Failed to send bulk message';
+        try {
+          final errorBody = jsonDecode(response.body);
+          if (errorBody is Map<String, dynamic>) {
+            errorMessage =
+                (errorBody['error'] ?? errorBody['message'])?.toString() ??
+                errorMessage;
+          }
+        } catch (_) {
+          // Keep default message when response body is not JSON.
+        }
+        throw Exception(errorMessage);
+      }
+    } catch (e) {
+      debugPrint('Send many messages error: $e');
       rethrow;
     }
   }

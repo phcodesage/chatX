@@ -60,6 +60,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   bool _isSpeakerOn = true;
   bool _isScreenSharing = false;
   bool _remoteIsScreenSharing = false;
+  bool _isNoiseFilterEnabled = false;
 
   // Call duration
   Timer? _durationTimer;
@@ -148,19 +149,18 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         '📞 ConnectedCallScreen: Starting async initialization for ${widget.callType} call',
       );
 
-      // For video calls, initialize renderers first
-      if (widget.callType == 'video') {
-        try {
-          await _initializeRenderers();
-          debugPrint(
-            '📞 ConnectedCallScreen: Video renderers initialized successfully',
-          );
-        } catch (e) {
-          debugPrint(
-            '⚠️ ConnectedCallScreen: Video renderer initialization failed: $e',
-          );
-          // Continue without video renderers - audio will still work
-        }
+      // ALWAYS initialize renderers, even for audio calls, so that we can 
+      // display a screen share if the remote peer starts one mid-call.
+      try {
+        await _initializeRenderers();
+        debugPrint(
+          '📞 ConnectedCallScreen: Video renderers initialized successfully (for ${widget.callType} call)',
+        );
+      } catch (e) {
+        debugPrint(
+          '⚠️ ConnectedCallScreen: Video renderer initialization failed: $e',
+        );
+        // Continue without video renderers - audio will still work
       }
 
       // Load devices (but don't fail if this errors)
@@ -596,6 +596,33 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     setState(() {
       _showControls = !_showControls;
     });
+  }
+
+  Future<void> _toggleNoiseFilter() async {
+    final newState = await widget.callService.toggleNoiseFilter();
+    setState(() {
+      _isNoiseFilterEnabled = newState;
+    });
+    // Show brief toast so user knows it took effect
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _isNoiseFilterEnabled
+                ? '🎙️ Noise filter ON — background noise suppressed'
+                : '🎙️ Noise filter OFF — raw audio',
+          ),
+          duration: const Duration(seconds: 2),
+          backgroundColor: _isNoiseFilterEnabled
+              ? const Color(0xFF166534)
+              : const Color(0xFF374151),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      );
+    }
   }
 
   void _minimizeToOverlay() {
@@ -1094,6 +1121,16 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
                   onTap: _toggleScreenShare,
                 ),
 
+                // Noise filter
+                _buildControlButton(
+                  icon: _isNoiseFilterEnabled
+                      ? Icons.noise_aware
+                      : Icons.noise_control_off,
+                  label: _isNoiseFilterEnabled ? 'Noise: On' : 'Noise: Off',
+                  isActive: _isNoiseFilterEnabled,
+                  activeColor: Colors.green,
+                  onTap: _toggleNoiseFilter,
+                ),
                 // Chat (minimizes to overlay)
                 if (widget.onChatPressed != null)
                   _buildControlButton(
@@ -1143,7 +1180,14 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     required bool isActive,
     required VoidCallback onTap,
     VoidCallback? onLongPress,
+    Color? activeColor,
   }) {
+    final Color bgColor = isActive
+        ? (activeColor != null
+            ? activeColor.withValues(alpha: 0.8)
+            : const Color.fromRGBO(255, 255, 255, 0.2))
+        : const Color.fromRGBO(255, 82, 82, 0.7);
+
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
@@ -1155,9 +1199,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
             height: 56,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: isActive
-                  ? const Color.fromRGBO(255, 255, 255, 0.2)
-                  : const Color.fromRGBO(255, 82, 82, 0.7),
+              color: bgColor,
             ),
             child: Icon(icon, color: Colors.white, size: 24),
           ),

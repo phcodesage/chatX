@@ -569,17 +569,23 @@ class SocketService {
     Map<String, Function(Map<String, dynamic>)> listeners,
     Map<String, dynamic> data,
   ) {
-    debugPrint(
-      '🔍 [BROADCAST DEBUG] Broadcasting to ${listeners.length} listeners',
-    );
-    debugPrint('🔍 [BROADCAST DEBUG] Listener keys: ${listeners.keys}');
-    debugPrint('🔍 [BROADCAST DEBUG] Data: $data');
+    if (kDebugMode) {
+      debugPrint(
+        '🔍 [BROADCAST DEBUG] Broadcasting to ${listeners.length} listeners',
+      );
+      debugPrint('🔍 [BROADCAST DEBUG] Listener keys: ${listeners.keys}');
+      debugPrint('🔍 [BROADCAST DEBUG] Data: $data');
+    }
     for (final cb in listeners.values.toList()) {
       try {
         cb(data);
-        debugPrint('🔍 [BROADCAST DEBUG] Successfully called listener');
+        if (kDebugMode) {
+          debugPrint('🔍 [BROADCAST DEBUG] Successfully called listener');
+        }
       } catch (e) {
-        debugPrint('🔍 [BROADCAST DEBUG] Error calling listener: $e');
+        if (kDebugMode) {
+          debugPrint('🔍 [BROADCAST DEBUG] Error calling listener: $e');
+        }
       }
     }
   }
@@ -1338,20 +1344,24 @@ class SocketService {
   /// Emit an event to the server
   void emit(String event, dynamic data) {
     if (_socket?.connected ?? false) {
-      debugPrint('📤 Emitting $event: $data');
+      if (kDebugMode) {
+        debugPrint('📤 Emitting $event: $data');
+      }
       _socket!.emit(event, data);
 
       // Add extra debugging for color change events
-      if (event.contains('color')) {
+      if (kDebugMode && event.contains('color')) {
         debugPrint('🎨 [SOCKET DEBUG] Color event emitted successfully');
         debugPrint('🎨 [SOCKET DEBUG] Socket connected: ${_socket?.connected}');
         debugPrint('🎨 [SOCKET DEBUG] Socket ID: ${_socket?.id}');
       }
     } else {
-      debugPrint('⚠️ Cannot emit $event - socket not connected');
-      debugPrint(
-        '⚠️ Socket state: connected=${_socket?.connected}, socket=${_socket != null}',
-      );
+      if (kDebugMode) {
+        debugPrint('⚠️ Cannot emit $event - socket not connected');
+        debugPrint(
+          '⚠️ Socket state: connected=${_socket?.connected}, socket=${_socket != null}',
+        );
+      }
     }
   }
 

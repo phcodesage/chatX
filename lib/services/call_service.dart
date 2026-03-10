@@ -41,6 +41,9 @@ class CallService {
   // Screen sharing state
   bool _isScreenSharing = false;
   MediaStreamTrack? _originalVideoTrack;
+  String? _cameraStreamId; // Track camera stream ID
+  String? _screenShareStreamId; // Track screen share stream ID
+  bool _remoteIsScreenSharing = false; // Track remote screen share state
 
   // Call state
   CallState _callState = CallState.idle;
@@ -191,21 +194,8 @@ class CallService {
     socket.emit('subscribe_calls', {});
 
     // Listen for screen share started/stopped via dedicated socket events
-    // (Web client sends these in addition to signal-based notifications)
-    socket.onScreenShareStarted = (data) {
-      debugPrint('🖥️ Remote screen share started (socket event): $data');
-      onScreenShareChanged?.call(true);
-    };
-
-    socket.onScreenShareStopped = (data) {
-      debugPrint('🖥️ Remote screen share stopped (socket event): $data');
-      if (_primaryRemoteStream != null) {
-        debugPrint('🖥️ Reverting to primary camera stream');
-        _remoteStream = _primaryRemoteStream;
-        onRemoteStream?.call(_remoteStream!);
-      }
-      onScreenShareChanged?.call(false);
-    };
+    // (Web client sends these to notify us when they start/stop screen sharing)
+    // Note: We don't set up callbacks here since we are the sender, not receiver
   }
 
   /// Initiate a call to another user
@@ -289,14 +279,16 @@ class CallService {
         await _peerConnection!.addTrack(track, _localStream!);
       }
 
-      // Create and send offer
-      final offer = await _peerConnection!.createOffer();
+      // Create and send offer with enhanced audio SDP
+      final rawOffer = await _peerConnection!.createOffer();
+      final enhancedOfferSdp = _enhanceAudioInSdp(rawOffer.sdp ?? '');
+      final offer = RTCSessionDescription(enhancedOfferSdp, 'offer');
       await _peerConnection!.setLocalDescription(offer);
 
       debugPrint('📤 Sending WebRTC offer to room: $_callRoomId');
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {'type': 'offer', 'sdp': offer.sdp, 'callType': callType},
+        'signal': {'type': 'offer', 'sdp': enhancedOfferSdp, 'callType': callType},
       });
 
       _callState = CallState.ringing;
@@ -362,9 +354,7 @@ class CallService {
         Future.delayed(const Duration(seconds: 5), () {
           if (_callState == CallState.connected ||
               _callState == CallState.connecting) {
-            debugPrint(
-              '❌ ICE still disconnected after 5s — ending call',
-            );
+            debugPrint('❌ ICE still disconnected after 5s — ending call');
             _callState = CallState.failed;
             onCallStateChanged?.call(_callState);
             endCall();
@@ -387,8 +377,26 @@ class CallService {
         final stream = event.streams[0];
         debugPrint('🎥 Stream ID: ${stream.id}');
 
-        // Save the very first remote stream as our primary (camera) stream
-        _primaryRemoteStream ??= stream;
+        // Track camera stream ID on first reception
+        if (_cameraStreamId == null) {
+          _cameraStreamId = stream.id;
+          _primaryRemoteStream = stream;
+          debugPrint('🎥 Set camera stream ID: $_cameraStreamId');
+        }
+
+        // Detect screen share by different stream ID or track replacement
+        if (_cameraStreamId != null && stream.id != _cameraStreamId) {
+          _screenShareStreamId = stream.id;
+          _remoteIsScreenSharing = true;
+          debugPrint('🖥️ Detected remote screen share stream: ${stream.id}');
+          onScreenShareChanged?.call(true);
+        } else if (stream.id == _cameraStreamId && _remoteIsScreenSharing) {
+          // Back to camera stream
+          _remoteIsScreenSharing = false;
+          _screenShareStreamId = null;
+          debugPrint('🎥 Back to camera stream: ${stream.id}');
+          onScreenShareChanged?.call(false);
+        }
 
         // Always update remote stream - this handles both initial stream and screen share
         _remoteStream = stream;
@@ -397,6 +405,16 @@ class CallService {
         // Listen for track ended (e.g., when screen share stops)
         event.track.onEnded = () {
           debugPrint('🎥 Remote track ended: ${event.track.kind}');
+          if (_remoteIsScreenSharing && event.track.kind == 'video') {
+            _remoteIsScreenSharing = false;
+            _screenShareStreamId = null;
+            if (_primaryRemoteStream != null) {
+              debugPrint('🖥️ Reverting to primary camera stream (onEnded)');
+              _remoteStream = _primaryRemoteStream;
+              onRemoteStream?.call(_remoteStream!);
+            }
+            onScreenShareChanged?.call(false);
+          }
         };
 
         // Listen for track mute/unmute (can indicate screen share changes)
@@ -406,6 +424,21 @@ class CallService {
         event.track.onUnMute = () {
           debugPrint('🎥 Remote track unmuted: ${event.track.kind}');
         };
+      }
+    };
+
+    // Handle when a remote track is explicitly removed via renegotiation
+    _peerConnection!.onRemoveTrack = (stream, track) {
+      debugPrint('🎥 Remote track removed: ${track.kind}, stream: ${stream.id}');
+      if (_remoteIsScreenSharing && track.kind == 'video') {
+        _remoteIsScreenSharing = false;
+        _screenShareStreamId = null;
+        if (_primaryRemoteStream != null) {
+          debugPrint('🖥️ Reverting to primary camera stream (onRemoveTrack)');
+          _remoteStream = _primaryRemoteStream;
+          onRemoteStream?.call(_remoteStream!);
+        }
+        onScreenShareChanged?.call(false);
       }
     };
 
@@ -627,8 +660,10 @@ class CallService {
       // Process any queued ICE candidates
       await _processQueuedCandidates();
 
-      // Create and send answer (do NOT re-add local tracks - they're already there)
-      final answer = await _peerConnection!.createAnswer();
+      // Create and send answer with enhanced audio SDP
+      final rawAnswer = await _peerConnection!.createAnswer();
+      final enhancedAnswerSdp = _enhanceAudioInSdp(rawAnswer.sdp ?? '');
+      final answer = RTCSessionDescription(enhancedAnswerSdp, 'answer');
       await _peerConnection!.setLocalDescription(answer);
 
       debugPrint('🔄 Sending renegotiation answer to room: $_callRoomId');
@@ -642,7 +677,7 @@ class CallService {
 
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {'type': 'answer', 'sdp': answer.sdp, 'renegotiate': true},
+        'signal': {'type': 'answer', 'sdp': enhancedAnswerSdp, 'renegotiate': true},
       });
 
       debugPrint('✅ Renegotiation answer sent successfully');
@@ -651,8 +686,51 @@ class CallService {
     }
   }
 
+  /// Enhance Opus audio quality in an SDP string.
+  ///
+  /// Mirrors the web client's `enableStereoInSDP` function:
+  /// - maxaveragebitrate = 510000 (high-quality voice)
+  /// - stereo = 0 (mono is cleaner for voice calls; reduces echo)
+  /// - useinbandfec = 1 (FEC for packet-loss resilience)
+  /// - usedtx = 0 (disable DTX to avoid cut-outs in noisy environments)
+  /// - cbr = 0 (variable bitrate adapts to speech dynamics)
+  String _enhanceAudioInSdp(String sdp) {
+    try {
+      // Find Opus payload type
+      final rtpmapRegex = RegExp(
+        r'a=rtpmap:(\d+) opus/48000',
+        caseSensitive: false,
+      );
+      final rtpmapMatch = rtpmapRegex.firstMatch(sdp);
+      if (rtpmapMatch == null) {
+        debugPrint('🎵 SDP: Opus rtpmap not found, skipping audio enhancement');
+        return sdp;
+      }
+      final pt = rtpmapMatch.group(1)!;
+
+      const opusParams =
+          'minptime=10;useinbandfec=1;stereo=0;maxaveragebitrate=510000;cbr=0;usedtx=0';
+      final newFmtp = 'a=fmtp:$pt $opusParams';
+
+      // Replace existing fmtp line or insert one after the rtpmap line
+      final fmtpRegex = RegExp('a=fmtp:$pt[^\r\n]*', caseSensitive: false);
+      if (fmtpRegex.hasMatch(sdp)) {
+        sdp = sdp.replaceAll(fmtpRegex, newFmtp);
+      } else {
+        final rtpmapLine = 'a=rtpmap:$pt opus/48000/2';
+        sdp = sdp.replaceFirst(rtpmapLine, '$rtpmapLine\r\n$newFmtp');
+      }
+
+      debugPrint('🎵 SDP: Audio enhanced for Opus pt=$pt');
+      return sdp;
+    } catch (e) {
+      debugPrint('⚠️ SDP audio enhancement error: $e');
+      return sdp;
+    }
+  }
+
   /// Trigger renegotiation when adding new tracks (e.g., screen share in audio call)
-  Future<void> _triggerRenegotiation() async {
+  Future<void> _triggerRenegotiation({String? reason}) async {
     if (_peerConnection == null || _callRoomId == null) {
       debugPrint(
         '❌ Cannot trigger renegotiation - no peer connection or room ID',
@@ -661,7 +739,7 @@ class CallService {
     }
 
     try {
-      debugPrint('🔄 Triggering renegotiation for screen share');
+      debugPrint('🔄 Triggering renegotiation: ${reason ?? "unknown"}');
 
       // Create new offer with the added video track
       final offer = await _peerConnection!.createOffer();
@@ -674,10 +752,12 @@ class CallService {
           'type': 'offer',
           'sdp': offer.sdp,
           'renegotiate': true, // Mark as renegotiation
+          'reason': reason, // Add reason for debugging
+          'isScreenShare': _isScreenSharing, // Add screen share state
         },
       });
 
-      debugPrint('✅ Renegotiation offer sent for screen share');
+      debugPrint('✅ Renegotiation offer sent: ${reason ?? "unknown"}');
     } catch (e) {
       debugPrint('❌ Error triggering renegotiation: $e');
     }
@@ -707,8 +787,10 @@ class CallService {
       }
     }
 
-    // Create and send answer
-    final answer = await _peerConnection!.createAnswer();
+    // Create and send answer with enhanced audio SDP
+    final rawAnswer = await _peerConnection!.createAnswer();
+    final enhancedAnswerSdp = _enhanceAudioInSdp(rawAnswer.sdp ?? '');
+    final answer = RTCSessionDescription(enhancedAnswerSdp, 'answer');
     await _peerConnection!.setLocalDescription(answer);
 
     debugPrint(
@@ -722,7 +804,7 @@ class CallService {
 
     final signalData = {
       'room': _callRoomId,
-      'signal': {'type': 'answer', 'sdp': answer.sdp},
+      'signal': {'type': 'answer', 'sdp': enhancedAnswerSdp},
     };
     debugPrint('📤 Signal data: $signalData');
     _socketService.emit('signal', signalData);
@@ -984,6 +1066,11 @@ class CallService {
     _remoteStream = null;
     _primaryRemoteStream = null;
 
+    // Reset screen share tracking
+    _cameraStreamId = null;
+    _screenShareStreamId = null;
+    _remoteIsScreenSharing = false;
+
     _callState = CallState.idle;
     _callDirection = null;
     _callId = null;
@@ -1051,6 +1138,12 @@ class CallService {
     _localStream = null;
     _remoteStream = null;
     _primaryRemoteStream = null;
+
+    // Reset screen share tracking
+    _cameraStreamId = null;
+    _screenShareStreamId = null;
+    _remoteIsScreenSharing = false;
+
     _callState = CallState.idle;
     _callDirection = null;
     _callId = null;
@@ -1090,6 +1183,52 @@ class CallService {
         track.enabled = enabled;
       }
     }
+  }
+
+  // ── Noise filter state ──────────────────────────────────────────────────────
+  bool _noiseFilterEnabled = false;
+  bool get isNoiseFilterEnabled => _noiseFilterEnabled;
+
+  /// Toggle background-noise / echo / AGC processing on the local audio track.
+  ///
+  /// Uses WebRTC's built-in APM (Audio Processing Module) via [applyConstraints]:
+  ///   • noiseSuppression  – spectral subtraction + ML noise gate (best for wind, AC, crowd)
+  ///   • echoCancellation  – removes speaker feedback from the microphone
+  ///   • autoGainControl   – normalises loudness so quiet voices aren't buried
+  ///
+  /// All three are toggled together so the button is either "clean audio" or
+  /// "raw audio" — simple for the user. The state is persisted in
+  /// [_noiseFilterEnabled] so the UI can show the active state.
+  Future<bool> toggleNoiseFilter() async {
+    _noiseFilterEnabled = !_noiseFilterEnabled;
+    final enabled = _noiseFilterEnabled;
+
+    // 1️⃣ Apply to our OWN outgoing audio (cleans what the web user hears from us)
+    final audioTracks = _localStream?.getAudioTracks() ?? [];
+    for (final track in audioTracks) {
+      try {
+        await track.applyConstraints({
+          'noiseSuppression': enabled,
+          'echoCancellation': enabled,
+          'autoGainControl': enabled,
+        });
+        debugPrint('🎙️ Local noise filter ${enabled ? 'ON' : 'OFF'} for track ${track.id}');
+      } catch (e) {
+        debugPrint('⚠️ applyConstraints failed for track ${track.id}: $e');
+      }
+    }
+
+    // 2️⃣ Signal the web peer to toggle THEIR RNNoise AI filter on their mic
+    //    (this cleans the audio WE HEAR coming from the web user)
+    if (_callRoomId != null && _callRoomId!.isNotEmpty) {
+      _socketService.emit('signal', {
+        'room': _callRoomId,
+        'signal': {'type': 'noise-filter-toggle', 'enabled': enabled},
+      });
+      debugPrint('📡 Sent noise-filter-toggle signal to web peer (enabled=$enabled)');
+    }
+
+    return _noiseFilterEnabled;
   }
 
   /// Switch camera (front/back)
@@ -1159,6 +1298,16 @@ class CallService {
         _originalVideoTrack = _localStream!.getVideoTracks().firstOrNull;
       }
 
+      // Disable original camera track so we don't send both camera and screen
+      if (_originalVideoTrack != null) {
+        try {
+          _originalVideoTrack!.enabled = false;
+          debugPrint('🖥️ Disabled original camera track before screen share');
+        } catch (e) {
+          debugPrint('⚠️ Could not disable original camera track: $e');
+        }
+      }
+
       // Replace the video track in the peer connection
       final senders = await _peerConnection!.getSenders();
       RTCRtpSender? videoSender;
@@ -1173,15 +1322,37 @@ class CallService {
 
       if (videoSender != null) {
         // Replace existing video track (video calls)
-        await videoSender.replaceTrack(screenTrack);
-        debugPrint('🖥️ Replaced existing video track with screen share');
+        try {
+          await videoSender.replaceTrack(screenTrack);
+          debugPrint('🖥️ Replaced existing video track with screen share');
+
+          // Set screen sharing flag BEFORE renegotiation so it's included in signal
+          _isScreenSharing = true;
+
+          // CRITICAL FIX: Trigger renegotiation even for video calls
+          // This ensures web clients receive updated SDP with new track
+          await _triggerRenegotiation(reason: 'screen-share-started');
+        } catch (e) {
+          debugPrint('❌ Failed to replace video track with screen share: $e');
+          // Fallback: add the screen track as a new sender if replace fails
+          await _peerConnection!.addTrack(screenTrack, _screenStream!);
+          debugPrint('🖥️ Fallback: added screen track as new sender');
+
+          // Set screen sharing flag BEFORE renegotiation
+          _isScreenSharing = true;
+
+          await _triggerRenegotiation(reason: 'screen-share-started-fallback');
+        }
       } else {
         // Add new video track (audio calls that want to share screen)
         await _peerConnection!.addTrack(screenTrack, _screenStream!);
         debugPrint('🖥️ Added new video track for screen share (audio call)');
 
+        // Set screen sharing flag BEFORE renegotiation
+        _isScreenSharing = true;
+
         // Trigger renegotiation for audio calls
-        await _triggerRenegotiation();
+        await _triggerRenegotiation(reason: 'screen-share-started-audio');
       }
 
       // Listen for when user stops sharing via system UI
@@ -1190,7 +1361,7 @@ class CallService {
         stopScreenShare();
       };
 
-      _isScreenSharing = true;
+      // Notify UI about screen share state change
       onScreenShareChanged?.call(true);
 
       // Notify remote user about screen share via signal
@@ -1199,11 +1370,7 @@ class CallService {
         'signal': {'type': 'screen-share-started'},
       });
 
-      // Also notify via dedicated socket event for reliability (matches web client behavior)
-      _socketService.emit('screen_share_started', {
-        'from': '${_socketService.currentUserId}',
-      });
-
+      // Note: Socket events disabled to prevent conflicts with signal handler
       debugPrint('✅ Screen sharing started');
       return true;
     } catch (e) {
@@ -1223,12 +1390,27 @@ class CallService {
 
       // Handle video track restoration/removal
       if (_originalVideoTrack != null && _peerConnection != null) {
-        // Video call - restore original camera track
+        // Video call - re-enable and restore original camera track
+        try {
+          _originalVideoTrack!.enabled = true;
+          debugPrint('🖥️ Re-enabled original camera track before restore');
+        } catch (e) {
+          debugPrint('⚠️ Could not re-enable original camera track: $e');
+        }
+
         final senders = await _peerConnection!.getSenders();
         for (final sender in senders) {
           if (sender.track?.kind == 'video') {
-            await sender.replaceTrack(_originalVideoTrack);
-            debugPrint('🖥️ Restored original video track');
+            try {
+              await sender.replaceTrack(_originalVideoTrack);
+              debugPrint('🖥️ Restored original video track');
+
+              // CRITICAL FIX: Trigger renegotiation when restoring camera
+              // This ensures web clients receive updated SDP with restored track
+              await _triggerRenegotiation(reason: 'screen-share-stopped');
+            } catch (e) {
+              debugPrint('❌ Failed to restore original video track: $e');
+            }
             break;
           }
         }
@@ -1243,7 +1425,7 @@ class CallService {
             );
 
             // Trigger renegotiation to notify remote peer
-            await _triggerRenegotiation();
+            await _triggerRenegotiation(reason: 'screen-share-stopped-audio');
             break;
           }
         }
@@ -1268,10 +1450,7 @@ class CallService {
         'signal': {'type': 'screen-share-stopped'},
       });
 
-      // Also notify via dedicated socket event for reliability (matches web client behavior)
-      _socketService.emit('screen_share_stopped', {
-        'from': '${_socketService.currentUserId}',
-      });
+      // Note: Socket events disabled to prevent conflicts with signal handler
 
       // Stop the foreground service on Android
       try {

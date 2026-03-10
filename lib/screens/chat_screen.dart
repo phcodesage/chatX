@@ -20,6 +20,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/lobby_user.dart';
 import '../models/message.dart';
+import '../services/lobby_service.dart';
 import '../services/message_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
@@ -2285,6 +2286,392 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     }
+  }
+
+  String _buildBulkBatchId() {
+    final now = DateTime.now().toUtc();
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    return 'flutter-batch-${now.year}-${twoDigits(now.month)}-${twoDigits(now.day)}-${now.millisecondsSinceEpoch}';
+  }
+
+  Future<void> _showSendToManyDialog() async {
+    final draftContent = _messageController.text.trim();
+    if (draftContent.isEmpty) return;
+
+    final currentUserId = _currentUserId ?? await StorageService.getUserId();
+    final usersFuture = LobbyService.getLobbyUsers();
+    final selectedRecipientIds = <int>{widget.otherUser.id};
+    var searchQuery = '';
+
+    final selectedIds = await showDialog<List<int>>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setModalState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E2E),
+              title: const Text(
+                'Send to many',
+                style: TextStyle(color: Colors.white),
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: 380,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Select recipients for this message.',
+                      style: TextStyle(color: Colors.grey[300], fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2A2A3A),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: TextField(
+                        onChanged: (value) {
+                          setModalState(() => searchQuery = value);
+                        },
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          hintText: 'Search users',
+                          hintStyle: TextStyle(color: Colors.grey[500]),
+                          prefixIcon: Icon(
+                            Icons.search,
+                            color: Colors.grey[500],
+                            size: 18,
+                          ),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: FutureBuilder<List<LobbyUser>>(
+                        future: usersFuture,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+
+                          if (snapshot.hasError) {
+                            return Center(
+                              child: Text(
+                                'Failed to load users',
+                                style: TextStyle(color: Colors.grey[400]),
+                              ),
+                            );
+                          }
+
+                          final users = snapshot.data ?? const <LobbyUser>[];
+                          final selectableUsers = users.where((user) {
+                            if (currentUserId != null && user.id == currentUserId) {
+                              return false;
+                            }
+                            return true;
+                          }).toList();
+
+                          final selectedUsers = selectableUsers.where((user) {
+                            return selectedRecipientIds.contains(user.id);
+                          }).toList();
+
+                          final normalizedSearch =
+                              searchQuery.trim().toLowerCase();
+                          final filteredUsers = selectableUsers.where((user) {
+                            if (normalizedSearch.isEmpty) {
+                              return true;
+                            }
+                            return user.fullName.toLowerCase().contains(
+                                  normalizedSearch,
+                                ) ||
+                                user.username.toLowerCase().contains(
+                                  normalizedSearch,
+                                );
+                          }).toList();
+
+                          filteredUsers.sort((a, b) {
+                            final aSelected = selectedRecipientIds.contains(
+                              a.id,
+                            );
+                            final bSelected = selectedRecipientIds.contains(
+                              b.id,
+                            );
+                            if (aSelected == bSelected) {
+                              return a.fullName.toLowerCase().compareTo(
+                                b.fullName.toLowerCase(),
+                              );
+                            }
+                            return aSelected ? -1 : 1;
+                          });
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${selectedRecipientIds.length} selected',
+                                style: const TextStyle(
+                                  color: Color(0xFF7C3AED),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Container(
+                                width: double.infinity,
+                                constraints: const BoxConstraints(
+                                  minHeight: 44,
+                                  maxHeight: 110,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF2A2A3A),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(0xFF3B3B4E),
+                                  ),
+                                ),
+                                child: selectedUsers.isEmpty
+                                    ? Center(
+                                        child: Text(
+                                          'No recipients selected',
+                                          style: TextStyle(
+                                            color: Colors.grey[500],
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      )
+                                    : SingleChildScrollView(
+                                        child: Wrap(
+                                          spacing: 6,
+                                          runSpacing: 6,
+                                          children: selectedUsers
+                                              .map(
+                                                (user) => InputChip(
+                                                  label: Text(
+                                                    user.fullName,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                  labelStyle:
+                                                      const TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 12,
+                                                      ),
+                                                  backgroundColor:
+                                                      const Color(0xFF4C1D95),
+                                                  deleteIconColor:
+                                                      Colors.white70,
+                                                  onDeleted: () {
+                                                    setModalState(() {
+                                                      selectedRecipientIds
+                                                          .remove(user.id);
+                                                    });
+                                                  },
+                                                  materialTapTargetSize:
+                                                      MaterialTapTargetSize
+                                                          .shrinkWrap,
+                                                ),
+                                              )
+                                              .toList(),
+                                        ),
+                                      ),
+                              ),
+                              const SizedBox(height: 8),
+                              Expanded(
+                                child: filteredUsers.isEmpty
+                                    ? Center(
+                                        child: Text(
+                                          'No users found',
+                                          style: TextStyle(
+                                            color: Colors.grey[400],
+                                          ),
+                                        ),
+                                      )
+                                    : ListView.builder(
+                                        itemCount: filteredUsers.length,
+                                        itemBuilder: (context, index) {
+                                          final user = filteredUsers[index];
+                                          final isSelected =
+                                              selectedRecipientIds.contains(
+                                                user.id,
+                                              );
+                                          return CheckboxListTile(
+                                            dense: true,
+                                            value: isSelected,
+                                            onChanged: (value) {
+                                              setModalState(() {
+                                                if (value == true) {
+                                                  selectedRecipientIds.add(
+                                                    user.id,
+                                                  );
+                                                } else {
+                                                  selectedRecipientIds.remove(
+                                                    user.id,
+                                                  );
+                                                }
+                                              });
+                                            },
+                                            controlAffinity:
+                                                ListTileControlAffinity.leading,
+                                            activeColor:
+                                                const Color(0xFF7C3AED),
+                                            checkColor: Colors.white,
+                                            title: Text(
+                                              user.fullName,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                            subtitle: Text(
+                                              '@${user.username}',
+                                              style: TextStyle(
+                                                color: Colors.grey[400],
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                            contentPadding: EdgeInsets.zero,
+                                          );
+                                        },
+                                      ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: selectedRecipientIds.isEmpty
+                      ? null
+                      : () {
+                          Navigator.pop(
+                            dialogContext,
+                            selectedRecipientIds.toList(),
+                          );
+                        },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF7C3AED),
+                  ),
+                  child: const Text('Send'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (selectedIds == null || selectedIds.isEmpty || !mounted) {
+      return;
+    }
+
+    final replyToId = _replyingToMessage?.id;
+    try {
+      final response = await MessageService.sendManyMessages(
+        recipientIds: selectedIds,
+        content: draftContent,
+        messageType: 'text',
+        replyToId: replyToId,
+        bulkBatchId: _buildBulkBatchId(),
+      );
+
+      _messageController.clear();
+      _stopTyping();
+      if (mounted) {
+        setState(() {
+          _replyingToMessage = null;
+        });
+      }
+
+      if (!mounted) return;
+
+      final summaryText = response.failedCount > 0
+          ? 'Sent to ${response.sentCount}/${response.requestedCount}. ${response.failedCount} failed.'
+          : 'Sent to ${response.sentCount} recipients.';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(summaryText),
+          backgroundColor: response.failedCount > 0
+              ? Colors.orange
+              : Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Bulk send failed: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Widget _buildSendToManyQuickAction() {
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _messageController,
+      builder: (context, value, _) {
+        if (value.text.trim().isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Center(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _showSendToManyDialog,
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2A1F45),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: const Color(0xFF7C3AED).withOpacity(0.8),
+                      width: 1,
+                    ),
+                  ),
+                  child: const Text(
+                    'send to many',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _onTextChanged(String text) {
@@ -5093,6 +5480,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       children: [
                         // Reply preview (when replying to a message)
                         _buildReplyPreview(),
+                        // Quick bulk-send button above the input; in-flow layout avoids covering chat bubbles.
+                        _buildSendToManyQuickAction(),
                         // Text input field with embedded emoji button and send button
                         RepaintBoundary(
                           child: Row(

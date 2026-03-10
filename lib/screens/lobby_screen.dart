@@ -49,6 +49,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
+  Timer? _searchDebounceTimer;
   String _connectivityBannerMessage = 'Server unavailable. Reconnecting...';
   Future<int?> _currentUserId = StorageService.getUserId();
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
@@ -75,7 +76,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     super.initState();
     _loadLobby();
     _loadAdminStatus();
-    _searchController.addListener(_filterUsers);
+    _searchController.addListener(_onSearchQueryChanged);
     _setupRealtimeListeners();
     // Check for app updates after a short delay
     Future.delayed(const Duration(seconds: 2), () {
@@ -1030,6 +1031,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   @override
   void dispose() {
+    _searchController.removeListener(_onSearchQueryChanged);
+    _searchDebounceTimer?.cancel();
     _searchController.dispose();
     _lastSeenRefreshTimer?.cancel();
     // Cancel all active typing timers
@@ -1040,6 +1043,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // Clear all lobby socket listeners to prevent memory leaks
     _socketService.removeListenersForKey('lobby');
     super.dispose();
+  }
+
+  void _onSearchQueryChanged() {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(const Duration(milliseconds: 180), () {
+      if (!mounted) return;
+      _filterUsers();
+    });
   }
 
   Future<void> _loadLobby({bool useCacheFirst = true}) async {

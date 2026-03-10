@@ -2,7 +2,7 @@
 /// Change the baseUrl here to point to your backend server
 class ApiConfig {
   // Base URL for the API - change this to switch backends
-  static const String baseUrl = 'https://www.flask-call-app.site';
+  static const String baseUrl = 'https://inspect.flask-call-app.site';
   //static const String baseUrl = 'https://web.flask-call-app.site'; //production
 
   // API endpoints
@@ -24,6 +24,8 @@ class ApiConfig {
   static String get conversationsUrl =>
       '$baseUrl$mobilePrefix/messages/conversations';
   static String get sendMessageUrl => '$baseUrl$mobilePrefix/messages/send';
+  static String get sendManyMessagesUrl =>
+      '$baseUrl$mobilePrefix/messages/send-many';
   static String get markReadUrl => '$baseUrl$mobilePrefix/messages/mark-read';
   static String get presenceStatusUrl =>
       '$baseUrl$mobilePrefix/presence/status';

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import '../screens/chat_screen.dart';
 import '../screens/connected_call_screen.dart';
+import '../screens/group_chat_screen.dart';
 import '../widgets/incoming_call_setup_modal.dart';
+import '../models/group.dart';
 import '../models/lobby_user.dart';
+import '../services/active_chat_service.dart';
 import '../services/call_service.dart';
+import '../services/group_service.dart';
 import '../services/socket_service.dart';
 import '../services/presence_service.dart';
 
@@ -43,19 +47,14 @@ class NotificationHandler {
     debugPrint('🔔 Sender Name: ${data['sender_name']}');
     debugPrint('🔔 All keys: ${data.keys.toList()}');
 
-    final type = data['type'] as String?;
-    final senderId = int.tryParse(data['sender_id']?.toString() ?? '');
-    final senderName = data['sender_name'] as String?;
-
-    if (senderId == null) {
-      debugPrint('❌ Invalid sender_id in notification data');
-      debugPrint('❌ Raw sender_id value: ${data['sender_id']}');
-      debugPrint('❌ sender_id type: ${data['sender_id'].runtimeType}');
-      return;
-    }
+    final type = data['type']?.toString();
+    final senderId = _parseInt(data['sender_id']);
+    final senderName = data['sender_name']?.toString();
+    final groupId = _parseInt(data['group_id']);
+    final groupName = data['group_name']?.toString();
 
     debugPrint(
-      '✅ Parsed senderId: $senderId, senderName: $senderName, type: $type',
+      '✅ Parsed senderId: $senderId, senderName: $senderName, groupId: $groupId, groupName: $groupName, type: $type',
     );
 
     // Check if navigator is ready
@@ -71,22 +70,57 @@ class NotificationHandler {
 
     switch (type) {
       case 'message':
-        _navigateToChat(senderId, senderName ?? 'User');
+        if (groupId != null) {
+          _navigateToGroupChat(groupId, groupName ?? 'Group');
+        } else if (senderId != null) {
+          _navigateToChat(senderId, senderName ?? 'User');
+        } else {
+          debugPrint(
+            '❌ Invalid message notification data - missing sender_id/group_id: $data',
+          );
+        }
         break;
       case 'doorbell':
-        _navigateToChat(senderId, senderName ?? 'User');
+        if (groupId != null) {
+          _navigateToGroupChat(groupId, groupName ?? 'Group');
+        } else if (senderId != null) {
+          _navigateToChat(senderId, senderName ?? 'User');
+        } else {
+          debugPrint(
+            '❌ Invalid doorbell notification data - missing sender_id/group_id: $data',
+          );
+        }
         break;
       case 'call':
+        if (senderId == null) {
+          debugPrint('❌ Invalid sender_id for call notification: $data');
+          return;
+        }
         debugPrint('📞 FCM notification tapped - handling incoming call');
         _handleIncomingCallNotification(data);
         break;
       case 'color_change':
-        _navigateToChat(senderId, senderName ?? 'User');
+        if (groupId != null) {
+          _navigateToGroupChat(groupId, groupName ?? 'Group');
+        } else if (senderId != null) {
+          _navigateToChat(senderId, senderName ?? 'User');
+        } else {
+          debugPrint(
+            '❌ Invalid color_change notification data - missing sender_id/group_id: $data',
+          );
+        }
         break;
       default:
         debugPrint('⚠️ Unknown notification type: $type');
-        // Still navigate to chat for unknown types if we have sender info
-        _navigateToChat(senderId, senderName ?? 'User');
+        if (groupId != null) {
+          _navigateToGroupChat(groupId, groupName ?? 'Group');
+        } else if (senderId != null) {
+          _navigateToChat(senderId, senderName ?? 'User');
+        } else {
+          debugPrint(
+            '❌ Unknown notification type but no routing identifiers found: $data',
+          );
+        }
     }
   }
 
@@ -286,13 +320,112 @@ class NotificationHandler {
     }
   }
 
+  static int? _parseInt(dynamic value) {
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  /// Leaves any currently active room before opening the target one.
+  /// Returns true when navigation should replace the current top route.
+  static bool _prepareRoomTransition({
+    int? targetUserId,
+    int? targetGroupId,
+  }) {
+    final activeChatService = ActiveChatService();
+    final socketService = SocketService();
+
+    final activeUserId = activeChatService.activeUserId;
+    final activeGroupId = activeChatService.activeGroupId;
+
+    final shouldLeaveUserRoom =
+        activeUserId != null && activeUserId != targetUserId;
+    final shouldLeaveGroupRoom =
+        activeGroupId != null && activeGroupId != targetGroupId;
+
+    if (shouldLeaveUserRoom) {
+      debugPrint('🔄 Leaving active direct chat room: $activeUserId');
+      socketService.leaveChat(activeUserId);
+    }
+
+    if (shouldLeaveGroupRoom) {
+      debugPrint('🔄 Leaving active group chat room: $activeGroupId');
+      socketService.leaveGroupChat(activeGroupId);
+    }
+
+    if (shouldLeaveUserRoom || shouldLeaveGroupRoom) {
+      activeChatService.clearActiveChat();
+    }
+
+    return shouldLeaveUserRoom || shouldLeaveGroupRoom;
+  }
+
+  static void _pushRoute({
+    required WidgetBuilder builder,
+    required bool replaceCurrentRoute,
+  }) {
+    final navigatorState = navigatorKey.currentState;
+    if (navigatorState == null) {
+      debugPrint('❌ Navigator not ready while trying to push route');
+      return;
+    }
+
+    final route = MaterialPageRoute(builder: builder);
+    if (replaceCurrentRoute && navigatorState.canPop()) {
+      navigatorState.pushReplacement(route);
+      return;
+    }
+
+    navigatorState.push(route);
+  }
+
+  /// Navigate to group chat screen with the specified group id.
+  static Future<void> _navigateToGroupChat(int groupId, String groupName) async {
+    debugPrint('🚀 Navigating to group chat: $groupId ($groupName)');
+
+    if (navigatorKey.currentState == null) {
+      debugPrint('❌ Navigator unavailable, storing group notification pending');
+      _pendingNotificationData = {
+        'type': 'message',
+        'group_id': groupId.toString(),
+        'group_name': groupName,
+      };
+      return;
+    }
+
+    final replaceCurrentRoute = _prepareRoomTransition(targetGroupId: groupId);
+
+    Group targetGroup;
+    try {
+      final groupDetails = await GroupService.getGroupDetails(groupId);
+      final group = groupDetails['group'];
+      if (group is! Group) {
+        throw Exception('Invalid group payload');
+      }
+      targetGroup = group;
+    } catch (e) {
+      debugPrint('⚠️ Failed to fetch group details for $groupId: $e');
+      targetGroup = Group(
+        id: groupId,
+        name: groupName,
+        createdBy: 0,
+        memberCount: 0,
+        isActive: true,
+        createdAt: DateTime.now().toIso8601String(),
+        myRole: 'member',
+      );
+    }
+
+    _pushRoute(
+      builder: (context) => GroupChatScreen(group: targetGroup),
+      replaceCurrentRoute: replaceCurrentRoute,
+    );
+  }
+
   /// Navigate to chat screen with the specified user
   static void _navigateToChat(int userId, String userName) {
     debugPrint('🚀 Navigating to chat with user: $userId ($userName)');
 
-    // Check if we have a valid context
-    final context = navigatorKey.currentContext;
-    if (context == null) {
+    // Check if navigator is ready
+    if (navigatorKey.currentState == null) {
       debugPrint('❌ No context available, storing as pending notification');
       _pendingNotificationData = {
         'type': 'message',
@@ -301,6 +434,8 @@ class NotificationHandler {
       };
       return;
     }
+
+    final replaceCurrentRoute = _prepareRoomTransition(targetUserId: userId);
 
     // Create a LobbyUser object with minimal information
     final user = LobbyUser(
@@ -323,10 +458,9 @@ class NotificationHandler {
       isAdminUser: false,
     );
 
-    // Navigate directly to chat - don't try to manipulate the navigation stack
-    // The LobbyScreen should already be loaded at this point
-    navigatorKey.currentState?.push(
-      MaterialPageRoute(builder: (context) => ChatScreen(otherUser: user)),
+    _pushRoute(
+      builder: (context) => ChatScreen(otherUser: user),
+      replaceCurrentRoute: replaceCurrentRoute,
     );
   }
 }
