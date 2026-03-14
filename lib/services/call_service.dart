@@ -29,6 +29,9 @@ class CallService {
   CallService._internal();
 
   static const String _screenShareListenerKey = 'call_service_screen_share';
+  static const String _primaryDataChannelLabel = 'chat';
+  static const String _controlDataChannelLabel = 'control';
+  static const String _audioLevelDataChannelLabel = 'audio_level';
 
   final SocketService _socketService = SocketService();
 
@@ -314,6 +317,7 @@ class CallService {
 
       // Set up peer connection
       await _createPeerConnection();
+      await _ensurePrimaryDataChannel();
 
       // Add local stream tracks to peer connection
       for (var track in _localStream!.getTracks()) {
@@ -329,7 +333,11 @@ class CallService {
       debugPrint('📤 Sending WebRTC offer to room: $_callRoomId');
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {'type': 'offer', 'sdp': enhancedOfferSdp, 'callType': callType},
+        'signal': {
+          'type': 'offer',
+          'sdp': enhancedOfferSdp,
+          'callType': callType,
+        },
       });
 
       _callState = CallState.ringing;
@@ -470,7 +478,9 @@ class CallService {
 
     // Handle when a remote track is explicitly removed via renegotiation
     _peerConnection!.onRemoveTrack = (stream, track) {
-      debugPrint('🎥 Remote track removed: ${track.kind}, stream: ${stream.id}');
+      debugPrint(
+        '🎥 Remote track removed: ${track.kind}, stream: ${stream.id}',
+      );
       if (_remoteIsScreenSharing && track.kind == 'video') {
         _remoteIsScreenSharing = false;
         _screenShareStreamId = null;
@@ -491,7 +501,18 @@ class CallService {
     // Handle data channel from remote peer
     _peerConnection!.onDataChannel = (channel) {
       debugPrint('📨 Data channel received: ${channel.label}');
-      _setupDataChannelListeners(channel);
+      final label = channel.label;
+
+      if (label == _audioLevelDataChannelLabel) {
+        debugPrint('📨 Ignoring auxiliary data channel: $label');
+        return;
+      }
+
+      final shouldUseAsPrimary =
+          label == _primaryDataChannelLabel ||
+          (label != _controlDataChannelLabel && _dataChannel == null);
+
+      _setupDataChannelListeners(channel, setAsPrimary: shouldUseAsPrimary);
     };
 
     // Handle connection state
@@ -500,9 +521,38 @@ class CallService {
     };
   }
 
+  Future<void> _ensurePrimaryDataChannel() async {
+    if (_peerConnection == null) {
+      return;
+    }
+
+    if (_dataChannel != null &&
+        _dataChannel!.label == _primaryDataChannelLabel) {
+      return;
+    }
+
+    try {
+      final dataChannelConfig = RTCDataChannelInit()..ordered = true;
+      final channel = await _peerConnection!.createDataChannel(
+        _primaryDataChannelLabel,
+        dataChannelConfig,
+      );
+
+      debugPrint('📨 Created primary data channel: ${channel.label}');
+      _setupDataChannelListeners(channel, setAsPrimary: true);
+    } catch (e) {
+      debugPrint('⚠️ Failed to create primary data channel: $e');
+    }
+  }
+
   /// Set up listeners for a data channel
-  void _setupDataChannelListeners(RTCDataChannel channel) {
-    _dataChannel = channel;
+  void _setupDataChannelListeners(
+    RTCDataChannel channel, {
+    bool setAsPrimary = true,
+  }) {
+    if (setAsPrimary) {
+      _dataChannel = channel;
+    }
 
     channel.onMessage = (message) {
       debugPrint('📨 Data channel message received: ${message.text}');
@@ -524,7 +574,9 @@ class CallService {
     };
 
     channel.onDataChannelState = (state) {
-      debugPrint('📨 Data channel state: $state');
+      debugPrint(
+        '📨 Data channel state (${channel.label}${setAsPrimary ? ', primary' : ''}): $state',
+      );
     };
   }
 
@@ -536,6 +588,35 @@ class CallService {
       debugPrint('📨 Data channel message sent: $message');
     } else {
       debugPrint('⚠️ Data channel not available or not open');
+      _sendDataChannelFallbackSignal(message);
+    }
+  }
+
+  void _sendDataChannelFallbackSignal(String message) {
+    if (_callRoomId == null || _callRoomId!.isEmpty) {
+      return;
+    }
+
+    try {
+      final decoded = json.decode(message);
+      if (decoded is! Map) {
+        return;
+      }
+
+      final payload = Map<String, dynamic>.from(decoded as Map);
+      final type = payload['type']?.toString();
+      if (type != 'mic-state' && type != 'cam-state') {
+        return;
+      }
+
+      _socketService.emit('signal', {'room': _callRoomId, 'signal': payload});
+      debugPrint(
+        '📡 Sent socket fallback for data channel message type: $type',
+      );
+    } catch (e) {
+      debugPrint(
+        '⚠️ Failed to send socket fallback for data channel message: $e',
+      );
     }
   }
 
@@ -718,7 +799,11 @@ class CallService {
 
       _socketService.emit('signal', {
         'room': _callRoomId,
-        'signal': {'type': 'answer', 'sdp': enhancedAnswerSdp, 'renegotiate': true},
+        'signal': {
+          'type': 'answer',
+          'sdp': enhancedAnswerSdp,
+          'renegotiate': true,
+        },
       });
 
       debugPrint('✅ Renegotiation answer sent successfully');
@@ -1271,7 +1356,9 @@ class CallService {
           'echoCancellation': enabled,
           'autoGainControl': enabled,
         });
-        debugPrint('🎙️ Local noise filter ${enabled ? 'ON' : 'OFF'} for track ${track.id}');
+        debugPrint(
+          '🎙️ Local noise filter ${enabled ? 'ON' : 'OFF'} for track ${track.id}',
+        );
       } catch (e) {
         debugPrint('⚠️ applyConstraints failed for track ${track.id}: $e');
       }
@@ -1284,7 +1371,9 @@ class CallService {
         'room': _callRoomId,
         'signal': {'type': 'noise-filter-toggle', 'enabled': enabled},
       });
-      debugPrint('📡 Sent noise-filter-toggle signal to web peer (enabled=$enabled)');
+      debugPrint(
+        '📡 Sent noise-filter-toggle signal to web peer (enabled=$enabled)',
+      );
     }
 
     return _noiseFilterEnabled;
@@ -1444,8 +1533,7 @@ class CallService {
             maxBitrate: 3000000,
             minBitrate: 800000,
             maxFramerate: 30,
-            degradationPreference:
-                RTCDegradationPreference.MAINTAIN_RESOLUTION,
+            degradationPreference: RTCDegradationPreference.MAINTAIN_RESOLUTION,
           );
           debugPrint('🖥️ Replaced existing video track with screen share');
 
@@ -1467,8 +1555,7 @@ class CallService {
             maxBitrate: 3000000,
             minBitrate: 800000,
             maxFramerate: 30,
-            degradationPreference:
-                RTCDegradationPreference.MAINTAIN_RESOLUTION,
+            degradationPreference: RTCDegradationPreference.MAINTAIN_RESOLUTION,
           );
           debugPrint('🖥️ Fallback: added screen track as new sender');
 

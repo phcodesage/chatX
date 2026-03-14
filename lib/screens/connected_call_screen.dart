@@ -62,6 +62,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   bool _isSpeakerOn = true;
   bool _isScreenSharing = false;
   bool _remoteIsScreenSharing = false;
+  bool _remoteCameraEnabled = true;
   bool _isNoiseFilterEnabled = false;
 
   // Call duration
@@ -154,7 +155,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         '📞 ConnectedCallScreen: Starting async initialization for ${widget.callType} call',
       );
 
-      // ALWAYS initialize renderers, even for audio calls, so that we can 
+      // ALWAYS initialize renderers, even for audio calls, so that we can
       // display a screen share if the remote peer starts one mid-call.
       try {
         await _initializeRenderers();
@@ -362,8 +363,30 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
       );
       if (mounted) {
         try {
+          final remoteVideoTracks = stream.getVideoTracks();
           _remoteRenderer.srcObject = stream;
-          setState(() {});
+
+          // Keep UI in sync when remote video is toggled off/on.
+          for (final track in remoteVideoTracks) {
+            track.onMute = () {
+              if (!mounted || _remoteIsScreenSharing) return;
+              setState(() => _remoteCameraEnabled = false);
+              debugPrint('🎥 Remote video muted (track event)');
+            };
+            track.onUnMute = () {
+              if (!mounted) return;
+              setState(() => _remoteCameraEnabled = true);
+              debugPrint('🎥 Remote video unmuted (track event)');
+            };
+          }
+
+          setState(() {
+            if (widget.callType == 'video' && !_remoteIsScreenSharing) {
+              _remoteCameraEnabled = remoteVideoTracks.any(
+                (track) => track.enabled,
+              );
+            }
+          });
           debugPrint('✅ Remote stream set successfully');
         } catch (e) {
           debugPrint('❌ Error setting remote stream: $e');
@@ -433,6 +456,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
       }
     };
 
+    // Parse remote data-channel payloads (from web/mobile peer) to keep UI state in sync.
+    widget.callService.onDataChannelMessage = _handleIncomingDataChannelMessage;
+
     // Listen for call ended from socket using keyed listener (remote user ended call)
     socketService.addListener('callEnded', _listenerKey, (data) {
       debugPrint('📴 ConnectedCallScreen received callEnded event: $data');
@@ -460,7 +486,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
       // Directly handle call termination signals from remote user
       if (signalType == 'call-ended' || signalType == 'call-declined') {
-        debugPrint('📴 ConnectedCallScreen: Termination signal detected: $signalType');
+        debugPrint(
+          '📴 ConnectedCallScreen: Termination signal detected: $signalType',
+        );
         if (!_isEnding) {
           widget.callService.handleCallEnded();
           _endCall();
@@ -470,6 +498,85 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
       widget.callService.handleSignal(data);
     };
+  }
+
+  void _handleIncomingDataChannelMessage(String rawMessage) {
+    Map<String, dynamic>? payload;
+
+    try {
+      final decoded = jsonDecode(rawMessage);
+      if (decoded is Map) {
+        payload = Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {
+      // Fallback for legacy plain-text markers.
+      if (rawMessage.contains('screen-share-started')) {
+        if (mounted) {
+          setState(() {
+            if (!_isScreenSharing) {
+              _remoteIsScreenSharing = true;
+              _remoteCameraEnabled = true;
+            }
+          });
+        }
+      } else if (rawMessage.contains('screen-share-stopped')) {
+        if (mounted) {
+          setState(() {
+            _remoteIsScreenSharing = false;
+          });
+        }
+      }
+      return;
+    }
+
+    if (payload == null) return;
+
+    final type = payload['type']?.toString();
+    switch (type) {
+      case 'cam-state':
+        final enabled = _coerceBool(payload['enabled']);
+        if (enabled != null && mounted && !_remoteIsScreenSharing) {
+          setState(() => _remoteCameraEnabled = enabled);
+        }
+        break;
+      case 'screen-share':
+        final phase = payload['phase']?.toString().toLowerCase();
+        if (phase == 'planning' || phase == 'started' || phase == 'start') {
+          if (mounted) {
+            setState(() {
+              if (!_isScreenSharing) {
+                _remoteIsScreenSharing = true;
+                _remoteCameraEnabled = true;
+              }
+            });
+          }
+        } else if (phase == 'ended' || phase == 'stopped' || phase == 'stop') {
+          if (mounted) {
+            setState(() {
+              _remoteIsScreenSharing = false;
+            });
+          }
+        }
+        break;
+      default:
+        // Other payload types (mic/speaker/noise-filter) are informational for now.
+        break;
+    }
+  }
+
+  bool? _coerceBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.toLowerCase();
+      if (normalized == 'true' || normalized == '1' || normalized == 'on') {
+        return true;
+      }
+      if (normalized == 'false' || normalized == '0' || normalized == 'off') {
+        return false;
+      }
+    }
+    return null;
   }
 
   Future<void> _loadDevices() async {
@@ -538,9 +645,10 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
       _isMicMuted = newMicState;
     });
     // Send data channel message to remote peer
+    // newMicState = _isMicMuted (true = muted), so enabled is the inverse
     _sendDataChannelMessage({
       'type': 'mic-state',
-      'enabled': newMicState,
+      'enabled': !newMicState,
       if (_localUserName.isNotEmpty) 'from': _localUserName,
     });
   }
@@ -557,9 +665,10 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
       _isVideoHidden = newVideoState;
     });
     // Send data channel message to remote peer
+    // newVideoState = _isVideoHidden (true = hidden), so enabled is the inverse
     _sendDataChannelMessage({
       'type': 'cam-state',
-      'enabled': newVideoState,
+      'enabled': !newVideoState,
       if (_localUserName.isNotEmpty) 'from': _localUserName,
     });
   }
@@ -845,6 +954,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     final socketService = SocketService();
     socketService.removeListener('callEnded', _listenerKey);
     socketService.removeListener('callDeclined', _listenerKey);
+    widget.callService.onDataChannelMessage = null;
 
     _localRenderer.dispose();
     _remoteRenderer.dispose();
@@ -908,9 +1018,14 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   Widget _buildRemoteVideo() {
     Widget content;
 
-    // For audio calls, show video only if remote is screen sharing
-    if (widget.callType == 'audio' && !_remoteIsScreenSharing) {
-      // Audio call without screen share - show avatar
+    // Show avatar view when there is no remote video feed to display.
+    final shouldShowAvatar =
+        (widget.callType == 'audio' && !_remoteIsScreenSharing) ||
+        (widget.callType == 'video' &&
+            !_remoteIsScreenSharing &&
+            !_remoteCameraEnabled);
+
+    if (shouldShowAvatar) {
       content = Container(
         color: const Color(0xFF1A1A2E),
         child: Center(
@@ -953,7 +1068,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
               ),
               const SizedBox(height: 8),
               Text(
-                _formatDuration(_callDuration),
+                widget.callType == 'video'
+                    ? 'Camera is off'
+                    : _formatDuration(_callDuration),
                 style: TextStyle(color: Colors.grey[400], fontSize: 16),
               ),
             ],
