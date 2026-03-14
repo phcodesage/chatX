@@ -9,6 +9,7 @@ enum CallType { video, audio }
 class CallSetupModal extends StatefulWidget {
   final String recipientName;
   final CallType callType;
+  final ScrollController? scrollController;
   final Function(
     MediaStream localStream,
     String? selectedMic,
@@ -22,6 +23,7 @@ class CallSetupModal extends StatefulWidget {
     super.key,
     required this.recipientName,
     required this.callType,
+    this.scrollController,
     required this.onStartCall,
   });
 
@@ -294,7 +296,11 @@ class _CallSetupModalState extends State<CallSetupModal> {
   }
 
   Widget _buildSetupView() {
+    final isVideoCall = widget.callType == CallType.video;
+    final callTypeLabel = isVideoCall ? 'Video Call' : 'Audio Call';
+
     return SingleChildScrollView(
+      controller: widget.scrollController,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         child: Column(
@@ -315,14 +321,30 @@ class _CallSetupModalState extends State<CallSetupModal> {
             const SizedBox(height: 24),
 
             // Title
-            const Center(
-              child: Text(
-                'Call Setup',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
+            Center(
+              child: Column(
+                children: [
+                  Text(
+                    '$callTypeLabel Setup',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Calling ${widget.recipientName}',
+                    style: TextStyle(color: Colors.grey[300], fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Drag down to cancel',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 24),

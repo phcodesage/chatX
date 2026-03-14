@@ -1302,6 +1302,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                         ListView.builder(
                           controller: _scrollController,
                           padding: const EdgeInsets.all(16),
+                          cacheExtent: 500,
+                          addAutomaticKeepAlives: false,
+                          addRepaintBoundaries: true,
                           itemCount: _messages.length,
                           itemBuilder: (context, index) {
                             return _buildMessageBubble(_messages[index]);
@@ -1959,62 +1962,58 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   !isAudio))
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: IntrinsicWidth(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Original message text
-                    Text(
-                      isMedia
-                          ? (message.fileName ?? message.content)
-                          : message.content,
-                      style: const TextStyle(color: Colors.white, fontSize: 15),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Original message text
+                  Text(
+                    isMedia ? (message.fileName ?? message.content) : message.content,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                  ),
+                  // Translation (if available)
+                  if (_messageTranslations.containsKey(message.id)) ...[
+                    const SizedBox(height: 8),
+                    // Separator line
+                    Container(
+                      height: 1,
+                      color: Colors.white.withOpacity(0.3),
+                      margin: const EdgeInsets.symmetric(vertical: 4),
                     ),
-                    // Translation (if available)
-                    if (_messageTranslations.containsKey(message.id)) ...[
-                      const SizedBox(height: 8),
-                      // Separator line
-                      Container(
-                        height: 1,
-                        color: Colors.white.withOpacity(0.3),
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                      ),
-                      // Translated text with language indicator
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Globe icon
-                          Icon(
-                            Icons.language,
-                            size: 14,
-                            color: Colors.white.withOpacity(0.7),
-                          ),
-                          const SizedBox(width: 4),
-                          // Language indicator (placeholder for now)
-                          Text(
-                            'auto → en',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      // Translated text in italic
-                      Text(
-                        _messageTranslations[message.id]!,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.9),
-                          fontSize: 14,
-                          fontStyle: FontStyle.italic,
+                    // Translated text with language indicator
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Globe icon
+                        Icon(
+                          Icons.language,
+                          size: 14,
+                          color: Colors.white.withOpacity(0.7),
                         ),
+                        const SizedBox(width: 4),
+                        // Language indicator (placeholder for now)
+                        Text(
+                          'auto → en',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    // Translated text in italic
+                    Text(
+                      _messageTranslations[message.id]!,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 14,
+                        fontStyle: FontStyle.italic,
                       ),
-                    ],
+                    ),
                   ],
-                ),
+                ],
               ),
             )
           else if (isMedia || isAudio)

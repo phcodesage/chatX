@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'dart:async';
 import '../config/api_config.dart';
 import 'auth_error_handler.dart';
@@ -13,7 +13,7 @@ class SocketService {
   factory SocketService() => _instance;
   SocketService._internal();
 
-  IO.Socket? _socket;
+  io.Socket? _socket;
   String? _authToken;
   int? _currentUserId;
 
@@ -599,6 +599,26 @@ class SocketService {
     }
   }
 
+  int? _extractMessageId(Map<String, dynamic> messageData) {
+    final dynamic idValue = messageData['id'] ?? messageData['message_id'];
+    if (idValue is int) return idValue;
+    if (idValue is String) return int.tryParse(idValue);
+    return null;
+  }
+
+  void _autoAcknowledgeDelivery(
+    Map<String, dynamic> messageData, {
+    required String source,
+  }) {
+    final messageId = _extractMessageId(messageData);
+    if (messageId == null) return;
+
+    emit('message_delivered', {'message_id': messageId});
+    debugPrint(
+      '📧 Auto-sent delivery confirmation for $source message $messageId',
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Legacy single-callback setters (backward compat – register under '_default' key)
   // Setting to null removes the '_default' listener.
@@ -804,7 +824,7 @@ class SocketService {
 
     try {
       // Use simple configuration that should work with most servers
-      _socket = IO.io(serverUrl, <String, dynamic>{
+      _socket = io.io(serverUrl, <String, dynamic>{
         'transports': ['websocket', 'polling'],
         'autoConnect': false,
         'query': {'token': _authToken},
@@ -918,16 +938,9 @@ class SocketService {
     // Message events
     _socket!.on('new_message', (data) {
       debugPrint('💬 New message: $data');
-      _broadcast(_messageReceivedListeners, data as Map<String, dynamic>);
-
-      // Auto-acknowledge delivery when we receive a message
       final messageData = data as Map<String, dynamic>;
-      if (messageData['id'] != null) {
-        emit('message_delivered', {'message_id': messageData['id']});
-        debugPrint(
-          '📧 Auto-sent delivery confirmation for message ${messageData['id']}',
-        );
-      }
+      _broadcast(_messageReceivedListeners, messageData);
+      _autoAcknowledgeDelivery(messageData, source: 'chat');
     });
 
     _socket!.on('message_sent', (data) {
@@ -1038,7 +1051,9 @@ class SocketService {
     // File message event (receiving files from web)
     _socket!.on('file_message', (data) {
       debugPrint('📎 File received: $data');
-      _broadcast(_fileReceivedListeners, data as Map<String, dynamic>);
+      final messageData = data as Map<String, dynamic>;
+      _broadcast(_fileReceivedListeners, messageData);
+      _autoAcknowledgeDelivery(messageData, source: 'file');
     });
 
     // Voice message event (receiving voice messages from web)
@@ -1046,7 +1061,9 @@ class SocketService {
       debugPrint(
         '🎤 Voice message received (${_voiceMessageReceivedListeners.length} listeners): $data',
       );
-      _broadcast(_voiceMessageReceivedListeners, data as Map<String, dynamic>);
+      final messageData = data as Map<String, dynamic>;
+      _broadcast(_voiceMessageReceivedListeners, messageData);
+      _autoAcknowledgeDelivery(messageData, source: 'voice');
     });
 
     // Message deleted event
@@ -1161,7 +1178,7 @@ class SocketService {
       _broadcast(_groupNewMessageListeners, data as Map<String, dynamic>);
 
       // Auto-acknowledge delivery
-      final messageData = data as Map<String, dynamic>;
+      final messageData = data;
       if (messageData['message_id'] != null &&
           messageData['group_id'] != null) {
         emit('group_message_delivered', {
@@ -1386,7 +1403,7 @@ class SocketService {
       'recipient_id': recipientId,
       'content': content,
       'message_type': messageType,
-      if (replyToId != null) 'reply_to_id': replyToId,
+      'reply_to_id': ?replyToId,
     });
   }
 
@@ -1503,7 +1520,7 @@ class SocketService {
       'group_id': groupId,
       'content': content,
       'message_type': messageType,
-      if (replyToId != null) 'reply_to_id': replyToId,
+      'reply_to_id': ?replyToId,
     });
   }
 

@@ -1,10 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -17,7 +16,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:share_plus/share_plus.dart';
 import '../models/lobby_user.dart';
 import '../models/message.dart';
 import '../services/lobby_service.dart';
@@ -56,7 +54,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   List<Message> _messages = [];
   bool _isLoading = true;
-  bool _isSyncing = false;
   bool _isLoadingMessages = false; // Guard against concurrent message loads
   bool _isTyping = false;
   bool _isKeyboardVisible = false;
@@ -71,14 +68,6 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime? _lastTypingUpdate;
   Color _headerColor = const Color(0xFF4C1D95); // Default purple color
   bool _showResetButton = false;
-
-  // Voice recording state
-  bool _isRecording = false;
-  bool _isPaused = false;
-  String? _recordingPath;
-  Duration _recordingDuration = Duration.zero;
-  Timer? _recordingTimer;
-  List<double> _waveformData = [];
 
   // Timestamp visibility toggle (hidden by default like web)
   bool _showTimestamps = false;
@@ -116,6 +105,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Track optimistic messages awaiting server confirmation (dedup keys)
   final Set<String> _pendingMessageKeys = {};
+
+  // Message IDs loaded from local cache/server history.
+  // For these historical records, UI should always display status as "sent".
+  final Set<int> _databaseLoadedMessageIds = {};
 
   // Backend connectivity state
   bool _isBackendAvailable = true;
@@ -213,9 +206,42 @@ class _ChatScreenState extends State<ChatScreen> {
       _socketService.markMessagesRead(widget.otherUser.id);
       _socketService.markMessagesViewed(widget.otherUser.id);
       debugPrint(
-        '📧 Sent read confirmations for ${unreadMessageIds.length} messages to update web clients',
+        'ðŸ“§ Sent read confirmations for ${unreadMessageIds.length} messages to update web clients',
       );
     }
+  }
+
+  /// Sync delivery and read statuses for messages loaded from history.
+  Future<void> _syncLoadedMessageStatuses(List<Message> loadedMessages) async {
+    if (loadedMessages.isEmpty) return;
+
+    final incomingMessages = loadedMessages.where((message) {
+      return message.senderId == widget.otherUser.id && !message.isDeleted;
+    }).toList();
+
+    if (incomingMessages.isEmpty) return;
+
+    final incomingMessageIds = incomingMessages
+        .map((message) => message.id)
+        .toSet()
+        .toList();
+
+    for (final messageId in incomingMessageIds) {
+      _socketService.emit('message_delivered', {'message_id': messageId});
+    }
+
+    _socketService.markMessagesRead(widget.otherUser.id);
+    _socketService.markMessagesViewed(widget.otherUser.id);
+
+    final latestIncomingMessageId = incomingMessageIds.reduce(math.max);
+    await MessageService.markAsRead(
+      senderId: widget.otherUser.id,
+      lastMessageId: latestIncomingMessageId,
+    );
+
+    debugPrint(
+      'ðŸ“§ Synced statuses for ${incomingMessageIds.length} loaded messages (including files)',
+    );
   }
 
   void _onFocusChange() {
@@ -261,7 +287,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final defaultColor = const Color(0xFF4C1D95);
         setState(() {
           _headerColor = color;
-          _showResetButton = color.value != defaultColor.value;
+          _showResetButton = color.toARGB32() != defaultColor.toARGB32();
         });
       } catch (e) {
         debugPrint('Error loading saved chat color: $e');
@@ -299,19 +325,6 @@ class _ChatScreenState extends State<ChatScreen> {
     // Save to SharedPreferences
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('showTimestamps', newValue);
-
-    // Show feedback snackbar
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(newValue ? 'Timestamps shown' : 'Timestamps hidden'),
-          duration: const Duration(seconds: 1),
-          backgroundColor: newValue
-              ? const Color(0xFF4F46E5)
-              : Colors.grey[700],
-        ),
-      );
-    }
   }
 
   /// Toggle auto-translate and save preference
@@ -400,6 +413,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) {
       setState(() {
         _messages = translatedMessages;
+        _databaseLoadedMessageIds
+          ..clear()
+          ..addAll(
+            translatedMessages
+                .where((message) => message.id > 0)
+                .map((message) => message.id),
+          );
       });
     }
   }
@@ -457,7 +477,7 @@ class _ChatScreenState extends State<ChatScreen> {
             widget.otherUser.id,
             message,
           );
-          debugPrint('💾 Cached incoming message ${message.id}');
+          debugPrint('ðŸ’¾ Cached incoming message ${message.id}');
         }
 
         // Play message sound for incoming messages
@@ -474,7 +494,9 @@ class _ChatScreenState extends State<ChatScreen> {
         if (message.senderId == widget.otherUser.id) {
           _socketService.markMessagesRead(widget.otherUser.id);
           _socketService.markMessagesViewed(widget.otherUser.id);
-          debugPrint('📧 Marked message ${message.id} as seen (chat is open)');
+          debugPrint(
+            'ðŸ“§ Marked message ${message.id} as seen (chat is open)',
+          );
 
           // Only auto-scroll if user is at bottom, otherwise just show unread badge
           if (_isAtBottom) {
@@ -494,7 +516,7 @@ class _ChatScreenState extends State<ChatScreen> {
             '${message.senderId}:${message.recipientId}:${message.content}';
 
         if (_pendingMessageKeys.contains(dedupKey)) {
-          // This is the server echo of our optimistic message — replace it with real data
+          // This is the server echo of our optimistic message â€” replace it with real data
           _pendingMessageKeys.remove(dedupKey);
           setState(() {
             final index = _messages.indexWhere(
@@ -508,7 +530,7 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           });
           debugPrint(
-            '📤 Replaced optimistic message with server data (id: ${message.id})',
+            'ðŸ“¤ Replaced optimistic message with server data (id: ${message.id})',
           );
         } else {
           // Check if message already exists (by ID)
@@ -521,7 +543,7 @@ class _ChatScreenState extends State<ChatScreen> {
             if (_isAtBottom) {
               _scrollToBottom();
             }
-            debugPrint('📤 Cross-device: added own sent message to chat');
+            debugPrint('ðŸ“¤ Cross-device: added own sent message to chat');
           }
         }
       }
@@ -542,11 +564,12 @@ class _ChatScreenState extends State<ChatScreen> {
             // Auto-hide after 6 s in case typing_stop is never received
             _typingHideTimer?.cancel();
             _typingHideTimer = Timer(const Duration(seconds: 6), () {
-              if (mounted)
+              if (mounted) {
                 setState(() {
                   _otherUserTyping = false;
                   _typingPreview = '';
                 });
+              }
             });
           } else {
             _typingHideTimer?.cancel();
@@ -572,11 +595,12 @@ class _ChatScreenState extends State<ChatScreen> {
         _typingHideTimer?.cancel();
         if (preview.isNotEmpty) {
           _typingHideTimer = Timer(const Duration(seconds: 6), () {
-            if (mounted)
+            if (mounted) {
               setState(() {
                 _otherUserTyping = false;
                 _typingPreview = '';
               });
+            }
           });
         }
       }
@@ -598,10 +622,10 @@ class _ChatScreenState extends State<ChatScreen> {
       } else if (senderId == _currentUserId &&
           recipientId == widget.otherUser.id) {
         if (_localDoorbellPending) {
-          // This is the echo from OUR ring — ignore, we already showed it optimistically
+          // This is the echo from OUR ring â€” ignore, we already showed it optimistically
           _localDoorbellPending = false;
         } else {
-          // Cross-device: our other device rang the doorbell — show outgoing system message
+          // Cross-device: our other device rang the doorbell â€” show outgoing system message
           _handleOutgoingDoorbellSync(data);
         }
       }
@@ -630,7 +654,7 @@ class _ChatScreenState extends State<ChatScreen> {
       } else if (senderId == _currentUserId &&
           recipientId == widget.otherUser.id) {
         if (_localColorResetPending) {
-          // This is the echo from OUR reset — ignore, we already showed it optimistically
+          // This is the echo from OUR reset â€” ignore, we already showed it optimistically
           _localColorResetPending = false;
         } else {
           // Cross-device: our other device reset the color
@@ -738,7 +762,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('fileReceived', key, (
       Map<String, dynamic> data,
     ) {
-      debugPrint('📎 File message received in chat: $data');
+      debugPrint('ðŸ“Ž File message received in chat: $data');
       final senderId = data['sender_id'] as int?;
       final recipientId = data['recipient_id'] as int?;
 
@@ -754,7 +778,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // Check for duplicates (cross-device sync may send same message twice)
         final messageId = data['message_id'];
         if (messageId != null && _messages.any((m) => m.id == messageId)) {
-          debugPrint('📎 Skipping duplicate file message: $messageId');
+          debugPrint('ðŸ“Ž Skipping duplicate file message: $messageId');
           return;
         }
 
@@ -810,8 +834,14 @@ class _ChatScreenState extends State<ChatScreen> {
           } catch (e) {
             debugPrint('Error playing message sound: $e');
           }
+
+          _socketService.markMessagesRead(widget.otherUser.id);
+          _socketService.markMessagesViewed(widget.otherUser.id);
+          debugPrint(
+            'ðŸ“§ Marked file message ${message.id} as delivered/seen (chat is open)',
+          );
         } else {
-          debugPrint('📎 Cross-device: added own sent file to chat');
+          debugPrint('ðŸ“Ž Cross-device: added own sent file to chat');
         }
 
         // Only auto-scroll if user is at bottom, otherwise just show unread badge
@@ -825,7 +855,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('voiceMessageReceived', key, (
       Map<String, dynamic> data,
     ) {
-      debugPrint('🎤 Voice message received in chat: $data');
+      debugPrint('ðŸŽ¤ Voice message received in chat: $data');
       final senderId = data['sender_id'] as int?;
       final recipientId = data['recipient_id'] as int?;
 
@@ -834,7 +864,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final isFromSelfToPartner =
           senderId == _currentUserId && recipientId == widget.otherUser.id;
       debugPrint(
-        '🎤 Voice filter: senderId=$senderId, recipientId=$recipientId, _currentUserId=$_currentUserId, otherUserId=${widget.otherUser.id}, isFromPartner=$isFromPartner, isFromSelfToPartner=$isFromSelfToPartner',
+        'ðŸŽ¤ Voice filter: senderId=$senderId, recipientId=$recipientId, _currentUserId=$_currentUserId, otherUserId=${widget.otherUser.id}, isFromPartner=$isFromPartner, isFromSelfToPartner=$isFromSelfToPartner',
       );
 
       if (isFromPartner || isFromSelfToPartner) {
@@ -842,14 +872,14 @@ class _ChatScreenState extends State<ChatScreen> {
         final timestampMs = data['timestamp_ms'] ?? now.millisecondsSinceEpoch;
         final audioUrl = data['audio_url'] as String?;
         if (audioUrl == null || audioUrl.isEmpty) {
-          debugPrint('🎤 Voice message has no audio_url, ignoring');
+          debugPrint('ðŸŽ¤ Voice message has no audio_url, ignoring');
           return;
         }
 
         // Check for duplicates (cross-device sync may send same message twice)
         final messageId = data['message_id'];
         if (messageId != null && _messages.any((m) => m.id == messageId)) {
-          debugPrint('🎤 Skipping duplicate voice message: $messageId');
+          debugPrint('ðŸŽ¤ Skipping duplicate voice message: $messageId');
           return;
         }
 
@@ -886,8 +916,14 @@ class _ChatScreenState extends State<ChatScreen> {
           } catch (e) {
             debugPrint('Error playing message sound: $e');
           }
+
+          _socketService.markMessagesRead(widget.otherUser.id);
+          _socketService.markMessagesViewed(widget.otherUser.id);
+          debugPrint(
+            'ðŸ“§ Marked voice message ${message.id} as delivered/seen (chat is open)',
+          );
         } else {
-          debugPrint('🎤 Cross-device: added own sent voice message to chat');
+          debugPrint('ðŸŽ¤ Cross-device: added own sent voice message to chat');
         }
 
         // Only auto-scroll if user is at bottom, otherwise just show unread badge
@@ -914,9 +950,9 @@ class _ChatScreenState extends State<ChatScreen> {
       Map<String, dynamic> data,
     ) {
       debugPrint(
-        '📲 Fallback: Received crossRoomCallOffer in chat, converting to incomingCall format',
+        'ðŸ“² Fallback: Received crossRoomCallOffer in chat, converting to incomingCall format',
       );
-      debugPrint('📲 Original crossRoomCallOffer data: $data');
+      debugPrint('ðŸ“² Original crossRoomCallOffer data: $data');
 
       // Convert crossRoomCallOffer format to incomingCall format
       // Note: crossRoomCallOffer uses 'caller_id' and 'caller_username', not 'callerId' and 'callerName'
@@ -931,7 +967,7 @@ class _ChatScreenState extends State<ChatScreen> {
         },
       };
 
-      debugPrint('📲 Converted to incomingCall format: $convertedData');
+      debugPrint('ðŸ“² Converted to incomingCall format: $convertedData');
       _handleIncomingCallInChat(convertedData);
     });
 
@@ -939,7 +975,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('reactionUpdated', key, (
       Map<String, dynamic> data,
     ) {
-      debugPrint('👍 Reaction updated received: $data');
+      debugPrint('ðŸ‘ Reaction updated received: $data');
       final messageId = data['message_id'] as int?;
       final reactorId = data['user_id']?.toString() ?? '';
       final reaction = data['reaction'] as String?;
@@ -960,7 +996,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('reactionCleared', key, (
       Map<String, dynamic> data,
     ) {
-      debugPrint('❌ Reaction cleared received: $data');
+      debugPrint('âŒ Reaction cleared received: $data');
       final messageId = data['message_id'] as int?;
       final reactorId = data['user_id']?.toString() ?? '';
       final reaction = data['reaction'] as String?;
@@ -996,7 +1032,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('presenceUpdate', key, (
       Map<String, dynamic> data,
     ) {
-      debugPrint('👤 Presence update in chat: $data');
+      debugPrint('ðŸ‘¤ Presence update in chat: $data');
       final userId = data['user_id'] as int?;
       final status = data['status'] as String?;
       final timestamp = data['timestamp'] as String?;
@@ -1027,15 +1063,16 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    // ── Call summary system messages ──────────────────────────────────────
+    // â”€â”€ Call summary system messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Show an in-chat pill when a call ends, is missed, or is declined.
     // Only insert if the event involves the person we are currently chatting with.
     _socketService.addListener('call_ended', key, (Map<String, dynamic> data) {
       final callerId = data['caller_id'] as int?;
       final calleeId = data['callee_id'] as int?;
       if (callerId == null || calleeId == null) return;
-      if (callerId != widget.otherUser.id && calleeId != widget.otherUser.id)
+      if (callerId != widget.otherUser.id && calleeId != widget.otherUser.id) {
         return;
+      }
       // Format duration if available (duration is stored in seconds by the server)
       final rawDuration = data['duration'];
       String durationStr = '';
@@ -1045,10 +1082,10 @@ class _ChatScreenState extends State<ChatScreen> {
             : int.tryParse(rawDuration.toString()) ?? 0);
         final m = (secs ~/ 60).toString().padLeft(2, '0');
         final s = (secs % 60).toString().padLeft(2, '0');
-        durationStr = ' · $m:$s';
+        durationStr = ' Â· $m:$s';
       }
       final callType = data['call_type'] as String? ?? 'call';
-      final icon = callType == 'video' ? '📹' : '📞';
+      final icon = callType == 'video' ? 'ðŸ“¹' : 'ðŸ“ž';
       _insertCallSummaryMessage('$icon Call ended$durationStr');
     });
 
@@ -1058,18 +1095,20 @@ class _ChatScreenState extends State<ChatScreen> {
       final callerId = data['caller_id'] as int?;
       final calleeId = data['callee_id'] as int?;
       if (callerId == null || calleeId == null) return;
-      if (callerId != widget.otherUser.id && calleeId != widget.otherUser.id)
+      if (callerId != widget.otherUser.id && calleeId != widget.otherUser.id) {
         return;
-      _insertCallSummaryMessage('📞 Call declined');
+      }
+      _insertCallSummaryMessage('ðŸ“ž Call declined');
     });
 
     _socketService.addListener('call_missed', key, (Map<String, dynamic> data) {
       final callerId = data['caller_id'] as int?;
       final calleeId = data['callee_id'] as int?;
       if (callerId == null || calleeId == null) return;
-      if (callerId != widget.otherUser.id && calleeId != widget.otherUser.id)
+      if (callerId != widget.otherUser.id && calleeId != widget.otherUser.id) {
         return;
-      _insertCallSummaryMessage('📞 Missed call');
+      }
+      _insertCallSummaryMessage('ðŸ“ž Missed call');
     });
 
     // Set initial state from current socket status
@@ -1099,6 +1138,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Handle cross-room call offer from web client while in chat
+  // ignore: unused_element
   Future<void> _handleCrossRoomCallOfferInChat(
     Map<String, dynamic> data,
   ) async {
@@ -1106,13 +1146,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (PresenceService().isHandlingIncomingCall) {
       debugPrint(
-        '⚠️ Already handling an incoming call, ignoring cross-room duplicate',
+        'âš ï¸ Already handling an incoming call, ignoring cross-room duplicate',
       );
       return;
     }
     PresenceService().isHandlingIncomingCall = true;
 
-    debugPrint('📲 Cross-room call offer received in chat: $data');
+    debugPrint('ðŸ“² Cross-room call offer received in chat: $data');
 
     final callerId = data['caller_id'] as int?;
     final callerUsername =
@@ -1121,7 +1161,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final room = data['room'] as String?;
 
     if (callerId == null || room == null) {
-      debugPrint('⚠️ Invalid cross-room call offer data');
+      debugPrint('âš ï¸ Invalid cross-room call offer data');
       PresenceService().isHandlingIncomingCall = false;
       return;
     }
@@ -1130,10 +1170,15 @@ class _ChatScreenState extends State<ChatScreen> {
     final callService = CallService();
     await callService.initialize();
 
+    if (!mounted) {
+      PresenceService().isHandlingIncomingCall = false;
+      return;
+    }
+
     // Set up signal handler IMMEDIATELY - before handleIncomingCall
     // This ensures we capture any signals that arrive while setting up
     _socketService.onSignal = (signalData) {
-      debugPrint('📡 Signal received for cross-room call: $signalData');
+      debugPrint('ðŸ“¡ Signal received for cross-room call: $signalData');
       callService.handleSignal(signalData);
     };
 
@@ -1156,7 +1201,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('callEnded', crossRoomListenerKey, (
       Map<String, dynamic> endData,
     ) {
-      debugPrint('📴 Call ended by remote user (chat cross-room)');
+      debugPrint('ðŸ“´ Call ended by remote user (chat cross-room)');
       _socketService.stopSignalBuffering();
       callService.handleCallEnded();
     });
@@ -1164,7 +1209,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('callDeclined', crossRoomListenerKey, (
       Map<String, dynamic> declineData,
     ) {
-      debugPrint('❌ Call declined (chat cross-room)');
+      debugPrint('âŒ Call declined (chat cross-room)');
       _socketService.stopSignalBuffering();
       callService.handleCallDeclined();
     });
@@ -1180,7 +1225,7 @@ class _ChatScreenState extends State<ChatScreen> {
               callType: callType,
               callService: callService,
               onDecline: () {
-                debugPrint('📞 Call declined by user');
+                debugPrint('ðŸ“ž Call declined by user');
                 _socketService.stopSignalBuffering();
                 _socketService.removeListener(
                   'callEnded',
@@ -1198,6 +1243,11 @@ class _ChatScreenState extends State<ChatScreen> {
           // Clean up listeners when modal closes
           _socketService.removeListener('callEnded', crossRoomListenerKey);
           _socketService.removeListener('callDeclined', crossRoomListenerKey);
+
+          if (!mounted) {
+            PresenceService().isHandlingIncomingCall = false;
+            return;
+          }
 
           if (result is Map &&
               (result['result'] == 'accepted' ||
@@ -1261,7 +1311,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // START buffering WebRTC signals immediately — before the async callService.initialize().
+    // START buffering WebRTC signals immediately â€” before the async callService.initialize().
     _socketService.startSignalBuffering();
 
     // Initialize call service (fetches ICE servers) and set up the call state
@@ -1271,11 +1321,17 @@ class _ChatScreenState extends State<ChatScreen> {
     callService.reset();
 
     await callService.initialize();
+
+    if (!mounted) {
+      PresenceService().isHandlingIncomingCall = false;
+      return;
+    }
+
     callService.handleIncomingCall(data);
 
     // Set up signal handler for WebRTC
     _socketService.onSignal = (signalData) {
-      debugPrint('📡 Signal received for incoming call: $signalData');
+      debugPrint('ðŸ“¡ Signal received for incoming call: $signalData');
       callService.handleSignal(signalData);
     };
 
@@ -1284,14 +1340,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('callEnded', callListenerKey, (
       Map<String, dynamic> endData,
     ) {
-      debugPrint('📴 Call ended by remote user (chat)');
+      debugPrint('ðŸ“´ Call ended by remote user (chat)');
       callService.handleCallEnded();
     });
 
     _socketService.addListener('callDeclined', callListenerKey, (
       Map<String, dynamic> declineData,
     ) {
-      debugPrint('❌ Call declined (chat)');
+      debugPrint('âŒ Call declined (chat)');
       callService.handleCallDeclined();
     });
 
@@ -1306,7 +1362,7 @@ class _ChatScreenState extends State<ChatScreen> {
               callType: callType,
               callService: callService,
               onDecline: () {
-                debugPrint('📞 Call declined by user');
+                debugPrint('ðŸ“ž Call declined by user');
                 // Clean up listeners
                 _socketService.removeListener('callEnded', callListenerKey);
                 _socketService.removeListener('callDeclined', callListenerKey);
@@ -1318,6 +1374,11 @@ class _ChatScreenState extends State<ChatScreen> {
           // Clean up listeners when modal closes
           _socketService.removeListener('callEnded', callListenerKey);
           _socketService.removeListener('callDeclined', callListenerKey);
+
+          if (!mounted) {
+            PresenceService().isHandlingIncomingCall = false;
+            return;
+          }
 
           if (result is Map &&
               (result['result'] == 'accepted' ||
@@ -1364,7 +1425,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // If from self and message already exists locally, skip (same device echo)
         if (isFromSelf && alreadyExists) {
           debugPrint(
-            '🎨 Skipping color change from self (already added locally)',
+            'ðŸŽ¨ Skipping color change from self (already added locally)',
           );
           return;
         }
@@ -1414,7 +1475,7 @@ class _ChatScreenState extends State<ChatScreen> {
         });
 
         debugPrint(
-          '🎨 Color changed to: $colorHex (${isFromSelf ? "cross-device sync" : "incoming from $senderName"})',
+          'ðŸŽ¨ Color changed to: $colorHex (${isFromSelf ? "cross-device sync" : "incoming from $senderName"})',
         );
       } catch (e) {
         debugPrint('Error parsing color: $e');
@@ -1437,11 +1498,11 @@ class _ChatScreenState extends State<ChatScreen> {
           (msg.content.contains('reset') || msg.content.contains('Reset')),
     );
     if (alreadyExists) {
-      debugPrint('🔄 Skipping duplicate color reset message');
+      debugPrint('ðŸ”„ Skipping duplicate color reset message');
       return;
     }
 
-    // Always reset bg color — whether incoming (other user resets) or
+    // Always reset bg color â€” whether incoming (other user resets) or
     // cross-device (we reset from another device), our bg should update
     const defaultColor = Color(0xFF1E1E1E);
     setState(() {
@@ -1480,7 +1541,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     debugPrint(
-      '🔄 Color ${isFromSelf ? "reset (cross-device sync)" : "reset by ${widget.otherUser.fullName}"}',
+      'ðŸ”„ Color ${isFromSelf ? "reset (cross-device sync)" : "reset by ${widget.otherUser.fullName}"}',
     );
   }
 
@@ -1553,11 +1614,13 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     if (alreadyExists) {
-      debugPrint('🔔 Cross-device doorbell already exists, skipping duplicate');
+      debugPrint(
+        'ðŸ”” Cross-device doorbell already exists, skipping duplicate',
+      );
       return;
     }
 
-    debugPrint('🔔 Cross-device: showing outgoing doorbell in chat');
+    debugPrint('ðŸ”” Cross-device: showing outgoing doorbell in chat');
 
     final doorbellMessage = Message(
       id: timestampMs,
@@ -1587,19 +1650,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _handleAllMessagesDeleted(Map<String, dynamic> data) {
-    debugPrint('🗑️ Handling all messages deleted event: $data');
+    debugPrint('ðŸ—‘ï¸ Handling all messages deleted event: $data');
 
     final String deletedRoom = data['room'] ?? '';
 
     // Validate room ID
     if (deletedRoom.isEmpty) {
-      debugPrint('⚠️ Warning: Received delete event with no room ID');
+      debugPrint('âš ï¸ Warning: Received delete event with no room ID');
       return;
     }
 
     // Generate current room ID (same format as backend: chat_{userId1}_{userId2} sorted)
     if (_currentUserId == null) {
-      debugPrint('⚠️ Warning: Current user ID is null');
+      debugPrint('âš ï¸ Warning: Current user ID is null');
       return;
     }
 
@@ -1610,7 +1673,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // Only clear messages if the event is for the current room
     if (deletedRoom != currentRoomId) {
       debugPrint(
-        'ℹ️ Ignoring delete event for different room: $deletedRoom (current: $currentRoomId)',
+        'â„¹ï¸ Ignoring delete event for different room: $deletedRoom (current: $currentRoomId)',
       );
       return;
     }
@@ -1618,6 +1681,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // Clear all messages
     setState(() {
       _messages.clear();
+      _databaseLoadedMessageIds.clear();
     });
 
     // Clear the local cache so stale messages don't reload
@@ -1626,7 +1690,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _currentUserId!,
         widget.otherUser.id,
       );
-      debugPrint('🗑️ Conversation cache cleared for room: $currentRoomId');
+      debugPrint('ðŸ—‘ï¸ Conversation cache cleared for room: $currentRoomId');
     }
 
     // Show a snackbar notification
@@ -1640,13 +1704,13 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    debugPrint('✅ Messages cleared for room: $currentRoomId');
+    debugPrint('âœ… Messages cleared for room: $currentRoomId');
   }
 
   Future<void> _loadCachedMessages() async {
     final currentUserId = await StorageService.getUserId();
     if (currentUserId == null) {
-      debugPrint('⚠️ No user ID available for cache loading');
+      debugPrint('âš ï¸ No user ID available for cache loading');
       return;
     }
 
@@ -1657,14 +1721,21 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       if (cached.isNotEmpty && mounted) {
-        debugPrint('📦 Loaded ${cached.length} messages from cache');
+        debugPrint('ðŸ“¦ Loaded ${cached.length} messages from cache');
         setState(() {
           _messages = cached.reversed.toList();
+          _databaseLoadedMessageIds
+            ..clear()
+            ..addAll(
+              cached
+                  .where((message) => message.id > 0)
+                  .map((message) => message.id),
+            );
           _isLoading = false; // Show cached messages immediately
         });
       } else {
         debugPrint(
-          '📦 No cached messages available - this is expected on first open',
+          'ðŸ“¦ No cached messages available - this is expected on first open',
         );
         // Don't show empty state - let _loadMessages handle it
       }
@@ -1678,28 +1749,26 @@ class _ChatScreenState extends State<ChatScreen> {
     // Guard against concurrent calls
     if (_isLoadingMessages) {
       debugPrint(
-        '⚠️ _loadMessages already in progress, skipping duplicate call',
+        'âš ï¸ _loadMessages already in progress, skipping duplicate call',
       );
       return;
     }
 
     _isLoadingMessages = true;
-    if (!_isLoading) {
-      setState(() => _isSyncing = true);
-    } else {
+    if (_isLoading) {
       setState(() => _isLoading = true);
     }
     try {
-      debugPrint('🔄 Loading messages for user ${widget.otherUser.id}...');
+      debugPrint('ðŸ”„ Loading messages for user ${widget.otherUser.id}...');
       final messages = await MessageService.getConversationMessages(
         userId: widget.otherUser.id,
         limit: 50,
         offlineFirst: false, // Cache was already shown by _loadCachedMessages
       );
-      debugPrint('✅ Successfully loaded ${messages.length} messages');
+      debugPrint('âœ… Successfully loaded ${messages.length} messages');
 
       if (!mounted) {
-        debugPrint('⚠️ Widget unmounted before setState, skipping update');
+        debugPrint('âš ï¸ Widget unmounted before setState, skipping update');
         _isLoadingMessages = false;
         return;
       }
@@ -1707,18 +1776,26 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _messages = messages.reversed
             .toList(); // Reverse to show newest at bottom
+        _databaseLoadedMessageIds
+          ..clear()
+          ..addAll(
+            _messages
+                .where((message) => message.id > 0)
+                .map((message) => message.id),
+          );
         _isLoading = false;
-        _isSyncing = false;
         _connectionIssueMessage = 'Server unavailable. Reconnecting...';
 
         // Populate _messageReactions from loaded messages
         _messageReactions.clear();
         for (final msg in _messages) {
           if (msg.reactions.isNotEmpty) {
-            debugPrint('📦 Message ${msg.id} reactions raw: ${msg.reactions}');
+            debugPrint(
+              'ðŸ“¦ Message ${msg.id} reactions raw: ${msg.reactions}',
+            );
             _messageReactions[msg.id] = {};
 
-            // Backend sends format: { "counts": {"😀": 1}, "by_user": [{"user_id": 1, "reaction": "😀"}] }
+            // Backend sends format: { "counts": {"ðŸ˜€": 1}, "by_user": [{"user_id": 1, "reaction": "ðŸ˜€"}] }
             // We need to extract reactions from by_user array and group by emoji
             final byUser = msg.reactions['by_user'];
             if (byUser is List && byUser.isNotEmpty) {
@@ -1764,23 +1841,17 @@ class _ChatScreenState extends State<ChatScreen> {
             }
 
             debugPrint(
-              '📦 Message ${msg.id} reactions parsed: ${_messageReactions[msg.id]}',
+              'ðŸ“¦ Message ${msg.id} reactions parsed: ${_messageReactions[msg.id]}',
             );
           }
         }
       });
 
-      // Mark all as read
-      if (messages.isNotEmpty) {
-        await MessageService.markAsRead(
-          senderId: widget.otherUser.id,
-          lastMessageId: messages.first.id,
-        );
-      }
+      await _syncLoadedMessageStatuses(messages);
 
       _scrollToBottom();
     } catch (e) {
-      debugPrint('❌ Error loading messages: $e');
+      debugPrint('âŒ Error loading messages: $e');
       final friendly = _mapConnectivityError(
         e,
         offlineLabel: 'No internet connection. Showing cached messages.',
@@ -1789,7 +1860,6 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _isSyncing = false;
           _connectionIssueMessage = friendly;
         });
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1798,7 +1868,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } finally {
       _isLoadingMessages = false;
-      debugPrint('🏁 Message loading process completed');
+      debugPrint('ðŸ Message loading process completed');
     }
   }
 
@@ -2071,7 +2141,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (response.statusCode == 200) {
         // Clear the local messages list immediately
-        setState(() => _messages.clear());
+        setState(() {
+          _messages.clear();
+          _databaseLoadedMessageIds.clear();
+        });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -2165,13 +2238,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (msg.isDeleted) {
         previewText = 'Deleted message';
       } else if (msg.messageType == 'voice' || msg.messageType == 'audio') {
-        previewText = '🎤 Voice message';
+        previewText = 'ðŸŽ¤ Voice message';
       } else if (msg.messageType == 'image') {
-        previewText = '📷 Photo';
+        previewText = 'ðŸ“· Photo';
       } else if (msg.messageType == 'video') {
-        previewText = '🎬 Video';
+        previewText = 'ðŸŽ¬ Video';
       } else if (msg.messageType == 'file') {
-        previewText = '📎 ${msg.fileName ?? "File"}';
+        previewText = 'ðŸ“Ž ${msg.fileName ?? "File"}';
       } else {
         // For text, truncate if too long
         previewText = msg.content.length > 60
@@ -2200,7 +2273,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     // Track this optimistic message for dedup when server echoes back
-    final dedupKey = '${_currentUserId}:${widget.otherUser.id}:$content';
+    final dedupKey = '$_currentUserId:${widget.otherUser.id}:$content';
     _pendingMessageKeys.add(dedupKey);
 
     setState(() {
@@ -2229,7 +2302,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_socketService.isConnected) {
         // Send via Socket.IO for real-time delivery
         debugPrint(
-          '✅ Sending message via Socket.IO${replyToId != null ? ' (replying to $replyToId)' : ''}',
+          'âœ… Sending message via Socket.IO${replyToId != null ? ' (replying to $replyToId)' : ''}',
         );
         _socketService.sendMessage(
           recipientId: widget.otherUser.id,
@@ -2239,7 +2312,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       } else {
         // Fallback to REST API
-        debugPrint('⚠️ Socket.IO not connected, using REST API fallback');
+        debugPrint('âš ï¸ Socket.IO not connected, using REST API fallback');
         final sentMessage = await MessageService.sendMessage(
           recipientId: widget.otherUser.id,
           content: content,
@@ -2256,11 +2329,11 @@ class _ChatScreenState extends State<ChatScreen> {
               _messages[index] = sentMessage;
             }
           });
-          debugPrint('✅ Message sent via REST API');
+          debugPrint('âœ… Message sent via REST API');
         }
       }
     } catch (e) {
-      debugPrint('❌ Error sending message: $e');
+      debugPrint('âŒ Error sending message: $e');
       // Update message status to failed
       if (mounted) {
         setState(() {
@@ -2299,6 +2372,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (draftContent.isEmpty) return;
 
     final currentUserId = _currentUserId ?? await StorageService.getUserId();
+    if (!mounted) return;
+
     final usersFuture = LobbyService.getLobbyUsers();
     final selectedRecipientIds = <int>{widget.otherUser.id};
     var searchQuery = '';
@@ -2374,7 +2449,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
                           final users = snapshot.data ?? const <LobbyUser>[];
                           final selectableUsers = users.where((user) {
-                            if (currentUserId != null && user.id == currentUserId) {
+                            if (currentUserId != null &&
+                                user.id == currentUserId) {
                               return false;
                             }
                             return true;
@@ -2384,8 +2460,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             return selectedRecipientIds.contains(user.id);
                           }).toList();
 
-                          final normalizedSearch =
-                              searchQuery.trim().toLowerCase();
+                          final normalizedSearch = searchQuery
+                              .trim()
+                              .toLowerCase();
                           final filteredUsers = selectableUsers.where((user) {
                             if (normalizedSearch.isEmpty) {
                               return true;
@@ -2464,13 +2541,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                                     overflow:
                                                         TextOverflow.ellipsis,
                                                   ),
-                                                  labelStyle:
-                                                      const TextStyle(
-                                                        color: Colors.white,
-                                                        fontSize: 12,
-                                                      ),
-                                                  backgroundColor:
-                                                      const Color(0xFF4C1D95),
+                                                  labelStyle: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 12,
+                                                  ),
+                                                  backgroundColor: const Color(
+                                                    0xFF4C1D95,
+                                                  ),
                                                   deleteIconColor:
                                                       Colors.white70,
                                                   onDeleted: () {
@@ -2525,8 +2602,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                             },
                                             controlAffinity:
                                                 ListTileControlAffinity.leading,
-                                            activeColor:
-                                                const Color(0xFF7C3AED),
+                                            activeColor: const Color(
+                                              0xFF7C3AED,
+                                            ),
                                             checkColor: Colors.white,
                                             title: Text(
                                               user.fullName,
@@ -2653,7 +2731,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     color: const Color(0xFF2A1F45),
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(
-                      color: const Color(0xFF7C3AED).withOpacity(0.8),
+                      color: const Color(0xFF7C3AED).withValues(alpha: 0.8),
                       width: 1,
                     ),
                   ),
@@ -2785,7 +2863,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    debugPrint('🎨 Color reset to default');
+    debugPrint('ðŸŽ¨ Color reset to default');
   }
 
   void _changeColor() {
@@ -2797,7 +2875,8 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (context) => ColorPickerModal(
         onColorSelected: (selectedColor) {
           // Only send color to other user, don't change our own background
-          final colorHex = selectedColor.value
+          final colorHex = selectedColor
+              .toARGB32()
               .toRadixString(16)
               .substring(2)
               .toUpperCase();
@@ -2835,7 +2914,7 @@ class _ChatScreenState extends State<ChatScreen> {
           });
 
           debugPrint(
-            '🎨 Color sent to ${widget.otherUser.fullName}: #$colorHex',
+            'ðŸŽ¨ Color sent to ${widget.otherUser.fullName}: #$colorHex',
           );
         },
       ),
@@ -3091,17 +3170,23 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Show call setup modal for video/audio calls
   void _showCallSetupModal(CallType callType) {
+    final isVideoCall = callType == CallType.video;
+    final isAudioCall = callType == CallType.audio;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.85,
-        minChildSize: 0.5,
-        maxChildSize: 0.95,
+        expand: false,
+        initialChildSize: isVideoCall ? 1.0 : 0.62,
+        minChildSize: isAudioCall ? 0.42 : 0.3,
+        maxChildSize: isVideoCall ? 1.0 : 0.72,
         builder: (context, scrollController) => CallSetupModal(
           recipientName: widget.otherUser.fullName,
           callType: callType,
+          scrollController: scrollController,
           onStartCall:
               (
                 localStream,
@@ -3147,14 +3232,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('callEnded', callListenerKey, (
       Map<String, dynamic> data,
     ) {
-      debugPrint('📴 Call ended - cleaning up');
+      debugPrint('ðŸ“´ Call ended - cleaning up');
       callService.handleCallEnded();
     });
 
     _socketService.addListener('callDeclined', callListenerKey, (
       Map<String, dynamic> data,
     ) {
-      debugPrint('❌ Call declined by remote user');
+      debugPrint('âŒ Call declined by remote user');
       callService.handleCallDeclined();
     });
 
@@ -3178,8 +3263,10 @@ class _ChatScreenState extends State<ChatScreen> {
       localStream: localStream,
     );
 
+    if (!mounted) return;
+
     debugPrint(
-      '🎥 Initiated ${callType.name} call with ${widget.otherUser.fullName}',
+      'ðŸŽ¥ Initiated ${callType.name} call with ${widget.otherUser.fullName}',
     );
 
     // Show outgoing call modal
@@ -3191,14 +3278,14 @@ class _ChatScreenState extends State<ChatScreen> {
           callType: callTypeStr,
           callService: callService,
           onCancel: () {
-            debugPrint('📞 Call cancelled by user');
+            debugPrint('ðŸ“ž Call cancelled by user');
             // Clean up listeners
             _socketService.removeListener('callInitiated', callListenerKey);
             _socketService.removeListener('callEnded', callListenerKey);
             _socketService.removeListener('callDeclined', callListenerKey);
           },
           onConnected: () {
-            debugPrint('📞 Call connected!');
+            debugPrint('ðŸ“ž Call connected!');
           },
         ),
       ),
@@ -3210,20 +3297,20 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.removeListener('callDeclined', callListenerKey);
 
     // Navigate to connected call screen if call connected
-    // Trust the modal result 'connected' as authoritative — the call was connected.
+    // Trust the modal result 'connected' as authoritative â€” the call was connected.
     // Do NOT re-check callService.callState here because ICE renegotiation can
     // briefly set it to 'connecting' after initial connection, creating a race
     // condition that blocks navigation.
     if (result == 'connected' && mounted) {
       debugPrint(
-        '📞 Navigating to ConnectedCallScreen after modal returned: $result (callType: $callTypeStr)',
+        'ðŸ“ž Navigating to ConnectedCallScreen after modal returned: $result (callType: $callTypeStr)',
       );
 
       // Use post-frame callback to ensure widget tree is stable for release builds
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           debugPrint(
-            '❌ Widget unmounted - aborting navigation to ConnectedCallScreen',
+            'âŒ Widget unmounted - aborting navigation to ConnectedCallScreen',
           );
           return;
         }
@@ -3232,7 +3319,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } else {
       debugPrint(
-        '📞 Modal result: $result, mounted: $mounted, callType: $callTypeStr - not navigating to ConnectedCallScreen',
+        'ðŸ“ž Modal result: $result, mounted: $mounted, callType: $callTypeStr - not navigating to ConnectedCallScreen',
       );
     }
   }
@@ -3243,71 +3330,63 @@ class _ChatScreenState extends State<ChatScreen> {
     dynamic localStream,
     String callTypeStr,
   ) async {
-    debugPrint('📞 _performNavigation called for $callTypeStr call');
+    debugPrint('ðŸ“ž _performNavigation called for $callTypeStr call');
 
     if (!mounted) {
-      debugPrint('❌ Widget unmounted in navigation method - aborting');
+      debugPrint('âŒ Widget unmounted in navigation method - aborting');
       return;
     }
 
     try {
-      debugPrint('📞 About to push ConnectedCallScreen route');
-      debugPrint('📞 Current call state: ${callService.callState}');
+      debugPrint('ðŸ“ž About to push ConnectedCallScreen route');
+      debugPrint('ðŸ“ž Current call state: ${callService.callState}');
 
       // Use the safest possible navigation approach
       final navigator = Navigator.maybeOf(context);
       if (navigator == null) {
-        debugPrint('❌ Navigator is null - aborting navigation');
-        return;
-      }
-
-      // Validate parameters before navigation
-      if (callService == null) {
-        debugPrint('❌ CallService is null - aborting navigation');
+        debugPrint('âŒ Navigator is null - aborting navigation');
         return;
       }
 
       // Check localStream more thoroughly
-      debugPrint('📞 localStream type: ${localStream.runtimeType}');
+      debugPrint('ðŸ“ž localStream type: ${localStream.runtimeType}');
       debugPrint(
-        '📞 localStream is MediaStream: ${localStream is MediaStream}',
+        'ðŸ“ž localStream is MediaStream: ${localStream is MediaStream}',
       );
       if (localStream != null && localStream is! MediaStream) {
         debugPrint(
-          '⚠️ localStream is not a MediaStream: ${localStream.runtimeType}',
+          'âš ï¸ localStream is not a MediaStream: ${localStream.runtimeType}',
         );
       }
 
       // Check widget state
-      debugPrint('📞 widget: ${widget != null ? 'available' : 'null'}');
+      debugPrint('ðŸ“ž widget: available');
+      debugPrint('ðŸ“ž widget.otherUser: available');
+
+      debugPrint('ðŸ“ž Parameters validated - proceeding with navigation');
+      debugPrint('ðŸ“ž remoteName: ${widget.otherUser.fullName}');
+      debugPrint('ðŸ“ž callType: $callTypeStr');
       debugPrint(
-        '📞 widget.otherUser: ${widget.otherUser != null ? 'available' : 'null'}',
+        'ðŸ“ž localStream: ${localStream != null ? 'available' : 'null'}',
+      );
+      debugPrint('ðŸ“ž callService.callState: ${callService.callState}');
+      debugPrint('ðŸ“ž callService.remoteUserId: ${callService.remoteUserId}');
+      debugPrint(
+        'ðŸ“ž callService.localStream: ${callService.localStream != null ? 'available' : 'null'}',
+      );
+      debugPrint(
+        'ðŸ“ž callService.remoteStream: ${callService.remoteStream != null ? 'available' : 'null'}',
       );
 
-      debugPrint('📞 Parameters validated - proceeding with navigation');
-      debugPrint('📞 remoteName: ${widget.otherUser.fullName}');
-      debugPrint('📞 callType: $callTypeStr');
-      debugPrint(
-        '📞 localStream: ${localStream != null ? 'available' : 'null'}',
-      );
-      debugPrint('📞 callService.callState: ${callService.callState}');
-      debugPrint('📞 callService.remoteUserId: ${callService.remoteUserId}');
-      debugPrint(
-        '📞 callService.localStream: ${callService.localStream != null ? 'available' : 'null'}',
-      );
-      debugPrint(
-        '📞 callService.remoteStream: ${callService.remoteStream != null ? 'available' : 'null'}',
-      );
-
-      debugPrint('📞 Creating MaterialPageRoute...');
+      debugPrint('ðŸ“ž Creating MaterialPageRoute...');
       final route = MaterialPageRoute(
         fullscreenDialog: true,
         builder: (context) {
-          debugPrint('📞 Building ConnectedCallScreen widget');
+          debugPrint('ðŸ“ž Building ConnectedCallScreen widget');
 
           try {
-            final remoteName = widget.otherUser?.fullName ?? 'Unknown User';
-            debugPrint('📞 Using remoteName: $remoteName');
+            final remoteName = widget.otherUser.fullName;
+            debugPrint('ðŸ“ž Using remoteName: $remoteName');
 
             return ConnectedCallScreen(
               remoteName: remoteName,
@@ -3319,7 +3398,7 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             );
           } catch (e) {
-            debugPrint('❌ Error creating ConnectedCallScreen: $e');
+            debugPrint('âŒ Error creating ConnectedCallScreen: $e');
             // Return a fallback widget
             return Scaffold(
               appBar: AppBar(title: const Text('Call Error')),
@@ -3343,18 +3422,18 @@ class _ChatScreenState extends State<ChatScreen> {
         },
       );
 
-      debugPrint('📞 MaterialPageRoute created, pushing...');
+      debugPrint('ðŸ“ž MaterialPageRoute created, pushing...');
       final navigationResult = await navigator.push(route);
 
       debugPrint(
-        '📞 ConnectedCallScreen navigation completed for $callTypeStr call with result: $navigationResult',
+        'ðŸ“ž ConnectedCallScreen navigation completed for $callTypeStr call with result: $navigationResult',
       );
     } catch (e) {
       debugPrint(
-        '❌ Error navigating to ConnectedCallScreen for $callTypeStr call: $e',
+        'âŒ Error navigating to ConnectedCallScreen for $callTypeStr call: $e',
       );
-      debugPrint('❌ Error type: ${e.runtimeType}');
-      debugPrint('❌ Stack trace: ${StackTrace.current}');
+      debugPrint('âŒ Error type: ${e.runtimeType}');
+      debugPrint('âŒ Stack trace: ${StackTrace.current}');
 
       // Try to show a user-friendly error
       if (mounted) {
@@ -3370,6 +3449,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Handle incoming file message from web
+  // ignore: unused_element
   void _handleIncomingFileMessage(Map<String, dynamic> data) {
     final now = DateTime.now();
     final fileUrl = data['file_url'] as String?;
@@ -3640,7 +3720,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                                 Text(
-                                  '${_formatFileSize(fileSize)} • $mimeType',
+                                  '${_formatFileSize(fileSize)} â€¢ $mimeType',
                                   style: TextStyle(
                                     color: Colors.grey[400],
                                     fontSize: 12,
@@ -3754,29 +3834,25 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mimeType.startsWith('video/')) return Icons.videocam;
     if (mimeType.startsWith('audio/')) return Icons.audiotrack;
     if (mimeType.contains('pdf')) return Icons.picture_as_pdf;
-    if (mimeType.contains('word') || mimeType.contains('document'))
+    if (mimeType.contains('word') || mimeType.contains('document')) {
       return Icons.description;
-    if (mimeType.contains('excel') || mimeType.contains('spreadsheet'))
+    }
+    if (mimeType.contains('excel') || mimeType.contains('spreadsheet')) {
       return Icons.table_chart;
-    if (mimeType.contains('zip') || mimeType.contains('archive'))
+    }
+    if (mimeType.contains('zip') || mimeType.contains('archive')) {
       return Icons.folder_zip;
+    }
     return Icons.insert_drive_file;
   }
 
   String _formatFileSize(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024)
+    if (bytes < 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-  }
-
-  /// Format duration for display (mm:ss)
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final minutes = twoDigits(duration.inMinutes.remainder(60));
-    final seconds = twoDigits(duration.inSeconds.remainder(60));
-    return '$minutes:$seconds';
   }
 
   /// Show voice recording modal
@@ -3800,14 +3876,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // Reset recording state
-    setState(() {
-      _isRecording = false;
-      _isPaused = false;
-      _recordingPath = null;
-      _recordingDuration = Duration.zero;
-      _waveformData = [];
-    });
+    if (!mounted) return;
 
     showModalBottomSheet(
       context: context,
@@ -3832,13 +3901,13 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Behaves like FB Messenger: emoji picker replaces the keyboard.
   void _showEmojiPickerModal(BuildContext context) {
     if (_showEmojiPicker) {
-      // Closing emoji picker → bring keyboard back
+      // Closing emoji picker â†’ bring keyboard back
       setState(() {
         _showEmojiPicker = false;
       });
       _inputFocusNode.requestFocus();
     } else {
-      // Opening emoji picker → dismiss keyboard first
+      // Opening emoji picker â†’ dismiss keyboard first
       _inputFocusNode.unfocus();
       setState(() {
         _showEmojiPicker = true;
@@ -3852,845 +3921,845 @@ class _ChatScreenState extends State<ChatScreen> {
   // Emoji categories with icons and data
   static const List<Map<String, dynamic>> _emojiCategories = [
     {
-      'icon': '😀',
+      'icon': 'ðŸ˜€',
       'label': 'Smileys',
       'emojis': [
-        '😀',
-        '😃',
-        '😄',
-        '😁',
-        '😆',
-        '😅',
-        '😂',
-        '🤣',
-        '🥲',
-        '😊',
-        '😇',
-        '🙂',
-        '🙃',
-        '😉',
-        '😌',
-        '😍',
-        '🥰',
-        '😘',
-        '😗',
-        '😙',
-        '😚',
-        '😋',
-        '😛',
-        '😝',
-        '😜',
-        '🤪',
-        '🤨',
-        '🧐',
-        '🤓',
-        '😎',
-        '🥸',
-        '🤩',
-        '🥳',
-        '😏',
-        '😒',
-        '😞',
-        '😔',
-        '😟',
-        '😕',
-        '🙁',
-        '😣',
-        '😖',
-        '😫',
-        '😩',
-        '🥺',
-        '😢',
-        '😭',
-        '😤',
-        '😠',
-        '😡',
-        '🤬',
-        '🤯',
-        '😳',
-        '🥵',
-        '🥶',
-        '😱',
-        '😨',
-        '😰',
-        '😥',
-        '😓',
-        '🤗',
-        '🤔',
-        '🫣',
-        '🤭',
-        '🫢',
-        '🫡',
-        '🤫',
-        '🫠',
-        '🤥',
-        '😶',
-        '😐',
-        '😑',
-        '😬',
-        '🫨',
-        '🙄',
-        '😯',
-        '😦',
-        '😧',
-        '😮',
-        '😲',
-        '🥱',
-        '😴',
-        '🤤',
-        '😪',
-        '😵',
-        '😵‍💫',
-        '🫥',
-        '🤐',
-        '🥴',
-        '🤢',
-        '🤮',
-        '🤧',
-        '😷',
-        '🤒',
-        '🤕',
-        '🤑',
-        '🤠',
-        '😈',
-        '👿',
-        '👹',
-        '👺',
-        '🤡',
-        '💩',
-        '👻',
-        '💀',
-        '☠️',
-        '👽',
-        '👾',
-        '🤖',
-        '🎃',
-        '😺',
-        '😸',
-        '😹',
-        '😻',
-        '😼',
-        '😽',
-        '🙀',
-        '😿',
-        '😾',
+        'ðŸ˜€',
+        'ðŸ˜ƒ',
+        'ðŸ˜„',
+        'ðŸ˜',
+        'ðŸ˜†',
+        'ðŸ˜…',
+        'ðŸ˜‚',
+        'ðŸ¤£',
+        'ðŸ¥²',
+        'ðŸ˜Š',
+        'ðŸ˜‡',
+        'ðŸ™‚',
+        'ðŸ™ƒ',
+        'ðŸ˜‰',
+        'ðŸ˜Œ',
+        'ðŸ˜',
+        'ðŸ¥°',
+        'ðŸ˜˜',
+        'ðŸ˜—',
+        'ðŸ˜™',
+        'ðŸ˜š',
+        'ðŸ˜‹',
+        'ðŸ˜›',
+        'ðŸ˜',
+        'ðŸ˜œ',
+        'ðŸ¤ª',
+        'ðŸ¤¨',
+        'ðŸ§',
+        'ðŸ¤“',
+        'ðŸ˜Ž',
+        'ðŸ¥¸',
+        'ðŸ¤©',
+        'ðŸ¥³',
+        'ðŸ˜',
+        'ðŸ˜’',
+        'ðŸ˜ž',
+        'ðŸ˜”',
+        'ðŸ˜Ÿ',
+        'ðŸ˜•',
+        'ðŸ™',
+        'ðŸ˜£',
+        'ðŸ˜–',
+        'ðŸ˜«',
+        'ðŸ˜©',
+        'ðŸ¥º',
+        'ðŸ˜¢',
+        'ðŸ˜­',
+        'ðŸ˜¤',
+        'ðŸ˜ ',
+        'ðŸ˜¡',
+        'ðŸ¤¬',
+        'ðŸ¤¯',
+        'ðŸ˜³',
+        'ðŸ¥µ',
+        'ðŸ¥¶',
+        'ðŸ˜±',
+        'ðŸ˜¨',
+        'ðŸ˜°',
+        'ðŸ˜¥',
+        'ðŸ˜“',
+        'ðŸ¤—',
+        'ðŸ¤”',
+        'ðŸ«£',
+        'ðŸ¤­',
+        'ðŸ«¢',
+        'ðŸ«¡',
+        'ðŸ¤«',
+        'ðŸ« ',
+        'ðŸ¤¥',
+        'ðŸ˜¶',
+        'ðŸ˜',
+        'ðŸ˜‘',
+        'ðŸ˜¬',
+        'ðŸ«¨',
+        'ðŸ™„',
+        'ðŸ˜¯',
+        'ðŸ˜¦',
+        'ðŸ˜§',
+        'ðŸ˜®',
+        'ðŸ˜²',
+        'ðŸ¥±',
+        'ðŸ˜´',
+        'ðŸ¤¤',
+        'ðŸ˜ª',
+        'ðŸ˜µ',
+        'ðŸ˜µâ€ðŸ’«',
+        'ðŸ«¥',
+        'ðŸ¤',
+        'ðŸ¥´',
+        'ðŸ¤¢',
+        'ðŸ¤®',
+        'ðŸ¤§',
+        'ðŸ˜·',
+        'ðŸ¤’',
+        'ðŸ¤•',
+        'ðŸ¤‘',
+        'ðŸ¤ ',
+        'ðŸ˜ˆ',
+        'ðŸ‘¿',
+        'ðŸ‘¹',
+        'ðŸ‘º',
+        'ðŸ¤¡',
+        'ðŸ’©',
+        'ðŸ‘»',
+        'ðŸ’€',
+        'â˜ ï¸',
+        'ðŸ‘½',
+        'ðŸ‘¾',
+        'ðŸ¤–',
+        'ðŸŽƒ',
+        'ðŸ˜º',
+        'ðŸ˜¸',
+        'ðŸ˜¹',
+        'ðŸ˜»',
+        'ðŸ˜¼',
+        'ðŸ˜½',
+        'ðŸ™€',
+        'ðŸ˜¿',
+        'ðŸ˜¾',
       ],
     },
     {
-      'icon': '👋',
+      'icon': 'ðŸ‘‹',
       'label': 'Gestures',
       'emojis': [
-        '👋',
-        '🤚',
-        '🖐️',
-        '✋',
-        '🖖',
-        '🫱',
-        '🫲',
-        '🫳',
-        '🫴',
-        '👌',
-        '🤌',
-        '🤏',
-        '✌️',
-        '🤞',
-        '🫰',
-        '🤟',
-        '🤘',
-        '🤙',
-        '👈',
-        '👉',
-        '👆',
-        '🖕',
-        '👇',
-        '☝️',
-        '🫵',
-        '👍',
-        '👎',
-        '✊',
-        '👊',
-        '🤛',
-        '🤜',
-        '👏',
-        '🙌',
-        '🫶',
-        '👐',
-        '🤲',
-        '🤝',
-        '🙏',
-        '✍️',
-        '💅',
-        '🤳',
-        '💪',
-        '🦾',
-        '🦿',
-        '🦵',
-        '🦶',
-        '👂',
-        '🦻',
-        '👃',
-        '🧠',
-        '🫀',
-        '🫁',
-        '🦷',
-        '🦴',
-        '👀',
-        '👁️',
-        '👅',
-        '👄',
-        '🫦',
-        '💋',
+        'ðŸ‘‹',
+        'ðŸ¤š',
+        'ðŸ–ï¸',
+        'âœ‹',
+        'ðŸ––',
+        'ðŸ«±',
+        'ðŸ«²',
+        'ðŸ«³',
+        'ðŸ«´',
+        'ðŸ‘Œ',
+        'ðŸ¤Œ',
+        'ðŸ¤',
+        'âœŒï¸',
+        'ðŸ¤ž',
+        'ðŸ«°',
+        'ðŸ¤Ÿ',
+        'ðŸ¤˜',
+        'ðŸ¤™',
+        'ðŸ‘ˆ',
+        'ðŸ‘‰',
+        'ðŸ‘†',
+        'ðŸ–•',
+        'ðŸ‘‡',
+        'â˜ï¸',
+        'ðŸ«µ',
+        'ðŸ‘',
+        'ðŸ‘Ž',
+        'âœŠ',
+        'ðŸ‘Š',
+        'ðŸ¤›',
+        'ðŸ¤œ',
+        'ðŸ‘',
+        'ðŸ™Œ',
+        'ðŸ«¶',
+        'ðŸ‘',
+        'ðŸ¤²',
+        'ðŸ¤',
+        'ðŸ™',
+        'âœï¸',
+        'ðŸ’…',
+        'ðŸ¤³',
+        'ðŸ’ª',
+        'ðŸ¦¾',
+        'ðŸ¦¿',
+        'ðŸ¦µ',
+        'ðŸ¦¶',
+        'ðŸ‘‚',
+        'ðŸ¦»',
+        'ðŸ‘ƒ',
+        'ðŸ§ ',
+        'ðŸ«€',
+        'ðŸ«',
+        'ðŸ¦·',
+        'ðŸ¦´',
+        'ðŸ‘€',
+        'ðŸ‘ï¸',
+        'ðŸ‘…',
+        'ðŸ‘„',
+        'ðŸ«¦',
+        'ðŸ’‹',
       ],
     },
     {
-      'icon': '❤️',
+      'icon': 'â¤ï¸',
       'label': 'Hearts',
       'emojis': [
-        '❤️',
-        '🧡',
-        '💛',
-        '💚',
-        '💙',
-        '💜',
-        '🖤',
-        '🤍',
-        '🤎',
-        '❤️‍🔥',
-        '❤️‍🩹',
-        '💔',
-        '❣️',
-        '💕',
-        '💞',
-        '💓',
-        '💗',
-        '💖',
-        '💘',
-        '💝',
-        '💟',
-        '♥️',
-        '🩷',
-        '🩵',
-        '🩶',
-        '💌',
-        '💐',
-        '🌹',
-        '🥀',
-        '🌺',
-        '🌸',
-        '🌷',
-        '🌻',
-        '💑',
-        '👩‍❤️‍👨',
-        '👨‍❤️‍👨',
-        '👩‍❤️‍👩',
-        '💏',
-        '😍',
-        '🥰',
-        '😘',
-        '😻',
-        '💒',
-        '🏩',
+        'â¤ï¸',
+        'ðŸ§¡',
+        'ðŸ’›',
+        'ðŸ’š',
+        'ðŸ’™',
+        'ðŸ’œ',
+        'ðŸ–¤',
+        'ðŸ¤',
+        'ðŸ¤Ž',
+        'â¤ï¸â€ðŸ”¥',
+        'â¤ï¸â€ðŸ©¹',
+        'ðŸ’”',
+        'â£ï¸',
+        'ðŸ’•',
+        'ðŸ’ž',
+        'ðŸ’“',
+        'ðŸ’—',
+        'ðŸ’–',
+        'ðŸ’˜',
+        'ðŸ’',
+        'ðŸ’Ÿ',
+        'â™¥ï¸',
+        'ðŸ©·',
+        'ðŸ©µ',
+        'ðŸ©¶',
+        'ðŸ’Œ',
+        'ðŸ’',
+        'ðŸŒ¹',
+        'ðŸ¥€',
+        'ðŸŒº',
+        'ðŸŒ¸',
+        'ðŸŒ·',
+        'ðŸŒ»',
+        'ðŸ’‘',
+        'ðŸ‘©â€â¤ï¸â€ðŸ‘¨',
+        'ðŸ‘¨â€â¤ï¸â€ðŸ‘¨',
+        'ðŸ‘©â€â¤ï¸â€ðŸ‘©',
+        'ðŸ’',
+        'ðŸ˜',
+        'ðŸ¥°',
+        'ðŸ˜˜',
+        'ðŸ˜»',
+        'ðŸ’’',
+        'ðŸ©',
       ],
     },
     {
-      'icon': '🐱',
+      'icon': 'ðŸ±',
       'label': 'Animals',
       'emojis': [
-        '🐶',
-        '🐱',
-        '🐭',
-        '🐹',
-        '🐰',
-        '🦊',
-        '🐻',
-        '🐼',
-        '🐻‍❄️',
-        '🐨',
-        '🐯',
-        '🦁',
-        '🐮',
-        '🐷',
-        '🐸',
-        '🐵',
-        '🙈',
-        '🙉',
-        '🙊',
-        '🐒',
-        '🐔',
-        '🐧',
-        '🐦',
-        '🐤',
-        '🐣',
-        '🐥',
-        '🦆',
-        '🦅',
-        '🦉',
-        '🦇',
-        '🐺',
-        '🐗',
-        '🐴',
-        '🦄',
-        '🐝',
-        '🪱',
-        '🐛',
-        '🦋',
-        '🐌',
-        '🐞',
-        '🐜',
-        '🪰',
-        '🪲',
-        '🪳',
-        '🦟',
-        '🦗',
-        '🕷️',
-        '🦂',
-        '🐢',
-        '🐍',
-        '🦎',
-        '🦖',
-        '🦕',
-        '🐙',
-        '🦑',
-        '🦐',
-        '🦞',
-        '🦀',
-        '🐡',
-        '🐠',
-        '🐟',
-        '🐬',
-        '🐳',
-        '🐋',
-        '🦈',
-        '🦭',
-        '🐊',
-        '🐅',
-        '🐆',
-        '🦓',
-        '🦍',
-        '🦧',
-        '🐘',
-        '🦛',
-        '🦏',
-        '🐪',
-        '🐫',
-        '🦒',
-        '🦘',
-        '🦬',
+        'ðŸ¶',
+        'ðŸ±',
+        'ðŸ­',
+        'ðŸ¹',
+        'ðŸ°',
+        'ðŸ¦Š',
+        'ðŸ»',
+        'ðŸ¼',
+        'ðŸ»â€â„ï¸',
+        'ðŸ¨',
+        'ðŸ¯',
+        'ðŸ¦',
+        'ðŸ®',
+        'ðŸ·',
+        'ðŸ¸',
+        'ðŸµ',
+        'ðŸ™ˆ',
+        'ðŸ™‰',
+        'ðŸ™Š',
+        'ðŸ’',
+        'ðŸ”',
+        'ðŸ§',
+        'ðŸ¦',
+        'ðŸ¤',
+        'ðŸ£',
+        'ðŸ¥',
+        'ðŸ¦†',
+        'ðŸ¦…',
+        'ðŸ¦‰',
+        'ðŸ¦‡',
+        'ðŸº',
+        'ðŸ—',
+        'ðŸ´',
+        'ðŸ¦„',
+        'ðŸ',
+        'ðŸª±',
+        'ðŸ›',
+        'ðŸ¦‹',
+        'ðŸŒ',
+        'ðŸž',
+        'ðŸœ',
+        'ðŸª°',
+        'ðŸª²',
+        'ðŸª³',
+        'ðŸ¦Ÿ',
+        'ðŸ¦—',
+        'ðŸ•·ï¸',
+        'ðŸ¦‚',
+        'ðŸ¢',
+        'ðŸ',
+        'ðŸ¦Ž',
+        'ðŸ¦–',
+        'ðŸ¦•',
+        'ðŸ™',
+        'ðŸ¦‘',
+        'ðŸ¦',
+        'ðŸ¦ž',
+        'ðŸ¦€',
+        'ðŸ¡',
+        'ðŸ ',
+        'ðŸŸ',
+        'ðŸ¬',
+        'ðŸ³',
+        'ðŸ‹',
+        'ðŸ¦ˆ',
+        'ðŸ¦­',
+        'ðŸŠ',
+        'ðŸ…',
+        'ðŸ†',
+        'ðŸ¦“',
+        'ðŸ¦',
+        'ðŸ¦§',
+        'ðŸ˜',
+        'ðŸ¦›',
+        'ðŸ¦',
+        'ðŸª',
+        'ðŸ«',
+        'ðŸ¦’',
+        'ðŸ¦˜',
+        'ðŸ¦¬',
       ],
     },
     {
-      'icon': '🍕',
+      'icon': 'ðŸ•',
       'label': 'Food',
       'emojis': [
-        '🍏',
-        '🍎',
-        '🍐',
-        '🍊',
-        '🍋',
-        '🍌',
-        '🍉',
-        '🍇',
-        '🍓',
-        '🫐',
-        '🍈',
-        '🍒',
-        '🍑',
-        '🥭',
-        '🍍',
-        '🥥',
-        '🥝',
-        '🍅',
-        '🍆',
-        '🥑',
-        '🥦',
-        '🥬',
-        '🥒',
-        '🌶️',
-        '🫑',
-        '🌽',
-        '🥕',
-        '🫒',
-        '🧄',
-        '🧅',
-        '🥔',
-        '🍠',
-        '🥐',
-        '🥯',
-        '🍞',
-        '🥖',
-        '🥨',
-        '🧀',
-        '🥚',
-        '🍳',
-        '🧈',
-        '🥞',
-        '🧇',
-        '🥓',
-        '🥩',
-        '🍗',
-        '🍖',
-        '🌭',
-        '🍔',
-        '🍟',
-        '🍕',
-        '🫓',
-        '🥪',
-        '🥙',
-        '🧆',
-        '🌮',
-        '🌯',
-        '🫔',
-        '🥗',
-        '🥘',
-        '🫕',
-        '🍝',
-        '🍜',
-        '🍲',
-        '🍛',
-        '🍣',
-        '🍱',
-        '🥟',
-        '🦪',
-        '🍤',
-        '🍙',
-        '🍚',
-        '🍘',
-        '🍥',
-        '🥠',
-        '🥮',
-        '🍢',
-        '🍡',
-        '🍧',
-        '🍨',
-        '🍦',
-        '🥧',
-        '🧁',
-        '🍰',
-        '🎂',
-        '🍮',
-        '🍭',
-        '🍬',
-        '🍫',
-        '🍩',
-        '🍪',
-        '🌰',
-        '🥜',
-        '🍯',
-        '🥛',
-        '🍼',
-        '☕',
-        '🍵',
-        '🧃',
-        '🥤',
-        '🧋',
-        '🍶',
-        '🍺',
-        '🍻',
-        '🥂',
-        '🍷',
-        '🥃',
-        '🍸',
-        '🍹',
-        '🧉',
+        'ðŸ',
+        'ðŸŽ',
+        'ðŸ',
+        'ðŸŠ',
+        'ðŸ‹',
+        'ðŸŒ',
+        'ðŸ‰',
+        'ðŸ‡',
+        'ðŸ“',
+        'ðŸ«',
+        'ðŸˆ',
+        'ðŸ’',
+        'ðŸ‘',
+        'ðŸ¥­',
+        'ðŸ',
+        'ðŸ¥¥',
+        'ðŸ¥',
+        'ðŸ…',
+        'ðŸ†',
+        'ðŸ¥‘',
+        'ðŸ¥¦',
+        'ðŸ¥¬',
+        'ðŸ¥’',
+        'ðŸŒ¶ï¸',
+        'ðŸ«‘',
+        'ðŸŒ½',
+        'ðŸ¥•',
+        'ðŸ«’',
+        'ðŸ§„',
+        'ðŸ§…',
+        'ðŸ¥”',
+        'ðŸ ',
+        'ðŸ¥',
+        'ðŸ¥¯',
+        'ðŸž',
+        'ðŸ¥–',
+        'ðŸ¥¨',
+        'ðŸ§€',
+        'ðŸ¥š',
+        'ðŸ³',
+        'ðŸ§ˆ',
+        'ðŸ¥ž',
+        'ðŸ§‡',
+        'ðŸ¥“',
+        'ðŸ¥©',
+        'ðŸ—',
+        'ðŸ–',
+        'ðŸŒ­',
+        'ðŸ”',
+        'ðŸŸ',
+        'ðŸ•',
+        'ðŸ«“',
+        'ðŸ¥ª',
+        'ðŸ¥™',
+        'ðŸ§†',
+        'ðŸŒ®',
+        'ðŸŒ¯',
+        'ðŸ«”',
+        'ðŸ¥—',
+        'ðŸ¥˜',
+        'ðŸ«•',
+        'ðŸ',
+        'ðŸœ',
+        'ðŸ²',
+        'ðŸ›',
+        'ðŸ£',
+        'ðŸ±',
+        'ðŸ¥Ÿ',
+        'ðŸ¦ª',
+        'ðŸ¤',
+        'ðŸ™',
+        'ðŸš',
+        'ðŸ˜',
+        'ðŸ¥',
+        'ðŸ¥ ',
+        'ðŸ¥®',
+        'ðŸ¢',
+        'ðŸ¡',
+        'ðŸ§',
+        'ðŸ¨',
+        'ðŸ¦',
+        'ðŸ¥§',
+        'ðŸ§',
+        'ðŸ°',
+        'ðŸŽ‚',
+        'ðŸ®',
+        'ðŸ­',
+        'ðŸ¬',
+        'ðŸ«',
+        'ðŸ©',
+        'ðŸª',
+        'ðŸŒ°',
+        'ðŸ¥œ',
+        'ðŸ¯',
+        'ðŸ¥›',
+        'ðŸ¼',
+        'â˜•',
+        'ðŸµ',
+        'ðŸ§ƒ',
+        'ðŸ¥¤',
+        'ðŸ§‹',
+        'ðŸ¶',
+        'ðŸº',
+        'ðŸ»',
+        'ðŸ¥‚',
+        'ðŸ·',
+        'ðŸ¥ƒ',
+        'ðŸ¸',
+        'ðŸ¹',
+        'ðŸ§‰',
       ],
     },
     {
-      'icon': '⚽',
+      'icon': 'âš½',
       'label': 'Activities',
       'emojis': [
-        '⚽',
-        '🏀',
-        '🏈',
-        '⚾',
-        '🥎',
-        '🎾',
-        '🏐',
-        '🏉',
-        '🥏',
-        '🎱',
-        '🪀',
-        '🏓',
-        '🏸',
-        '🏒',
-        '🏑',
-        '🥍',
-        '🏏',
-        '🪃',
-        '🥅',
-        '⛳',
-        '🪁',
-        '🏹',
-        '🎣',
-        '🤿',
-        '🥊',
-        '🥋',
-        '🎽',
-        '🛹',
-        '🛼',
-        '🛷',
-        '⛸️',
-        '🥌',
-        '🎿',
-        '⛷️',
-        '🏂',
-        '🪂',
-        '🏋️',
-        '🤼',
-        '🤸',
-        '🤺',
-        '⛹️',
-        '🤾',
-        '🏌️',
-        '🏇',
-        '🧘',
-        '🏄',
-        '🏊',
-        '🤽',
-        '🚣',
-        '🧗',
-        '🚵',
-        '🚴',
-        '🏆',
-        '🥇',
-        '🥈',
-        '🥉',
-        '🏅',
-        '🎖️',
-        '🏵️',
-        '🎗️',
-        '🎪',
-        '🤹',
-        '🎭',
-        '🩰',
-        '🎨',
-        '🎬',
-        '🎤',
-        '🎧',
-        '🎼',
-        '🎹',
-        '🥁',
-        '🪘',
-        '🎷',
-        '🎺',
-        '🪗',
-        '🎸',
-        '🪕',
-        '🎻',
-        '🎲',
-        '♟️',
-        '🎯',
-        '🎳',
-        '🎮',
-        '🕹️',
-        '🧩',
+        'âš½',
+        'ðŸ€',
+        'ðŸˆ',
+        'âš¾',
+        'ðŸ¥Ž',
+        'ðŸŽ¾',
+        'ðŸ',
+        'ðŸ‰',
+        'ðŸ¥',
+        'ðŸŽ±',
+        'ðŸª€',
+        'ðŸ“',
+        'ðŸ¸',
+        'ðŸ’',
+        'ðŸ‘',
+        'ðŸ¥',
+        'ðŸ',
+        'ðŸªƒ',
+        'ðŸ¥…',
+        'â›³',
+        'ðŸª',
+        'ðŸ¹',
+        'ðŸŽ£',
+        'ðŸ¤¿',
+        'ðŸ¥Š',
+        'ðŸ¥‹',
+        'ðŸŽ½',
+        'ðŸ›¹',
+        'ðŸ›¼',
+        'ðŸ›·',
+        'â›¸ï¸',
+        'ðŸ¥Œ',
+        'ðŸŽ¿',
+        'â›·ï¸',
+        'ðŸ‚',
+        'ðŸª‚',
+        'ðŸ‹ï¸',
+        'ðŸ¤¼',
+        'ðŸ¤¸',
+        'ðŸ¤º',
+        'â›¹ï¸',
+        'ðŸ¤¾',
+        'ðŸŒï¸',
+        'ðŸ‡',
+        'ðŸ§˜',
+        'ðŸ„',
+        'ðŸŠ',
+        'ðŸ¤½',
+        'ðŸš£',
+        'ðŸ§—',
+        'ðŸšµ',
+        'ðŸš´',
+        'ðŸ†',
+        'ðŸ¥‡',
+        'ðŸ¥ˆ',
+        'ðŸ¥‰',
+        'ðŸ…',
+        'ðŸŽ–ï¸',
+        'ðŸµï¸',
+        'ðŸŽ—ï¸',
+        'ðŸŽª',
+        'ðŸ¤¹',
+        'ðŸŽ­',
+        'ðŸ©°',
+        'ðŸŽ¨',
+        'ðŸŽ¬',
+        'ðŸŽ¤',
+        'ðŸŽ§',
+        'ðŸŽ¼',
+        'ðŸŽ¹',
+        'ðŸ¥',
+        'ðŸª˜',
+        'ðŸŽ·',
+        'ðŸŽº',
+        'ðŸª—',
+        'ðŸŽ¸',
+        'ðŸª•',
+        'ðŸŽ»',
+        'ðŸŽ²',
+        'â™Ÿï¸',
+        'ðŸŽ¯',
+        'ðŸŽ³',
+        'ðŸŽ®',
+        'ðŸ•¹ï¸',
+        'ðŸ§©',
       ],
     },
     {
-      'icon': '🚗',
+      'icon': 'ðŸš—',
       'label': 'Travel',
       'emojis': [
-        '🚗',
-        '🚕',
-        '🚙',
-        '🚌',
-        '🚎',
-        '🏎️',
-        '🚓',
-        '🚑',
-        '🚒',
-        '🚐',
-        '🛻',
-        '🚚',
-        '🚛',
-        '🚜',
-        '🏍️',
-        '🛵',
-        '🚲',
-        '🛴',
-        '🛺',
-        '🚔',
-        '🚍',
-        '🚘',
-        '🚖',
-        '🛞',
-        '🚡',
-        '🚠',
-        '🚟',
-        '🚃',
-        '🚋',
-        '🚞',
-        '🚝',
-        '🚄',
-        '🚅',
-        '🚈',
-        '🚂',
-        '🚆',
-        '🚇',
-        '🚊',
-        '🚉',
-        '✈️',
-        '🛫',
-        '🛬',
-        '🛩️',
-        '💺',
-        '🛰️',
-        '🚀',
-        '🛸',
-        '🚁',
-        '🛶',
-        '⛵',
-        '🚤',
-        '🛥️',
-        '🛳️',
-        '⛴️',
-        '🚢',
-        '🗼',
-        '🏰',
-        '🏯',
-        '🏟️',
-        '🎡',
-        '🎢',
-        '🎠',
-        '⛲',
-        '⛱️',
-        '🏖️',
-        '🏝️',
-        '🏜️',
-        '🌋',
-        '⛰️',
-        '🏔️',
-        '🗻',
-        '🏕️',
-        '🛖',
-        '🏠',
-        '🏡',
-        '🏢',
-        '🏬',
-        '🏣',
-        '🏤',
-        '🏥',
+        'ðŸš—',
+        'ðŸš•',
+        'ðŸš™',
+        'ðŸšŒ',
+        'ðŸšŽ',
+        'ðŸŽï¸',
+        'ðŸš“',
+        'ðŸš‘',
+        'ðŸš’',
+        'ðŸš',
+        'ðŸ›»',
+        'ðŸšš',
+        'ðŸš›',
+        'ðŸšœ',
+        'ðŸï¸',
+        'ðŸ›µ',
+        'ðŸš²',
+        'ðŸ›´',
+        'ðŸ›º',
+        'ðŸš”',
+        'ðŸš',
+        'ðŸš˜',
+        'ðŸš–',
+        'ðŸ›ž',
+        'ðŸš¡',
+        'ðŸš ',
+        'ðŸšŸ',
+        'ðŸšƒ',
+        'ðŸš‹',
+        'ðŸšž',
+        'ðŸš',
+        'ðŸš„',
+        'ðŸš…',
+        'ðŸšˆ',
+        'ðŸš‚',
+        'ðŸš†',
+        'ðŸš‡',
+        'ðŸšŠ',
+        'ðŸš‰',
+        'âœˆï¸',
+        'ðŸ›«',
+        'ðŸ›¬',
+        'ðŸ›©ï¸',
+        'ðŸ’º',
+        'ðŸ›°ï¸',
+        'ðŸš€',
+        'ðŸ›¸',
+        'ðŸš',
+        'ðŸ›¶',
+        'â›µ',
+        'ðŸš¤',
+        'ðŸ›¥ï¸',
+        'ðŸ›³ï¸',
+        'â›´ï¸',
+        'ðŸš¢',
+        'ðŸ—¼',
+        'ðŸ°',
+        'ðŸ¯',
+        'ðŸŸï¸',
+        'ðŸŽ¡',
+        'ðŸŽ¢',
+        'ðŸŽ ',
+        'â›²',
+        'â›±ï¸',
+        'ðŸ–ï¸',
+        'ðŸï¸',
+        'ðŸœï¸',
+        'ðŸŒ‹',
+        'â›°ï¸',
+        'ðŸ”ï¸',
+        'ðŸ—»',
+        'ðŸ•ï¸',
+        'ðŸ›–',
+        'ðŸ ',
+        'ðŸ¡',
+        'ðŸ¢',
+        'ðŸ¬',
+        'ðŸ£',
+        'ðŸ¤',
+        'ðŸ¥',
       ],
     },
     {
-      'icon': '💡',
+      'icon': 'ðŸ’¡',
       'label': 'Objects',
       'emojis': [
-        '🔥',
-        '💧',
-        '🌟',
-        '⭐',
-        '✨',
-        '💫',
-        '🌈',
-        '☀️',
-        '🌤️',
-        '⛅',
-        '🎉',
-        '🎊',
-        '🎈',
-        '🎁',
-        '🎀',
-        '🎄',
-        '🪅',
-        '🎆',
-        '🎇',
-        '🧨',
-        '💡',
-        '🔦',
-        '🕯️',
-        '🪔',
-        '💎',
-        '🔮',
-        '🧿',
-        '🪬',
-        '💰',
-        '💴',
-        '💵',
-        '💶',
-        '💷',
-        '🪙',
-        '💳',
-        '💸',
-        '🧲',
-        '🔧',
-        '🪛',
-        '🔩',
-        '⚙️',
-        '🧰',
-        '🪜',
-        '🧱',
-        '🪨',
-        '🪵',
-        '🔗',
-        '🧬',
-        '🔬',
-        '🔭',
-        '📡',
-        '💉',
-        '🩸',
-        '💊',
-        '🩹',
-        '🩼',
-        '🩺',
-        '🩻',
-        '🚪',
-        '🛗',
-        '🪞',
-        '🪟',
-        '🛏️',
-        '🛋️',
-        '🪑',
-        '🚽',
-        '🪠',
-        '🚿',
-        '🛁',
-        '🪤',
-        '📱',
-        '💻',
-        '⌨️',
-        '🖥️',
-        '🖨️',
-        '🖱️',
-        '💾',
-        '💿',
-        '📀',
-        '📷',
-        '📸',
-        '📹',
-        '🎥',
-        '📽️',
-        '🎞️',
-        '📞',
-        '☎️',
-        '📟',
-        '📠',
-        '📺',
-        '📻',
-        '🎙️',
-        '🎚️',
-        '🎛️',
-        '🧭',
-        '⏱️',
-        '⏲️',
-        '⏰',
-        '🕰️',
-        '📡',
+        'ðŸ”¥',
+        'ðŸ’§',
+        'ðŸŒŸ',
+        'â­',
+        'âœ¨',
+        'ðŸ’«',
+        'ðŸŒˆ',
+        'â˜€ï¸',
+        'ðŸŒ¤ï¸',
+        'â›…',
+        'ðŸŽ‰',
+        'ðŸŽŠ',
+        'ðŸŽˆ',
+        'ðŸŽ',
+        'ðŸŽ€',
+        'ðŸŽ„',
+        'ðŸª…',
+        'ðŸŽ†',
+        'ðŸŽ‡',
+        'ðŸ§¨',
+        'ðŸ’¡',
+        'ðŸ”¦',
+        'ðŸ•¯ï¸',
+        'ðŸª”',
+        'ðŸ’Ž',
+        'ðŸ”®',
+        'ðŸ§¿',
+        'ðŸª¬',
+        'ðŸ’°',
+        'ðŸ’´',
+        'ðŸ’µ',
+        'ðŸ’¶',
+        'ðŸ’·',
+        'ðŸª™',
+        'ðŸ’³',
+        'ðŸ’¸',
+        'ðŸ§²',
+        'ðŸ”§',
+        'ðŸª›',
+        'ðŸ”©',
+        'âš™ï¸',
+        'ðŸ§°',
+        'ðŸªœ',
+        'ðŸ§±',
+        'ðŸª¨',
+        'ðŸªµ',
+        'ðŸ”—',
+        'ðŸ§¬',
+        'ðŸ”¬',
+        'ðŸ”­',
+        'ðŸ“¡',
+        'ðŸ’‰',
+        'ðŸ©¸',
+        'ðŸ’Š',
+        'ðŸ©¹',
+        'ðŸ©¼',
+        'ðŸ©º',
+        'ðŸ©»',
+        'ðŸšª',
+        'ðŸ›—',
+        'ðŸªž',
+        'ðŸªŸ',
+        'ðŸ›ï¸',
+        'ðŸ›‹ï¸',
+        'ðŸª‘',
+        'ðŸš½',
+        'ðŸª ',
+        'ðŸš¿',
+        'ðŸ›',
+        'ðŸª¤',
+        'ðŸ“±',
+        'ðŸ’»',
+        'âŒ¨ï¸',
+        'ðŸ–¥ï¸',
+        'ðŸ–¨ï¸',
+        'ðŸ–±ï¸',
+        'ðŸ’¾',
+        'ðŸ’¿',
+        'ðŸ“€',
+        'ðŸ“·',
+        'ðŸ“¸',
+        'ðŸ“¹',
+        'ðŸŽ¥',
+        'ðŸ“½ï¸',
+        'ðŸŽžï¸',
+        'ðŸ“ž',
+        'â˜Žï¸',
+        'ðŸ“Ÿ',
+        'ðŸ“ ',
+        'ðŸ“º',
+        'ðŸ“»',
+        'ðŸŽ™ï¸',
+        'ðŸŽšï¸',
+        'ðŸŽ›ï¸',
+        'ðŸ§­',
+        'â±ï¸',
+        'â²ï¸',
+        'â°',
+        'ðŸ•°ï¸',
+        'ðŸ“¡',
       ],
     },
     {
-      'icon': '🏁',
+      'icon': 'ðŸ',
       'label': 'Symbols',
       'emojis': [
-        '🏳️',
-        '🏴',
-        '🏁',
-        '🚩',
-        '🏳️‍🌈',
-        '🏳️‍⚧️',
-        '🏴‍☠️',
-        '✅',
-        '❌',
-        '❓',
-        '❗',
-        '‼️',
-        '⁉️',
-        '💯',
-        '🔴',
-        '🟠',
-        '🟡',
-        '🟢',
-        '🔵',
-        '🟣',
-        '⚫',
-        '⚪',
-        '🟤',
-        '🔶',
-        '🔷',
-        '🔸',
-        '🔹',
-        '🔺',
-        '🔻',
-        '💠',
-        '🔘',
-        '🔳',
-        '🔲',
-        '▪️',
-        '▫️',
-        '◾',
-        '◽',
-        '◼️',
-        '◻️',
-        '🟥',
-        '🟧',
-        '🟨',
-        '🟩',
-        '🟦',
-        '🟪',
-        '⬛',
-        '⬜',
-        '🟫',
-        '♈',
-        '♉',
-        '♊',
-        '♋',
-        '♌',
-        '♍',
-        '♎',
-        '♏',
-        '♐',
-        '♑',
-        '♒',
-        '♓',
-        '⛎',
-        '🔀',
-        '🔁',
-        '🔂',
-        '▶️',
-        '⏩',
-        '⏭️',
-        '⏯️',
-        '◀️',
-        '⏪',
-        '⏮️',
-        '🔼',
-        '⏫',
-        '🔽',
-        '⏬',
-        '⏸️',
-        '⏹️',
-        '⏺️',
-        '⏏️',
-        '🎦',
-        '♾️',
-        '♻️',
-        '⚜️',
-        '🔱',
-        '📛',
-        '🔰',
-        '⭕',
-        '✅',
-        '☑️',
-        '✔️',
-        '❌',
-        '❎',
-        '➕',
-        '➖',
-        '➗',
-        '✖️',
-        '💲',
-        '💱',
-        '™️',
-        '©️',
-        '®️',
-        '〰️',
-        '➰',
-        '➿',
-        '🔚',
-        '🔙',
-        '🔛',
-        '🔝',
-        '🔜',
-        '🆕',
+        'ðŸ³ï¸',
+        'ðŸ´',
+        'ðŸ',
+        'ðŸš©',
+        'ðŸ³ï¸â€ðŸŒˆ',
+        'ðŸ³ï¸â€âš§ï¸',
+        'ðŸ´â€â˜ ï¸',
+        'âœ…',
+        'âŒ',
+        'â“',
+        'â—',
+        'â€¼ï¸',
+        'â‰ï¸',
+        'ðŸ’¯',
+        'ðŸ”´',
+        'ðŸŸ ',
+        'ðŸŸ¡',
+        'ðŸŸ¢',
+        'ðŸ”µ',
+        'ðŸŸ£',
+        'âš«',
+        'âšª',
+        'ðŸŸ¤',
+        'ðŸ”¶',
+        'ðŸ”·',
+        'ðŸ”¸',
+        'ðŸ”¹',
+        'ðŸ”º',
+        'ðŸ”»',
+        'ðŸ’ ',
+        'ðŸ”˜',
+        'ðŸ”³',
+        'ðŸ”²',
+        'â–ªï¸',
+        'â–«ï¸',
+        'â—¾',
+        'â—½',
+        'â—¼ï¸',
+        'â—»ï¸',
+        'ðŸŸ¥',
+        'ðŸŸ§',
+        'ðŸŸ¨',
+        'ðŸŸ©',
+        'ðŸŸ¦',
+        'ðŸŸª',
+        'â¬›',
+        'â¬œ',
+        'ðŸŸ«',
+        'â™ˆ',
+        'â™‰',
+        'â™Š',
+        'â™‹',
+        'â™Œ',
+        'â™',
+        'â™Ž',
+        'â™',
+        'â™',
+        'â™‘',
+        'â™’',
+        'â™“',
+        'â›Ž',
+        'ðŸ”€',
+        'ðŸ”',
+        'ðŸ”‚',
+        'â–¶ï¸',
+        'â©',
+        'â­ï¸',
+        'â¯ï¸',
+        'â—€ï¸',
+        'âª',
+        'â®ï¸',
+        'ðŸ”¼',
+        'â«',
+        'ðŸ”½',
+        'â¬',
+        'â¸ï¸',
+        'â¹ï¸',
+        'âºï¸',
+        'âï¸',
+        'ðŸŽ¦',
+        'â™¾ï¸',
+        'â™»ï¸',
+        'âšœï¸',
+        'ðŸ”±',
+        'ðŸ“›',
+        'ðŸ”°',
+        'â­•',
+        'âœ…',
+        'â˜‘ï¸',
+        'âœ”ï¸',
+        'âŒ',
+        'âŽ',
+        'âž•',
+        'âž–',
+        'âž—',
+        'âœ–ï¸',
+        'ðŸ’²',
+        'ðŸ’±',
+        'â„¢ï¸',
+        'Â©ï¸',
+        'Â®ï¸',
+        'ã€°ï¸',
+        'âž°',
+        'âž¿',
+        'ðŸ”š',
+        'ðŸ”™',
+        'ðŸ”›',
+        'ðŸ”',
+        'ðŸ”œ',
+        'ðŸ†•',
       ],
     },
   ];
@@ -4799,9 +4868,12 @@ class _ChatScreenState extends State<ChatScreen> {
     String path,
     Duration duration,
   ) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+
     try {
       // Show uploading indicator
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Row(
             children: [
@@ -4856,8 +4928,10 @@ class _ChatScreenState extends State<ChatScreen> {
         recipientId: widget.otherUser.id,
       );
 
+      if (!mounted) return;
+
       // Hide uploading indicator
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      messenger.hideCurrentSnackBar();
 
       if (result != null && result['success'] == true) {
         final fileData = result['file'] ?? result;
@@ -4870,7 +4944,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final serverId = fileData['message_id'];
         if (serverId != null && _messages.any((m) => m.id == serverId)) {
           debugPrint(
-            '🎤 Voice message already added by socket handler, skipping local insert',
+            'ðŸŽ¤ Voice message already added by socket handler, skipping local insert',
           );
         } else {
           // Create local message to show in chat
@@ -4894,6 +4968,7 @@ class _ChatScreenState extends State<ChatScreen> {
             fileSize: file.lengthSync(),
           );
 
+          if (!mounted) return;
           setState(() {
             _messages.insert(0, message);
           });
@@ -4904,7 +4979,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _scrollToBottom();
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('Voice message sent!'),
             backgroundColor: Colors.green,
@@ -4917,7 +4992,7 @@ class _ChatScreenState extends State<ChatScreen> {
           await file.delete();
         } catch (_) {}
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('Failed to send voice message'),
             backgroundColor: Colors.red,
@@ -4926,15 +5001,14 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       debugPrint('Error uploading voice message: $e');
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error sending voice message: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Error sending voice message: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -4944,9 +5018,12 @@ class _ChatScreenState extends State<ChatScreen> {
     String fileName,
     String mimeType,
   ) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+
     try {
       // Show uploading indicator
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Row(
             children: [
@@ -4980,8 +5057,10 @@ class _ChatScreenState extends State<ChatScreen> {
         recipientId: widget.otherUser.id,
       );
 
+      if (!mounted) return;
+
       // Hide uploading indicator
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      messenger.hideCurrentSnackBar();
 
       if (result != null && result['success'] == true) {
         final fileData = result['file'] ?? result;
@@ -4996,7 +5075,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final serverId = fileData['message_id'];
         if (serverId != null && _messages.any((m) => m.id == serverId)) {
           debugPrint(
-            '📎 File message already added by socket handler, skipping local insert',
+            'ðŸ“Ž File message already added by socket handler, skipping local insert',
           );
         } else {
           // Create local message to show in chat
@@ -5025,13 +5104,14 @@ class _ChatScreenState extends State<ChatScreen> {
             fileSize: file.lengthSync(),
           );
 
+          if (!mounted) return;
           setState(() {
             _messages.insert(0, message);
           });
         }
         _scrollToBottom();
 
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('File sent!'),
             duration: Duration(seconds: 2),
@@ -5042,12 +5122,11 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       debugPrint('Error uploading file: $e');
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to send file: $e')));
-      }
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(content: Text('Failed to send file: $e')),
+      );
     }
   }
 
@@ -5295,7 +5374,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                                 cacheExtent: 500,
                                 itemCount: _messages.length,
-                                addAutomaticKeepAlives: true,
+                                addAutomaticKeepAlives: false,
                                 addRepaintBoundaries: true,
                                 itemBuilder: (context, index) {
                                   final message = _messages[index];
@@ -5324,7 +5403,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
                                   return Column(
                                     children: [
-                                      if (dateSeparator != null) dateSeparator,
+                                      ?dateSeparator,
                                       // System messages (call summaries) render as a centered pill
                                       if (message.messageType == 'system')
                                         Padding(
@@ -5339,8 +5418,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                                     vertical: 5,
                                                   ),
                                               decoration: BoxDecoration(
-                                                color: Colors.white.withOpacity(
-                                                  0.08,
+                                                color: Colors.white.withValues(
+                                                  alpha: 0.08,
                                                 ),
                                                 borderRadius:
                                                     BorderRadius.circular(20),
@@ -5387,8 +5466,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                         shape: BoxShape.circle,
                                         boxShadow: [
                                           BoxShadow(
-                                            color: Colors.black.withOpacity(
-                                              0.3,
+                                            color: Colors.black.withValues(
+                                              alpha: 0.3,
                                             ),
                                             blurRadius: 8,
                                             offset: const Offset(0, 2),
@@ -5580,14 +5659,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                           enableInteractiveSelection: true,
                                           autocorrect: true,
                                           enableSuggestions: true,
-                                          scribbleEnabled: false,
+                                          stylusHandwritingEnabled: false,
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
                               ),
-                              // Send button — always visible, vertically centred
+                              // Send button â€” always visible, vertically centred
                               Container(
                                 margin: const EdgeInsets.only(left: 6),
                                 child: ElevatedButton(
@@ -5943,78 +6022,12 @@ class _ChatScreenState extends State<ChatScreen> {
     bool isSentByMe,
     Widget child,
   ) {
-    // Swipe direction: incoming (from left) swipe right, outgoing (from right) swipe left
-    const double maxSlide = 70.0;
-    const double threshold = 50.0;
-
-    // Use ValueNotifier for proper state tracking during drag
-    final dragOffset = ValueNotifier<double>(0.0);
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onHorizontalDragUpdate: (details) {
-        if (isSentByMe) {
-          // Outgoing: swipe left (negative)
-          dragOffset.value = (dragOffset.value + details.delta.dx).clamp(
-            -maxSlide,
-            0.0,
-          );
-        } else {
-          // Incoming: swipe right (positive)
-          dragOffset.value = (dragOffset.value + details.delta.dx).clamp(
-            0.0,
-            maxSlide,
-          );
-        }
-      },
-      onHorizontalDragEnd: (details) {
-        // If swiped far enough, trigger reply
-        if (dragOffset.value.abs() > threshold) {
-          _setReplyTo(message);
-        }
-        // Animate back to 0
-        dragOffset.value = 0.0;
-      },
+    return _SwipeableMessage(
+      key: ValueKey<String>('swipe_${message.id}'),
+      isSentByMe: isSentByMe,
+      onReply: () => _setReplyTo(message),
       onLongPress: () => _showMessageContextMenu(message, isSentByMe),
-      child: ValueListenableBuilder<double>(
-        valueListenable: dragOffset,
-        builder: (context, offset, _) {
-          return Transform.translate(
-            offset: Offset(offset, 0),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                // Reply icon that appears when swiping
-                if (offset.abs() > 10)
-                  Positioned(
-                    left: isSentByMe ? -35 : null,
-                    right: isSentByMe ? null : -35,
-                    top: 0,
-                    bottom: 0,
-                    child: Center(
-                      child: Opacity(
-                        opacity: (offset.abs() / maxSlide).clamp(0.0, 1.0),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF7C3AED).withOpacity(0.9),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.reply,
-                            color: Colors.white,
-                            size: 18,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                child,
-              ],
-            ),
-          );
-        },
-      ),
+      child: child,
     );
   }
 
@@ -6397,7 +6410,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _messageTranslations[message.id] = translatedText;
         });
         debugPrint(
-          '🌐 Auto-translated message ${message.id}: "${message.content}" → "$translatedText"',
+          'ðŸŒ Auto-translated message ${message.id}: "${message.content}" â†’ "$translatedText"',
         );
       }
     } catch (e) {
@@ -6408,13 +6421,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Translate a message manually
   Future<void> _translateMessage(Message message) async {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+
     try {
       // Check if already translated - toggle off if so
       if (_messageTranslations.containsKey(message.id)) {
         setState(() {
           _messageTranslations.remove(message.id);
         });
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('Translation hidden'),
             duration: Duration(seconds: 1),
@@ -6425,7 +6441,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       // Show loading indicator
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Row(
             children: [
@@ -6452,8 +6468,10 @@ class _ChatScreenState extends State<ChatScreen> {
         targetLang: targetLang,
       );
 
+      if (!mounted) return;
+
       // Hide loading indicator
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      messenger.hideCurrentSnackBar();
 
       if (translatedText != null && translatedText != message.content) {
         // Store translation and update UI
@@ -6461,7 +6479,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _messageTranslations[message.id] = translatedText;
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('Message translated'),
             duration: Duration(seconds: 1),
@@ -6470,7 +6488,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       } else if (translatedText == message.content) {
         // Same text, no translation needed
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('Message is already in your language'),
             duration: Duration(seconds: 2),
@@ -6479,7 +6497,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       } else {
         // Translation failed
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('Translation failed. Please try again.'),
             duration: Duration(seconds: 3),
@@ -6489,10 +6507,11 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       // Hide loading indicator
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
 
       debugPrint('Translation error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Text('Translation failed. Please try again.'),
           duration: Duration(seconds: 3),
@@ -6882,7 +6901,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (messageId == null || status == null) return;
 
-    // Status priority — never downgrade (server may send 'seen' then 'delivered' out of order)
+    // Status priority â€” never downgrade (server may send 'seen' then 'delivered' out of order)
     const statusRank = {'sending': 0, 'sent': 1, 'delivered': 2, 'seen': 3};
 
     setState(() {
@@ -6894,7 +6913,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final incomingRank = statusRank[status] ?? 0;
         if (incomingRank < currentRank) {
           debugPrint(
-            '⚠️ Ignoring status downgrade for $messageId: ${message.status} → $status',
+            'âš ï¸ Ignoring status downgrade for $messageId: ${message.status} â†’ $status',
           );
           return;
         }
@@ -6938,7 +6957,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    debugPrint('📊 Message $messageId status updated to: $status');
+    debugPrint('ðŸ“Š Message $messageId status updated to: $status');
   }
 
   /// Handle messages read notifications
@@ -6949,7 +6968,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (readerId == widget.otherUser.id &&
         messageCount != null &&
         messageCount > 0) {
-      debugPrint('✓✓ ${widget.otherUser.fullName} read $messageCount messages');
+      debugPrint(
+        'âœ“âœ“ ${widget.otherUser.fullName} read $messageCount messages',
+      );
 
       // Update status of sent messages to 'seen'
       setState(() {
@@ -7388,6 +7409,13 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _messages.clear();
         _messages.addAll(messages);
+        _databaseLoadedMessageIds
+          ..clear()
+          ..addAll(
+            messages
+                .where((message) => message.id > 0)
+                .map((message) => message.id),
+          );
       });
     } catch (e) {
       debugPrint('Error refreshing messages: $e');
@@ -7408,13 +7436,13 @@ class _ChatScreenState extends State<ChatScreen> {
       content = 'Deleted message';
     } else if (message.messageType == 'voice' ||
         message.messageType == 'audio') {
-      content = '🎤 Voice message';
+      content = 'ðŸŽ¤ Voice message';
     } else if (message.messageType == 'image') {
-      content = '📷 Photo';
+      content = 'ðŸ“· Photo';
     } else if (message.messageType == 'video') {
-      content = '🎬 Video';
+      content = 'ðŸŽ¬ Video';
     } else if (message.messageType == 'file') {
-      content = '📎 ${message.fileName ?? "File"}';
+      content = 'ðŸ“Ž ${message.fileName ?? "File"}';
     } else {
       content = message.content.length > 50
           ? '${message.content.substring(0, 50)}...'
@@ -7544,26 +7572,26 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Ensure emoji uses color presentation (appends U+FE0F if needed)
-  /// Characters like ❤ (U+2764) render as black text on Android without this.
+  /// Characters like â¤ (U+2764) render as black text on Android without this.
   String _ensureColorEmoji(String emoji) {
     const variationSelector = '\uFE0F';
     // Characters that need the variation selector for color rendering
     const needsSelector = <int>{
-      0x2764, // ❤
-      0x2602, // ☂
-      0x2614, // ☔
-      0x263A, // ☺
-      0x2B50, // ⭐
-      0x2600, // ☀
-      0x2601, // ☁
-      0x260E, // ☎
-      0x2709, // ✉
-      0x270F, // ✏
-      0x2744, // ❄
-      0x2728, // ✨
-      0x2702, // ✂
-      0x26A1, // ⚡
-      0x2615, // ☕
+      0x2764, // â¤
+      0x2602, // â˜‚
+      0x2614, // â˜”
+      0x263A, // â˜º
+      0x2B50, // â­
+      0x2600, // â˜€
+      0x2601, // â˜
+      0x260E, // â˜Ž
+      0x2709, // âœ‰
+      0x270F, // âœ
+      0x2744, // â„
+      0x2728, // âœ¨
+      0x2702, // âœ‚
+      0x26A1, // âš¡
+      0x2615, // â˜•
     };
     if (emoji.isNotEmpty &&
         needsSelector.contains(emoji.runes.first) &&
@@ -7599,8 +7627,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: iReacted
-                      ? const Color(0xFF6D28D9).withOpacity(0.5)
-                      : Colors.white.withOpacity(0.15),
+                      ? const Color(0xFF6D28D9).withValues(alpha: 0.5)
+                      : Colors.white.withValues(alpha: 0.15),
                   width: iReacted ? 1.0 : 0.5,
                 ),
               ),
@@ -7631,15 +7659,16 @@ class _ChatScreenState extends State<ChatScreen> {
     // Backend set_reaction now handles toggle: if user has this emoji it removes it,
     // if not it adds it. User can have multiple different emojis on same message.
     _socketService.setReaction(messageId, emoji);
-    debugPrint('👆 Toggling reaction $emoji on message $messageId');
+    debugPrint('ðŸ‘† Toggling reaction $emoji on message $messageId');
   }
 
   /// Resolve a user ID string to a display name for the reactions sheet.
   String _resolveReactorName(String odorIdStr) {
     final currentUserStr = _currentUserId?.toString() ?? '';
     if (odorIdStr == currentUserStr) return 'You';
-    if (odorIdStr == widget.otherUser.id.toString())
+    if (odorIdStr == widget.otherUser.id.toString()) {
       return widget.otherUser.fullName;
+    }
     return 'User $odorIdStr';
   }
 
@@ -7830,7 +7859,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.15),
+                  color: Colors.black.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(6),
                   border: const Border(
                     left: BorderSide(color: Color(0xFFB794F6), width: 3),
@@ -7851,17 +7880,17 @@ class _ChatScreenState extends State<ChatScreen> {
                     // Improve display for file messages
                     if (contentText.contains('<audio') ||
                         contentText.contains('audio/')) {
-                      contentText = '🎤 Voice message';
+                      contentText = 'ðŸŽ¤ Voice message';
                     } else if (contentText.contains('<img') ||
                         contentText.contains('image/')) {
-                      contentText = '📷 Photo';
+                      contentText = 'ðŸ“· Photo';
                     } else if (contentText.contains('<video') ||
                         contentText.contains('video/')) {
-                      contentText = '🎬 Video';
+                      contentText = 'ðŸŽ¬ Video';
                     } else if (contentText.contains('file/') ||
                         contentText.endsWith('.pdf') ||
                         contentText.endsWith('.doc')) {
-                      contentText = '📎 File';
+                      contentText = 'ðŸ“Ž File';
                     }
 
                     return Column(
@@ -7871,7 +7900,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         Text(
                           senderName,
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
+                            color: Colors.white.withValues(alpha: 0.9),
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                           ),
@@ -7880,7 +7909,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         Text(
                           contentText,
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
+                            color: Colors.white.withValues(alpha: 0.7),
                             fontSize: 12,
                           ),
                           maxLines: 1,
@@ -7997,62 +8026,60 @@ class _ChatScreenState extends State<ChatScreen> {
                   !isAudio))
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: IntrinsicWidth(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Original message text
-                    Text(
-                      isMedia
-                          ? (message.fileName ?? message.content)
-                          : message.content,
-                      style: const TextStyle(color: Colors.white, fontSize: 15),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Original message text
+                  Text(
+                    isMedia
+                        ? (message.fileName ?? message.content)
+                        : message.content,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                  ),
+                  // Translation (if available)
+                  if (_messageTranslations.containsKey(message.id)) ...[
+                    const SizedBox(height: 8),
+                    // Separator line
+                    Container(
+                      height: 1,
+                      color: Colors.white.withValues(alpha: 0.3),
+                      margin: const EdgeInsets.symmetric(vertical: 4),
                     ),
-                    // Translation (if available)
-                    if (_messageTranslations.containsKey(message.id)) ...[
-                      const SizedBox(height: 8),
-                      // Separator line
-                      Container(
-                        height: 1,
-                        color: Colors.white.withOpacity(0.3),
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                      ),
-                      // Translated text with language indicator
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Globe icon
-                          Icon(
-                            Icons.language,
-                            size: 14,
-                            color: Colors.white.withOpacity(0.7),
-                          ),
-                          const SizedBox(width: 4),
-                          // Language indicator (placeholder for now)
-                          Text(
-                            'auto → en',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      // Translated text in italic
-                      Text(
-                        _messageTranslations[message.id]!,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.9),
-                          fontSize: 14,
-                          fontStyle: FontStyle.italic,
+                    // Translated text with language indicator
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Globe icon
+                        Icon(
+                          Icons.language,
+                          size: 14,
+                          color: Colors.white.withValues(alpha: 0.7),
                         ),
+                        const SizedBox(width: 4),
+                        // Language indicator (placeholder for now)
+                        Text(
+                          'auto â†’ en',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.7),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    // Translated text in italic
+                    Text(
+                      _messageTranslations[message.id]!,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontSize: 14,
+                        fontStyle: FontStyle.italic,
                       ),
-                    ],
+                    ),
                   ],
-                ),
+                ],
               ),
             )
           else if (isMedia || isAudio)
@@ -8072,7 +8099,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   const SizedBox(width: 4),
                   // Status indicator
-                  _buildStatusIndicator(message.status),
+                  _buildStatusIndicator(_statusForUi(message)),
                 ],
               ),
             ),
@@ -8135,7 +8162,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         child: Icon(
                           Icons.sentiment_satisfied_alt_outlined,
-                          color: Colors.white.withOpacity(0.6),
+                          color: Colors.white.withValues(alpha: 0.6),
                           size: 22,
                         ),
                       ),
@@ -8145,7 +8172,7 @@ class _ChatScreenState extends State<ChatScreen> {
             },
           ),
 
-          // Reaction pills below bubble — tight against bubble bottom
+          // Reaction pills below bubble â€” tight against bubble bottom
           if (hasReactions)
             Padding(
               padding: EdgeInsets.only(
@@ -8159,6 +8186,13 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+
+  String _statusForUi(Message message) {
+    if (_databaseLoadedMessageIds.contains(message.id)) {
+      return 'sent';
+    }
+    return message.status;
   }
 
   /// Check if content is just a filename (for media messages)
@@ -8299,6 +8333,95 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
+class _SwipeableMessage extends StatefulWidget {
+  const _SwipeableMessage({
+    super.key,
+    required this.isSentByMe,
+    required this.onReply,
+    required this.onLongPress,
+    required this.child,
+  });
+
+  final bool isSentByMe;
+  final VoidCallback onReply;
+  final VoidCallback onLongPress;
+  final Widget child;
+
+  @override
+  State<_SwipeableMessage> createState() => _SwipeableMessageState();
+}
+
+class _SwipeableMessageState extends State<_SwipeableMessage> {
+  static const double _maxSlide = 70.0;
+  static const double _threshold = 50.0;
+
+  double _dragOffset = 0.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: (details) {
+        setState(() {
+          if (widget.isSentByMe) {
+            _dragOffset = (_dragOffset + details.delta.dx).clamp(
+              -_maxSlide,
+              0.0,
+            );
+          } else {
+            _dragOffset = (_dragOffset + details.delta.dx).clamp(
+              0.0,
+              _maxSlide,
+            );
+          }
+        });
+      },
+      onHorizontalDragEnd: (details) {
+        if (_dragOffset.abs() > _threshold) {
+          widget.onReply();
+        }
+        setState(() {
+          _dragOffset = 0.0;
+        });
+      },
+      onLongPress: widget.onLongPress,
+      child: Transform.translate(
+        offset: Offset(_dragOffset, 0),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            if (_dragOffset.abs() > 10)
+              Positioned(
+                left: widget.isSentByMe ? -35 : null,
+                right: widget.isSentByMe ? null : -35,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: Opacity(
+                    opacity: (_dragOffset.abs() / _maxSlide).clamp(0.0, 1.0),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF7C3AED).withValues(alpha: 0.9),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.reply,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            widget.child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Voice Recording Modal Widget
 class _VoiceRecordingModal extends StatefulWidget {
   final Function(String path, Duration duration) onSend;
@@ -8311,7 +8434,7 @@ class _VoiceRecordingModal extends StatefulWidget {
 }
 
 class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
-  // Native channel — backed by Android MediaRecorder
+  // Native channel â€” backed by Android MediaRecorder
   static const _ch = MethodChannel(
     'com.example.flutter_messenger_v2/audio_recorder',
   );
@@ -8338,7 +8461,7 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
 
   Future<void> _initRecorder() async {
     try {
-      // Only open the player — recording goes through the native channel
+      // Only open the player â€” recording goes through the native channel
       await _player.openPlayer();
       setState(() {
         _isRecorderInitialized = true; // native channel is always ready
@@ -8418,7 +8541,7 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
           });
         }
       } catch (_) {
-        // Channel error — just increment duration silently
+        // Channel error â€” just increment duration silently
         if (mounted && _isRecording && !_isPaused) {
           setState(() => _duration += const Duration(milliseconds: 100));
         }
@@ -8506,7 +8629,7 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
     final isCompact = mq.size.height < 600;
 
     return SafeArea(
-      top: false, // bottom sheet — only apply bottom safe area
+      top: false, // bottom sheet â€” only apply bottom safe area
       child: Container(
         decoration: const BoxDecoration(
           color: Color(0xFF2D2D2D),
@@ -8584,7 +8707,7 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
 
                 // Controls
                 if (!_isRecording && !_hasRecording) ...[
-                  // Initial state — Start button
+                  // Initial state â€” Start button
                   ElevatedButton.icon(
                     onPressed: _isRecorderInitialized ? _startRecording : null,
                     icon: const Icon(Icons.mic, size: 24),
@@ -8607,7 +8730,7 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
                     ),
                   ),
                 ] else if (_isRecording) ...[
-                  // Recording state — Pause/Resume + Stop
+                  // Recording state â€” Pause/Resume + Stop
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -8641,7 +8764,7 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
                     ],
                   ),
                 ] else if (_hasRecording) ...[
-                  // Has recording — Discard / Play / Send
+                  // Has recording â€” Discard / Play / Send
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
@@ -8830,7 +8953,7 @@ class _AudioMessagePlayerState extends State<_AudioMessagePlayer> {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -8890,7 +9013,7 @@ class _AudioMessagePlayerState extends State<_AudioMessagePlayer> {
                       ? '${_formatDuration(_position)} / ${_formatDuration(_duration)}'
                       : _formatDuration(_duration),
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.7),
+                    color: Colors.white.withValues(alpha: 0.7),
                     fontSize: 11,
                   ),
                 ),

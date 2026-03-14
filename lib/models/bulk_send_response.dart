@@ -127,7 +127,7 @@ class BulkSendResponse {
           .whereType<Map>()
           .map(
             (item) => BulkSentMessage.fromJson(
-              Map<String, dynamic>.from(item as Map),
+              Map<String, dynamic>.from(item),
             ),
           )
           .toList();
@@ -139,7 +139,7 @@ class BulkSendResponse {
           .whereType<Map>()
           .map(
             (item) => BulkSendRecipientResult.fromJson(
-              Map<String, dynamic>.from(item as Map),
+              Map<String, dynamic>.from(item),
             ),
           )
           .toList();
