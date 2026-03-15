@@ -118,11 +118,24 @@ class Message {
 
     // Parse HTML content to extract file information
     String content = json['content'] as String;
-    String messageType = json['message_type'] as String;
+    String messageType = (json['message_type'] as String?) ?? 'text';
     String? fileUrl = json['file_url'] as String?;
     String? fileName = json['file_name'] as String?;
     String? fileType = json['file_type'] as String?;
     int? fileSize = json['file_size'] as int?;
+
+    final rawTaskFlag = json['is_task'] as bool? ?? false;
+    final inferredTaskFromType =
+        messageType.toLowerCase() == 'task' ||
+        messageType.toLowerCase() == 'todo';
+    final isTaskMessage = rawTaskFlag || inferredTaskFromType;
+
+    // Keep task messages on the text render path while preserving task state.
+    if (inferredTaskFromType) {
+      messageType = 'text';
+    }
+
+    final timestamp = json['timestamp'] as String;
 
     // If content contains HTML and no file info is provided, parse it
     if (content.contains('<') && content.contains('>') && fileUrl == null) {
@@ -143,7 +156,7 @@ class Message {
       recipientId: json['recipient_id'] as int,
       content: content,
       messageType: messageType,
-      timestamp: json['timestamp'] as String,
+      timestamp: timestamp,
       timestampMs: json['timestamp_ms'] as int,
       isRead: json['is_read'] as bool,
       readAt: json['read_at'] as String?,
@@ -160,8 +173,10 @@ class Message {
       fileSize: fileSize,
       fileType: fileType,
       isDeleted: json['is_deleted'] as bool? ?? false,
-      isTask: json['is_task'] as bool? ?? false,
-      taskCreatedAt: json['task_created_at'] as String?,
+      isTask: isTaskMessage,
+      taskCreatedAt:
+          json['task_created_at'] as String? ??
+          (isTaskMessage ? timestamp : null),
       taskCompletedAt:
           json['task_completed_at'] as String? ??
           json['completed_at'] as String?,

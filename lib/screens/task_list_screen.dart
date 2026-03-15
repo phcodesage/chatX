@@ -9,7 +9,7 @@ import '../services/lobby_service.dart';
 /// Screen to display all tasks from admin and chat-based tasks
 class TaskListScreen extends StatefulWidget {
   static const route = '/tasks';
-  
+
   const TaskListScreen({super.key});
 
   @override
@@ -45,18 +45,22 @@ class _TaskListScreenState extends State<TaskListScreen> {
     });
 
     // Listen for task completed event
-    _socketService.addListener('taskCompleted', key, (Map<String, dynamic> data) {
+    _socketService.addListener('taskCompleted', key, (
+      Map<String, dynamic> data,
+    ) {
       _handleTaskCompleted(data);
     });
 
     // Listen for task uncompleted event
-    _socketService.addListener('taskUncompleted', key, (Map<String, dynamic> data) {
+    _socketService.addListener('taskUncompleted', key, (
+      Map<String, dynamic> data,
+    ) {
       _handleTaskUncompleted(data);
     });
   }
 
   void _handleTaskCompleted(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
+    final messageId = _extractTaskMessageId(data);
     if (messageId == null) return;
 
     setState(() {
@@ -73,14 +77,16 @@ class _TaskListScreenState extends State<TaskListScreen> {
           createdByUsername: task.createdByUsername,
           isCompleted: true,
           createdAt: task.createdAt,
-          completedAt: data['completed_at'] as String? ?? DateTime.now().toIso8601String(),
+          completedAt:
+              data['completed_at'] as String? ??
+              DateTime.now().toIso8601String(),
         );
       }
     });
   }
 
   void _handleTaskUncompleted(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
+    final messageId = _extractTaskMessageId(data);
     if (messageId == null) return;
 
     setState(() {
@@ -127,6 +133,40 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  int? _toInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  int? _extractTaskMessageId(Map<String, dynamic> data) {
+    final directId =
+        _toInt(data['message_id']) ??
+        _toInt(data['messageId']) ??
+        _toInt(data['id']);
+    if (directId != null) {
+      return directId;
+    }
+
+    final nestedMessage = data['message_data'] ?? data['message'];
+    if (nestedMessage is Map<String, dynamic>) {
+      return _toInt(nestedMessage['message_id']) ??
+          _toInt(nestedMessage['messageId']) ??
+          _toInt(nestedMessage['id']);
+    }
+
+    if (nestedMessage is Map) {
+      final casted = Map<String, dynamic>.from(nestedMessage);
+      return _toInt(casted['message_id']) ??
+          _toInt(casted['messageId']) ??
+          _toInt(casted['id']);
+    }
+
+    return null;
+  }
+
   Future<void> _toggleTaskComplete(Task task) async {
     try {
       final success = await MessageService.completeTask(task.id);
@@ -144,7 +184,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
               createdByUsername: task.createdByUsername,
               isCompleted: !task.isCompleted,
               createdAt: task.createdAt,
-              completedAt: !task.isCompleted ? DateTime.now().toIso8601String() : null,
+              completedAt: !task.isCompleted
+                  ? DateTime.now().toIso8601String()
+                  : null,
             );
           }
         });
@@ -238,22 +280,16 @@ class _TaskListScreenState extends State<TaskListScreen> {
           children: [
             Icon(Icons.error_outline, color: Colors.red[300], size: 48),
             const SizedBox(height: 16),
-            Text(
-              _error!,
-              style: TextStyle(color: Colors.red[300]),
-            ),
+            Text(_error!, style: TextStyle(color: Colors.red[300])),
             const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadTasks,
-              child: const Text('Retry'),
-            ),
+            ElevatedButton(onPressed: _loadTasks, child: const Text('Retry')),
           ],
         ),
       );
     }
 
     final allTasks = [..._tasks, ..._chatBasedTasks];
-    
+
     if (allTasks.isEmpty) {
       return Center(
         child: Column(
@@ -338,7 +374,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
         onTap: () {
           // If task has an associated conversation, navigate to chat
           if (task.assignedToUserId != null) {
-            _navigateToChat(task.assignedToUserId!, task.assignedToUsername ?? 'User');
+            _navigateToChat(
+              task.assignedToUserId!,
+              task.assignedToUsername ?? 'User',
+            );
           }
         },
         borderRadius: BorderRadius.circular(12),
@@ -355,10 +394,14 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: isCompleted ? const Color(0xFF4CAF50) : Colors.grey,
+                      color: isCompleted
+                          ? const Color(0xFF4CAF50)
+                          : Colors.grey,
                       width: 2,
                     ),
-                    color: isCompleted ? const Color(0xFF4CAF50) : Colors.transparent,
+                    color: isCompleted
+                        ? const Color(0xFF4CAF50)
+                        : Colors.transparent,
                   ),
                   child: isCompleted
                       ? const Icon(Icons.check, size: 16, color: Colors.white)
@@ -377,18 +420,23 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         color: Colors.white,
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
-                        decoration: isCompleted ? TextDecoration.lineThrough : null,
+                        decoration: isCompleted
+                            ? TextDecoration.lineThrough
+                            : null,
                         decorationColor: Colors.grey,
                       ),
                     ),
-                    if (task.description != null && task.description!.isNotEmpty) ...[
+                    if (task.description != null &&
+                        task.description!.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
                         task.description!,
                         style: TextStyle(
                           color: Colors.grey[500],
                           fontSize: 14,
-                          decoration: isCompleted ? TextDecoration.lineThrough : null,
+                          decoration: isCompleted
+                              ? TextDecoration.lineThrough
+                              : null,
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -397,19 +445,33 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                        Icon(
+                          Icons.access_time,
+                          size: 14,
+                          color: Colors.grey[600],
+                        ),
                         const SizedBox(width: 4),
                         Text(
                           task.formattedTime,
-                          style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                          ),
                         ),
                         if (task.createdByUsername != null) ...[
                           const SizedBox(width: 16),
-                          Icon(Icons.person_outline, size: 14, color: Colors.grey[600]),
+                          Icon(
+                            Icons.person_outline,
+                            size: 14,
+                            color: Colors.grey[600],
+                          ),
                           const SizedBox(width: 4),
                           Text(
                             task.createdByUsername!,
-                            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 12,
+                            ),
                           ),
                         ],
                       ],
@@ -419,7 +481,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
               ),
               // Delete button
               IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                icon: const Icon(
+                  Icons.delete_outline,
+                  color: Colors.red,
+                  size: 20,
+                ),
                 onPressed: () => _deleteTask(task),
               ),
             ],
@@ -434,7 +500,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       // Get user details first
       final users = await LobbyService.getLobbyUsers();
       LobbyUser? user;
-      
+
       try {
         user = users.firstWhere((u) => u.id == userId);
       } catch (e) {
@@ -445,9 +511,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       if (mounted && user != null) {
         Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (context) => ChatScreen(otherUser: user!),
-          ),
+          MaterialPageRoute(builder: (context) => ChatScreen(otherUser: user!)),
         );
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -200,6 +200,9 @@ class SocketService {
       case 'taskAdded':
         _taskAddedListeners[key] = callback as Function(Map<String, dynamic>);
         break;
+      case 'taskMarked':
+        _taskAddedListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
       case 'taskCompleted':
         _taskCompletedListeners[key] =
             callback as Function(Map<String, dynamic>);
@@ -400,6 +403,9 @@ class SocketService {
         _messageEditedListeners.remove(key);
         break;
       case 'taskAdded':
+        _taskAddedListeners.remove(key);
+        break;
+      case 'taskMarked':
         _taskAddedListeners.remove(key);
         break;
       case 'taskCompleted':
@@ -1089,23 +1095,62 @@ class SocketService {
       _broadcast(_messageEditedListeners, data as Map<String, dynamic>);
     });
 
-    // Task added event
-    _socket!.on('task_added', (data) {
-      debugPrint('📋 Task added: $data');
-      _broadcast(_taskAddedListeners, data as Map<String, dynamic>);
+    _socket!.on('messageEdited', (data) {
+      debugPrint('✏️ Message edited (messageEdited): $data');
+      _broadcast(_messageEditedListeners, data as Map<String, dynamic>);
     });
 
-    // Task completed event
-    _socket!.on('task_completed', (data) {
-      debugPrint('✅ Task completed: $data');
-      _broadcast(_taskCompletedListeners, data as Map<String, dynamic>);
-    });
+    void broadcastTaskAdded(dynamic data, String eventName) {
+      if (data is! Map) return;
+      final payload = Map<String, dynamic>.from(data as Map);
+      debugPrint('📋 Task added ($eventName): $payload');
+      _broadcast(_taskAddedListeners, payload);
+    }
 
-    // Task uncompleted event
-    _socket!.on('task_uncompleted', (data) {
-      debugPrint('⬜ Task uncompleted: $data');
-      _broadcast(_taskUncompletedListeners, data as Map<String, dynamic>);
-    });
+    void broadcastTaskCompleted(dynamic data, String eventName) {
+      if (data is! Map) return;
+      final payload = Map<String, dynamic>.from(data as Map);
+      debugPrint('✅ Task completed ($eventName): $payload');
+      _broadcast(_taskCompletedListeners, payload);
+    }
+
+    void broadcastTaskUncompleted(dynamic data, String eventName) {
+      if (data is! Map) return;
+      final payload = Map<String, dynamic>.from(data as Map);
+      debugPrint('⬜ Task uncompleted ($eventName): $payload');
+      _broadcast(_taskUncompletedListeners, payload);
+    }
+
+    // Task events (support snake_case and camelCase aliases)
+    _socket!.on('task_added', (data) => broadcastTaskAdded(data, 'task_added'));
+    _socket!.on('taskAdded', (data) => broadcastTaskAdded(data, 'taskAdded'));
+    _socket!.on(
+      'task_marked',
+      (data) => broadcastTaskAdded(data, 'task_marked'),
+    );
+    _socket!.on('taskMarked', (data) => broadcastTaskAdded(data, 'taskMarked'));
+    _socket!.on(
+      'task_updated',
+      (data) => broadcastTaskAdded(data, 'task_updated'),
+    );
+
+    _socket!.on(
+      'task_completed',
+      (data) => broadcastTaskCompleted(data, 'task_completed'),
+    );
+    _socket!.on(
+      'taskCompleted',
+      (data) => broadcastTaskCompleted(data, 'taskCompleted'),
+    );
+
+    _socket!.on(
+      'task_uncompleted',
+      (data) => broadcastTaskUncompleted(data, 'task_uncompleted'),
+    );
+    _socket!.on(
+      'taskUncompleted',
+      (data) => broadcastTaskUncompleted(data, 'taskUncompleted'),
+    );
 
     // Excalidraw pinned event
     _socket!.on('excalidraw_pinned', (data) {

@@ -112,6 +112,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // Dedup-keyed task intents so repeated identical messages are handled safely.
   final Map<String, int> _pendingTaskIntentsByDedupKey = {};
 
+  // Task events can arrive before the corresponding message payload.
+  final Map<int, String?> _pendingLiveTaskCreatedAtByMessageId = {};
+  final Map<int, String?> _pendingLiveTaskCompletedAtByMessageId = {};
+
   // Message IDs loaded from local cache/server history.
   // For these historical records, UI should always display status as "sent".
   final Set<int> _databaseLoadedMessageIds = {};
@@ -445,35 +449,37 @@ class _ChatScreenState extends State<ChatScreen> {
     _socketService.addListener('messageReceived', key, (
       Map<String, dynamic> data,
     ) async {
-      final message = Message.fromJson(data);
+      final incomingMessage = _applyPendingLiveTaskState(
+        Message.fromJson(data),
+      );
 
       // Only add if it's from the current conversation
-      if (message.senderId == widget.otherUser.id ||
-          message.recipientId == widget.otherUser.id) {
+      if (incomingMessage.senderId == widget.otherUser.id ||
+          incomingMessage.recipientId == widget.otherUser.id) {
         // Skip if this is our own message (we already have it optimistically)
-        if (message.senderId == _currentUserId) return;
+        if (incomingMessage.senderId == _currentUserId) return;
 
         // Always clear typing indicator when a real message arrives
         _typingHideTimer?.cancel();
 
         setState(() {
-          _messages.insert(0, message);
+          _messages.insert(0, incomingMessage);
           // Clear typing preview whenever a message from partner arrives
           _otherUserTyping = false;
           _typingPreview = '';
 
           // Increment unread count if not at bottom (for incoming messages)
-          if (!_isAtBottom && message.senderId == widget.otherUser.id) {
+          if (!_isAtBottom && incomingMessage.senderId == widget.otherUser.id) {
             _unreadCount++;
           }
         });
 
         // Auto-translate incoming message if enabled and it's a text message from the other user
         if (_autoTranslate &&
-            message.senderId == widget.otherUser.id &&
-            message.messageType == 'text' &&
-            message.content.isNotEmpty) {
-          _autoTranslateMessage(message);
+            incomingMessage.senderId == widget.otherUser.id &&
+            incomingMessage.messageType == 'text' &&
+            incomingMessage.content.isNotEmpty) {
+          _autoTranslateMessage(incomingMessage);
         }
 
         // Save to cache for offline access
@@ -481,13 +487,13 @@ class _ChatScreenState extends State<ChatScreen> {
           await ChatCacheService.addMessageToCache(
             _currentUserId!,
             widget.otherUser.id,
-            message,
+            incomingMessage,
           );
-          debugPrint('ðŸ’¾ Cached incoming message ${message.id}');
+          debugPrint('ðŸ’¾ Cached incoming message ${incomingMessage.id}');
         }
 
         // Play message sound for incoming messages
-        if (message.senderId == widget.otherUser.id) {
+        if (incomingMessage.senderId == widget.otherUser.id) {
           try {
             _audioPlayer.play(AssetSource('sounds/splat2.m4a'));
           } catch (e) {
@@ -497,11 +503,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
         // Mark as read whenever chat is open and message is from partner.
         // Only auto-scroll if user is already at bottom to avoid interrupting reading
-        if (message.senderId == widget.otherUser.id) {
+        if (incomingMessage.senderId == widget.otherUser.id) {
           _socketService.markMessagesRead(widget.otherUser.id);
           _socketService.markMessagesViewed(widget.otherUser.id);
           debugPrint(
-            'ðŸ“§ Marked message ${message.id} as seen (chat is open)',
+            'ðŸ“§ Marked message ${incomingMessage.id} as seen (chat is open)',
           );
 
           // Only auto-scroll if user is at bottom, otherwise just show unread badge
@@ -517,7 +523,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final recipientId = _toInt(data['recipient_id']);
       // Only process if this is for the current conversation
       if (recipientId == widget.otherUser.id) {
-        final message = Message.fromJson(data);
+        final message = _applyPendingLiveTaskState(Message.fromJson(data));
         final dedupKey =
             '${message.senderId}:${message.recipientId}:${message.content}';
         final shouldMarkAsTask = _consumePendingTaskIntent(dedupKey);
@@ -2473,6 +2479,31 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Message _applyPendingLiveTaskState(Message message) {
+    final pendingCreatedAt = _pendingLiveTaskCreatedAtByMessageId.remove(
+      message.id,
+    );
+    final pendingCompletedAt = _pendingLiveTaskCompletedAtByMessageId.remove(
+      message.id,
+    );
+
+    if (!message.isTask &&
+        pendingCreatedAt == null &&
+        pendingCompletedAt == null) {
+      return message;
+    }
+
+    return _copyMessageWithTaskState(
+      message,
+      isTask: true,
+      taskCreatedAt:
+          pendingCreatedAt ??
+          message.taskCreatedAt ??
+          DateTime.now().toIso8601String(),
+      taskCompletedAt: pendingCompletedAt ?? message.taskCompletedAt,
+    );
+  }
+
   String _buildBulkBatchId() {
     final now = DateTime.now().toUtc();
     String twoDigits(int value) => value.toString().padLeft(2, '0');
@@ -2887,7 +2918,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                     child: Text(
-                      'add as task',
+                      'mark as task',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -6517,14 +6548,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     _showDeleteConfirmation(message);
                   },
                 ),
-              // Add to Tasks option (for text messages)
+              // Mark as Task option (for text messages)
               if (message.messageType == 'text' &&
                   !message.isDeleted &&
                   !message.isTask)
                 ListTile(
                   leading: const Icon(Icons.add_task, color: Colors.orange),
                   title: const Text(
-                    'Add to Tasks',
+                    'Mark as Task',
                     style: TextStyle(color: Colors.white),
                   ),
                   onTap: () {
@@ -7024,165 +7055,206 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Handle message edited event from socket (when other user edits)
   void _handleMessageEdited(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
-    final newContent = data['content'] as String?;
-    if (messageId == null || newContent == null) return;
+    final messageId = _extractTaskMessageId(data);
+    if (messageId == null) return;
+
+    final payload = _extractTaskPayloadMap(data);
 
     setState(() {
       final index = _messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        final message = _messages[index];
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: newContent,
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: message.fileUrl,
-          fileName: message.fileName,
-          fileSize: message.fileSize,
-          fileType: message.fileType,
-          isDeleted: message.isDeleted,
-        );
-        _messages[index] = updatedMessage;
+      if (index == -1) {
+        final createdAt = _extractTaskCreatedAt(data);
+        final completedAt = _extractTaskCompletedAt(data);
+        final payloadIsTask =
+            (payload?['is_task'] as bool?) ??
+            (data['is_task'] as bool?) ??
+            createdAt != null || completedAt != null;
+        if (payloadIsTask) {
+          _pendingLiveTaskCreatedAtByMessageId[messageId] =
+              _pendingLiveTaskCreatedAtByMessageId[messageId] ??
+              createdAt ??
+              DateTime.now().toIso8601String();
+          if (completedAt != null) {
+            _pendingLiveTaskCompletedAtByMessageId[messageId] = completedAt;
+          }
+        }
+        return;
       }
+
+      final message = _messages[index];
+
+      if (payload != null) {
+        final mergedPayload = <String, dynamic>{
+          ...payload,
+          'id':
+              _toInt(payload['id']) ??
+              _toInt(payload['message_id']) ??
+              message.id,
+          'sender_id': _toInt(payload['sender_id']) ?? message.senderId,
+          'recipient_id':
+              _toInt(payload['recipient_id']) ?? message.recipientId,
+          'content': payload['content'] ?? message.content,
+          'message_type': payload['message_type'] ?? message.messageType,
+          'timestamp': payload['timestamp'] ?? message.timestamp,
+          'timestamp_ms':
+              _toInt(payload['timestamp_ms']) ?? message.timestampMs,
+          'is_read': payload['is_read'] ?? message.isRead,
+          'status': payload['status'] ?? message.status,
+          'thread_id': payload['thread_id'] ?? message.threadId,
+          'reply_to_id': payload['reply_to_id'] ?? message.replyToId,
+          'reply_preview': payload['reply_preview'] ?? message.replyPreview,
+          'reactions': payload['reactions'] ?? message.reactions,
+          'file_url': payload['file_url'] ?? message.fileUrl,
+          'file_name': payload['file_name'] ?? message.fileName,
+          'file_size': payload['file_size'] ?? message.fileSize,
+          'file_type': payload['file_type'] ?? message.fileType,
+          'is_deleted': payload['is_deleted'] ?? message.isDeleted,
+          'read_at': payload['read_at'] ?? message.readAt,
+          'read_at_ms': payload['read_at_ms'] ?? message.readAtMs,
+          'delivered_at': payload['delivered_at'] ?? message.deliveredAt,
+          'delivered_at_ms':
+              payload['delivered_at_ms'] ?? message.deliveredAtMs,
+          'is_task': payload['is_task'] ?? message.isTask,
+          'task_created_at':
+              payload['task_created_at'] ?? message.taskCreatedAt,
+          'task_completed_at':
+              payload['task_completed_at'] ?? message.taskCompletedAt,
+          'is_excalidraw_link':
+              payload['is_excalidraw_link'] ?? message.isExcalidrawLink,
+          'excalidraw_pinned_at':
+              payload['excalidraw_pinned_at'] ?? message.excalidrawPinnedAt,
+          'is_pinned': payload['is_pinned'] ?? message.isPinned,
+          'pinned_at': payload['pinned_at'] ?? message.pinnedAt,
+          'pinned_by_user_id':
+              _toInt(payload['pinned_by_user_id']) ?? message.pinnedByUserId,
+        };
+
+        _messages[index] = _applyPendingLiveTaskState(
+          Message.fromJson(mergedPayload),
+        );
+        return;
+      }
+
+      final newContent = data['content'] as String?;
+      final hasTaskCompletedField =
+          data.containsKey('task_completed_at') ||
+          data.containsKey('completed_at');
+      final updatedMessage = Message(
+        id: message.id,
+        senderId: message.senderId,
+        recipientId: message.recipientId,
+        content: newContent ?? message.content,
+        messageType: (data['message_type'] as String?) ?? message.messageType,
+        timestamp: message.timestamp,
+        timestampMs: message.timestampMs,
+        isRead: message.isRead,
+        readAt: message.readAt,
+        readAtMs: message.readAtMs,
+        deliveredAt: message.deliveredAt,
+        deliveredAtMs: message.deliveredAtMs,
+        status: message.status,
+        threadId: message.threadId,
+        replyToId: message.replyToId,
+        replyPreview: message.replyPreview,
+        reactions: message.reactions,
+        fileUrl: message.fileUrl,
+        fileName: message.fileName,
+        fileSize: message.fileSize,
+        fileType: message.fileType,
+        isDeleted: message.isDeleted,
+        isTask: (data['is_task'] as bool?) ?? message.isTask,
+        taskCreatedAt: _extractTaskCreatedAt(data) ?? message.taskCreatedAt,
+        taskCompletedAt: hasTaskCompletedField
+            ? _extractTaskCompletedAt(data)
+            : message.taskCompletedAt,
+        isExcalidrawLink: message.isExcalidrawLink,
+        excalidrawPinnedAt: message.excalidrawPinnedAt,
+        isPinned: message.isPinned,
+        pinnedAt: message.pinnedAt,
+        pinnedByUserId: message.pinnedByUserId,
+      );
+      _messages[index] = updatedMessage;
     });
   }
 
   /// Handle task added event from socket
   void _handleTaskAdded(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
+    final messageId = _extractTaskMessageId(data);
     if (messageId == null) return;
+
+    final createdAt =
+        _extractTaskCreatedAt(data) ?? DateTime.now().toIso8601String();
 
     setState(() {
       final index = _messages.indexWhere((m) => m.id == messageId);
       if (index != -1) {
         final message = _messages[index];
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: message.content,
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: message.fileUrl,
-          fileName: message.fileName,
-          fileSize: message.fileSize,
-          fileType: message.fileType,
-          isDeleted: message.isDeleted,
+        final updatedMessage = _copyMessageWithTaskState(
+          message,
           isTask: true,
-          taskCreatedAt:
-              data['task_created_at'] as String? ??
-              DateTime.now().toIso8601String(),
+          taskCreatedAt: createdAt,
+          taskCompletedAt: null,
         );
         _messages[index] = updatedMessage;
+      } else {
+        _pendingLiveTaskCreatedAtByMessageId[messageId] = createdAt;
+        _pendingLiveTaskCompletedAtByMessageId.remove(messageId);
       }
     });
   }
 
   /// Handle task completed event from socket
   void _handleTaskCompleted(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
+    final messageId = _extractTaskMessageId(data);
     if (messageId == null) return;
+
+    final createdAt =
+        _extractTaskCreatedAt(data) ?? DateTime.now().toIso8601String();
+    final completedAt =
+        _extractTaskCompletedAt(data) ?? DateTime.now().toIso8601String();
 
     setState(() {
       final index = _messages.indexWhere((m) => m.id == messageId);
       if (index != -1) {
         final message = _messages[index];
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: message.content,
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: message.fileUrl,
-          fileName: message.fileName,
-          fileSize: message.fileSize,
-          fileType: message.fileType,
-          isDeleted: message.isDeleted,
+        final updatedMessage = _copyMessageWithTaskState(
+          message,
           isTask: true,
-          taskCreatedAt: message.taskCreatedAt,
-          taskCompletedAt:
-              data['completed_at'] as String? ??
-              DateTime.now().toIso8601String(),
+          taskCreatedAt: message.taskCreatedAt ?? createdAt,
+          taskCompletedAt: completedAt,
         );
         _messages[index] = updatedMessage;
+      } else {
+        _pendingLiveTaskCreatedAtByMessageId[messageId] =
+            _pendingLiveTaskCreatedAtByMessageId[messageId] ?? createdAt;
+        _pendingLiveTaskCompletedAtByMessageId[messageId] = completedAt;
       }
     });
   }
 
   /// Handle task uncompleted event from socket
   void _handleTaskUncompleted(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
+    final messageId = _extractTaskMessageId(data);
     if (messageId == null) return;
+
+    final createdAt =
+        _extractTaskCreatedAt(data) ?? DateTime.now().toIso8601String();
 
     setState(() {
       final index = _messages.indexWhere((m) => m.id == messageId);
       if (index != -1) {
         final message = _messages[index];
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: message.content,
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: message.fileUrl,
-          fileName: message.fileName,
-          fileSize: message.fileSize,
-          fileType: message.fileType,
-          isDeleted: message.isDeleted,
+        final updatedMessage = _copyMessageWithTaskState(
+          message,
           isTask: true,
-          taskCreatedAt: message.taskCreatedAt,
+          taskCreatedAt: message.taskCreatedAt ?? createdAt,
           taskCompletedAt: null,
         );
         _messages[index] = updatedMessage;
+      } else {
+        _pendingLiveTaskCreatedAtByMessageId[messageId] =
+            _pendingLiveTaskCreatedAtByMessageId[messageId] ?? createdAt;
+        _pendingLiveTaskCompletedAtByMessageId.remove(messageId);
       }
     });
   }
@@ -7275,6 +7347,84 @@ class _ChatScreenState extends State<ChatScreen> {
     if (value is int) return value;
     if (value is double) return value.toInt();
     if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  String? _asNonEmptyString(dynamic value) {
+    if (value == null) return null;
+    final stringValue = value.toString();
+    return stringValue.isEmpty ? null : stringValue;
+  }
+
+  Map<String, dynamic>? _extractTaskPayloadMap(Map<String, dynamic> data) {
+    final payload = data['message_data'] ?? data['message'];
+    if (payload is Map<String, dynamic>) {
+      return payload;
+    }
+    if (payload is Map) {
+      return Map<String, dynamic>.from(payload);
+    }
+    return null;
+  }
+
+  int? _extractTaskMessageId(Map<String, dynamic> data) {
+    final directId =
+        _toInt(data['message_id']) ??
+        _toInt(data['messageId']) ??
+        _toInt(data['id']);
+    if (directId != null) {
+      return directId;
+    }
+
+    final nestedMessage = _extractTaskPayloadMap(data);
+    if (nestedMessage != null) {
+      return _toInt(nestedMessage['message_id']) ??
+          _toInt(nestedMessage['messageId']) ??
+          _toInt(nestedMessage['id']);
+    }
+
+    return null;
+  }
+
+  String? _extractTaskCreatedAt(Map<String, dynamic> data) {
+    final direct =
+        _asNonEmptyString(data['task_created_at']) ??
+        _asNonEmptyString(data['created_at']);
+    if (direct != null && direct.isNotEmpty) {
+      return direct;
+    }
+
+    final nestedMessage = _extractTaskPayloadMap(data);
+    if (nestedMessage != null) {
+      final nested =
+          _asNonEmptyString(nestedMessage['task_created_at']) ??
+          _asNonEmptyString(nestedMessage['created_at']);
+      if (nested != null && nested.isNotEmpty) {
+        return nested;
+      }
+    }
+
+    return null;
+  }
+
+  String? _extractTaskCompletedAt(Map<String, dynamic> data) {
+    final direct =
+        _asNonEmptyString(data['task_completed_at']) ??
+        _asNonEmptyString(data['completed_at']);
+    if (direct != null && direct.isNotEmpty) {
+      return direct;
+    }
+
+    final nestedMessage = _extractTaskPayloadMap(data);
+    if (nestedMessage != null) {
+      final nested =
+          _asNonEmptyString(nestedMessage['task_completed_at']) ??
+          _asNonEmptyString(nestedMessage['completed_at']);
+      if (nested != null && nested.isNotEmpty) {
+        return nested;
+      }
+    }
+
     return null;
   }
 
@@ -7483,7 +7633,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'Long-press a message and select "Add to Tasks"',
+                            'Long-press a message and select "Mark as Task"',
                             style: TextStyle(
                               color: Colors.grey[600],
                               fontSize: 12,
@@ -8268,7 +8418,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 child: Text(
-                  isTaskCompleted ? '✅ Task' : '📝 Task',
+                  isTaskCompleted ? 'Task completed' : 'Task',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 11,
