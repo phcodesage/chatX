@@ -4,6 +4,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:io';
+import 'dart:ui';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -91,8 +92,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // Emoji picker state for chat input
   bool _showEmojiPicker = false;
 
-  // Collapsible action buttons state (FB Messenger style)
-  bool _showActionButtons = false;
+  bool _isActionsPanelOpen = false;
 
   // Flag to suppress doorbell echo on the triggering device
   bool _localDoorbellPending = false;
@@ -2965,6 +2965,452 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  String _getHeaderStatusLabel() {
+    if (_otherUserTyping) {
+      return 'typing...';
+    }
+
+    if (_partnerStatus == 'online') {
+      return 'Online';
+    }
+
+    if (_partnerStatus == 'offline') {
+      return 'Offline';
+    }
+
+    if (_partnerLastSeen != null) {
+      return _formatLastSeen(_partnerLastSeen!);
+    }
+
+    return 'Away';
+  }
+
+  Color _getHeaderStatusColor() {
+    if (_otherUserTyping || _partnerStatus == 'online') {
+      return const Color(0xFF22C55E);
+    }
+
+    if (_partnerStatus == 'offline') {
+      return const Color(0xFFEF4444);
+    }
+
+    return const Color(0xFF9CA3AF);
+  }
+
+  Widget _buildHeaderStatusPill() {
+    final statusColor = _getHeaderStatusColor();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: statusColor.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: statusColor.withValues(alpha: 0.32)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: statusColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              _getHeaderStatusLabel(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: statusColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runActionSheetAction(
+    BuildContext sheetContext,
+    FutureOr<void> Function() action,
+  ) async {
+    _closeActionsPanel(sheetContext);
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+
+    if (!mounted) {
+      return;
+    }
+
+    _keepInputUnfocused();
+    await action();
+  }
+
+  void _keepInputUnfocused() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (_inputFocusNode.hasFocus) {
+      _inputFocusNode.unfocus();
+    }
+  }
+
+  void _closeActionsPanel(BuildContext panelContext) {
+    _keepInputUnfocused();
+
+    final navigator = Navigator.of(panelContext);
+    if (navigator.canPop()) {
+      navigator.pop();
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _keepInputUnfocused();
+    });
+  }
+
+  Widget _buildActionSheetButton({
+    required String label,
+    required Color backgroundColor,
+    required VoidCallback onPressed,
+    Color foregroundColor = Colors.white,
+  }) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: backgroundColor,
+        foregroundColor: foregroundColor,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        minimumSize: const Size(0, 0),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+      ),
+      child: Text(label),
+    );
+  }
+
+  Widget _buildFloatingActionsToggle() {
+    const toggleHeight = 62.0;
+    const verticalPadding = 12.0;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+        final visibleHeight = math.max(
+          0.0,
+          constraints.maxHeight - keyboardInset,
+        );
+        final maxTop = math.max(
+          verticalPadding,
+          visibleHeight - toggleHeight - verticalPadding,
+        );
+        final top = ((visibleHeight - toggleHeight) / 2)
+            .clamp(verticalPadding, maxTop)
+            .toDouble();
+
+        return Stack(
+          children: [
+            Positioned(
+              top: top,
+              right: 0,
+              child: Tooltip(
+                message: 'Actions',
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(16),
+                  ),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _showActionsSheet,
+                        onHorizontalDragUpdate: (details) {
+                          if (details.primaryDelta != null &&
+                              details.primaryDelta! < -2) {
+                            _showActionsSheet();
+                          }
+                        },
+                        child: Container(
+                          width: 28,
+                          height: toggleHeight,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.2),
+                            ),
+                            borderRadius: const BorderRadius.horizontal(
+                              left: Radius.circular(16),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.18),
+                                blurRadius: 10,
+                                offset: const Offset(-2, 3),
+                              ),
+                            ],
+                          ),
+                          child: const Center(
+                            child: Icon(
+                              Icons.chevron_left_rounded,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showActionsSheet() async {
+    if (_isActionsPanelOpen || !mounted) {
+      return;
+    }
+
+    _isActionsPanelOpen = true;
+    _keepInputUnfocused();
+    if (_showEmojiPicker) {
+      setState(() {
+        _showEmojiPicker = false;
+      });
+    }
+
+    try {
+      await showGeneralDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        barrierLabel: 'Chat actions',
+        barrierColor: Colors.transparent,
+        transitionDuration: const Duration(milliseconds: 260),
+        pageBuilder: (dialogContext, animation, secondaryAnimation) {
+          final media = MediaQuery.of(dialogContext);
+          final topInset = media.padding.top + kToolbarHeight + 10;
+          final bottomInset =
+              media.padding.bottom + media.viewInsets.bottom + 10;
+          final availableHeight = math.max(
+            180.0,
+            media.size.height - topInset - bottomInset,
+          );
+          final maxPanelHeight = math.min(
+            availableHeight,
+            media.size.height * 0.7,
+          );
+
+          final actionButtons = <Widget>[
+            _buildActionSheetButton(
+              label: 'Ring Doorbell',
+              backgroundColor: const Color(0xFF8B5CF6),
+              onPressed: () => _runActionSheetAction(dialogContext, () {
+                _ringDoorbell();
+              }),
+            ),
+            _buildActionSheetButton(
+              label: 'Change Color',
+              backgroundColor: const Color(0xFFA855F7),
+              onPressed: () => _runActionSheetAction(dialogContext, () {
+                _changeColor();
+              }),
+            ),
+            if (_showResetButton)
+              _buildActionSheetButton(
+                label: 'Reset Color',
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black87,
+                onPressed: () => _runActionSheetAction(dialogContext, () {
+                  _resetColor();
+                }),
+              ),
+            _buildActionSheetButton(
+              label: 'Send File',
+              backgroundColor: const Color(0xFF10B981),
+              onPressed: () => _runActionSheetAction(dialogContext, _pickFile),
+            ),
+            _buildActionSheetButton(
+              label: 'Camera',
+              backgroundColor: const Color(0xFF3B82F6),
+              onPressed: () => _runActionSheetAction(dialogContext, _takePhoto),
+            ),
+            _buildActionSheetButton(
+              label: 'Voice Message',
+              backgroundColor: const Color(0xFFEF4444),
+              onPressed: () => _runActionSheetAction(
+                dialogContext,
+                _showVoiceRecordingModal,
+              ),
+            ),
+            _buildActionSheetButton(
+              label: _autoTranslate ? 'Translate On' : 'Translate Off',
+              backgroundColor: _autoTranslate
+                  ? const Color(0xFF059669)
+                  : const Color(0xFF0891B2),
+              onPressed: () =>
+                  _runActionSheetAction(dialogContext, _toggleAutoTranslate),
+            ),
+            _buildActionSheetButton(
+              label: _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
+              backgroundColor: _showTimestamps
+                  ? const Color(0xFF4F46E5)
+                  : const Color(0xFF8B5CF6),
+              onPressed: () =>
+                  _runActionSheetAction(dialogContext, _toggleTimestamps),
+            ),
+            _buildActionSheetButton(
+              label: 'Export Chat',
+              backgroundColor: const Color(0xFF6B7280),
+              onPressed: () =>
+                  _runActionSheetAction(dialogContext, _exportChat),
+            ),
+            if (_currentUserIsAdmin)
+              _buildActionSheetButton(
+                label: 'Delete All',
+                backgroundColor: const Color(0xFFDC2626),
+                onPressed: () => _runActionSheetAction(
+                  dialogContext,
+                  _adminDeleteAllMessages,
+                ),
+              ),
+          ];
+
+          return Material(
+            color: Colors.transparent,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () => _closeActionsPanel(dialogContext),
+                    behavior: HitTestBehavior.opaque,
+                    child: const SizedBox.expand(),
+                  ),
+                ),
+                Positioned.fill(
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(12, topInset, 12, bottomInset),
+                    child: Align(
+                      alignment: Alignment.center,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: 560,
+                          maxHeight: maxPanelHeight,
+                        ),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1F1F24),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.1),
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  14,
+                                  10,
+                                  14,
+                                  4,
+                                ),
+                                child: SizedBox(
+                                  height: 38,
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      const Center(
+                                        child: Text(
+                                          'Chat Actions',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      Positioned(
+                                        right: 0,
+                                        child: TextButton(
+                                          onPressed: () =>
+                                              _closeActionsPanel(dialogContext),
+                                          style: TextButton.styleFrom(
+                                            foregroundColor: Colors.white70,
+                                            textStyle: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          child: const Text('Close'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              Flexible(
+                                child: SingleChildScrollView(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    8,
+                                    16,
+                                    16,
+                                  ),
+                                  child: Wrap(
+                                    alignment: WrapAlignment.center,
+                                    spacing: 10,
+                                    runSpacing: 10,
+                                    children: actionButtons,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+        transitionBuilder:
+            (dialogContext, animation, secondaryAnimation, child) {
+              final curved = CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOutCubic,
+                reverseCurve: Curves.easeInCubic,
+              );
+
+              return SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(1, 0),
+                  end: Offset.zero,
+                ).animate(curved),
+                child: child,
+              );
+            },
+      );
+    } finally {
+      _isActionsPanelOpen = false;
+      if (mounted) {
+        _keepInputUnfocused();
+      }
+    }
+  }
+
   /// Show user profile bottom sheet (Skype-style)
   void _showUserProfile() {
     final user = widget.otherUser;
@@ -5197,31 +5643,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    Text(
-                      _otherUserTyping
-                          ? 'typing...'
-                          : (_partnerStatus == 'online'
-                                ? 'online'
-                                : _partnerStatus == 'away'
-                                ? (_partnerLastSeen != null
-                                      ? 'Last seen ${_formatLastSeen(_partnerLastSeen!)}'
-                                      : 'away')
-                                : (_partnerLastSeen != null
-                                      ? 'Last seen ${_formatLastSeen(_partnerLastSeen!)}'
-                                      : 'offline')),
-                      style: TextStyle(
-                        color: _otherUserTyping
-                            ? const Color(0xFF00E676)
-                            : (_partnerStatus == 'online'
-                                  ? const Color(0xFF00E676)
-                                  : _partnerStatus == 'away'
-                                  ? const Color(0xFFFFC107)
-                                  : Colors.grey[600]),
-                        fontSize: 12,
-                        fontStyle: _otherUserTyping
-                            ? FontStyle.italic
-                            : FontStyle.normal,
-                      ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: _buildHeaderStatusPill(),
                     ),
                   ],
                 ),
@@ -5566,34 +5991,6 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              // Actions toggle icon (hidden when input focused or has text)
-                              if (!_inputFocusNode.hasFocus &&
-                                  _messageController.text.isEmpty)
-                                Container(
-                                  margin: const EdgeInsets.only(right: 6),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF3D3D3D),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: IconButton(
-                                    onPressed: () => setState(
-                                      () => _showActionButtons =
-                                          !_showActionButtons,
-                                    ),
-                                    icon: Icon(
-                                      _showActionButtons
-                                          ? Icons.expand_more
-                                          : Icons.add_circle_outline,
-                                      color: Colors.white70,
-                                      size: 18,
-                                    ),
-                                    padding: const EdgeInsets.all(6),
-                                    constraints: const BoxConstraints(),
-                                    tooltip: _showActionButtons
-                                        ? 'Hide Actions'
-                                        : 'Show Actions',
-                                  ),
-                                ),
                               // Text input field with embedded emoji button
                               Expanded(
                                 child: Container(
@@ -5696,284 +6093,13 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         // Inline emoji picker (shown when active)
                         if (_showEmojiPicker) _buildInlineEmojiPicker(),
-                        // Collapsible action buttons panel
-                        // Only show when emoji picker is closed AND keyboard is not visible
-                        if (!_showEmojiPicker &&
-                            MediaQuery.of(context).viewInsets.bottom == 0) ...[
-                          // All action buttons (shown/hidden by toggle)
-                          if (_showActionButtons)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: [
-                                  // Ring Doorbell
-                                  ElevatedButton(
-                                    onPressed: _ringDoorbell,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF8B5CF6),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      minimumSize: const Size(0, 0),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      textStyle: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    child: const Text('Ring Doorbell'),
-                                  ),
-                                  // Change Color
-                                  ElevatedButton(
-                                    onPressed: _changeColor,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFFA855F7),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      minimumSize: const Size(0, 0),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      textStyle: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    child: const Text('Change Color'),
-                                  ),
-                                  // Reset Color button (only show when color has been changed)
-                                  if (_showResetButton)
-                                    ElevatedButton(
-                                      onPressed: _resetColor,
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.white,
-                                        foregroundColor: Colors.black87,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 8,
-                                        ),
-                                        minimumSize: const Size(0, 0),
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        textStyle: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                      child: const Text('Reset Color'),
-                                    ),
-                                  // Send File
-                                  ElevatedButton(
-                                    onPressed: _pickFile,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF10B981),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      minimumSize: const Size(0, 0),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      textStyle: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    child: const Text('Send File'),
-                                  ),
-                                  // Camera
-                                  ElevatedButton(
-                                    onPressed: _takePhoto,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF3B82F6),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      minimumSize: const Size(0, 0),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      textStyle: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    child: const Text('Camera'),
-                                  ),
-                                  // Voice Message
-                                  ElevatedButton(
-                                    onPressed: _showVoiceRecordingModal,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFFEF4444),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      minimumSize: const Size(0, 0),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      textStyle: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    child: const Text('Voice Message'),
-                                  ),
-                                  // Auto-Translate
-                                  ElevatedButton(
-                                    onPressed: _toggleAutoTranslate,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _autoTranslate
-                                          ? const Color(0xFF059669)
-                                          : const Color(0xFF0891B2),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      minimumSize: const Size(0, 0),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      textStyle: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      _autoTranslate
-                                          ? 'Translate: ON'
-                                          : 'Translate: OFF',
-                                    ),
-                                  ),
-                                  // Show Timestamps
-                                  ElevatedButton(
-                                    onPressed: _toggleTimestamps,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _showTimestamps
-                                          ? const Color(0xFF4F46E5)
-                                          : const Color(0xFF8B5CF6),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      minimumSize: const Size(0, 0),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      textStyle: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      _showTimestamps
-                                          ? 'Hide Timestamps'
-                                          : 'Show Timestamps',
-                                    ),
-                                  ),
-                                  // Export Chat
-                                  ElevatedButton(
-                                    onPressed: _exportChat,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF6B7280),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      minimumSize: const Size(0, 0),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      textStyle: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    child: const Text('Export Chat'),
-                                  ),
-                                  // Delete All Messages (admin only)
-                                  if (_currentUserIsAdmin)
-                                    ElevatedButton(
-                                      onPressed: _adminDeleteAllMessages,
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(
-                                          0xFFDC2626,
-                                        ),
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 8,
-                                        ),
-                                        minimumSize: const Size(0, 0),
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        textStyle: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                      child: const Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          SizedBox(width: 4),
-                                          Text('Delete All'),
-                                        ],
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                        ],
                       ],
                     ),
                   ),
                 ),
               ],
             ),
+            Positioned.fill(child: _buildFloatingActionsToggle()),
           ],
         ),
       ),
