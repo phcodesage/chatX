@@ -1151,6 +1151,24 @@ class SocketService {
       'taskUncompleted',
       (data) => broadcastTaskUncompleted(data, 'taskUncompleted'),
     );
+    _socket!.on('task_removed', (data) {
+      if (data is! Map) return;
+      final payload = Map<String, dynamic>.from(data as Map);
+      payload['is_task'] = false;
+      broadcastTaskUncompleted(payload, 'task_removed');
+    });
+    _socket!.on('task_unmarked', (data) {
+      if (data is! Map) return;
+      final payload = Map<String, dynamic>.from(data as Map);
+      payload['is_task'] = false;
+      broadcastTaskUncompleted(payload, 'task_unmarked');
+    });
+    _socket!.on('taskUnmarked', (data) {
+      if (data is! Map) return;
+      final payload = Map<String, dynamic>.from(data as Map);
+      payload['is_task'] = false;
+      broadcastTaskUncompleted(payload, 'taskUnmarked');
+    });
 
     // Excalidraw pinned event
     _socket!.on('excalidraw_pinned', (data) {
@@ -1506,6 +1524,13 @@ class SocketService {
   /// Add message as task
   void addTask(int messageId) {
     emit('add_task', {'message_id': messageId});
+  }
+
+  /// Remove message from task list
+  void unmarkTask(int messageId) {
+    emit('unmark_task', {'message_id': messageId});
+    // Compatibility alias used in some backend paths.
+    emit('remove_task', {'message_id': messageId});
   }
 
   /// Set a reaction on a message

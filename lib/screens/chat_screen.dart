@@ -46,7 +46,8 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen>
+    with SingleTickerProviderStateMixin {
   final SocketService _socketService = SocketService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -120,6 +121,13 @@ class _ChatScreenState extends State<ChatScreen> {
   // For these historical records, UI should always display status as "sent".
   final Set<int> _databaseLoadedMessageIds = {};
 
+  // Animated task count badge
+  late AnimationController _taskBadgeAnimController;
+  late Animation<double> _taskBadgeScale;
+
+  // Rebuild open task modal on live task updates.
+  final ValueNotifier<int> _taskModalVersion = ValueNotifier<int>(0);
+
   // Backend connectivity state
   bool _isBackendAvailable = true;
   String _connectionIssueMessage = 'Server unavailable. Reconnecting...';
@@ -130,9 +138,33 @@ class _ChatScreenState extends State<ChatScreen> {
   String _partnerStatus = 'offline';
   String? _partnerLastSeen;
 
+  void _notifyTaskModalChanged() {
+    _taskModalVersion.value = _taskModalVersion.value + 1;
+  }
+
   @override
   void initState() {
     super.initState();
+    _taskBadgeAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    _taskBadgeScale = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(
+          begin: 1.0,
+          end: 1.5,
+        ).chain(CurveTween(curve: Curves.easeOut)),
+        weight: 40,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(
+          begin: 1.5,
+          end: 1.0,
+        ).chain(CurveTween(curve: Curves.elasticOut)),
+        weight: 60,
+      ),
+    ]).animate(_taskBadgeAnimController);
     _inputFocusNode.addListener(_onFocusChange);
     _scrollController.addListener(_onScroll);
 
@@ -5869,6 +5901,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _taskBadgeAnimController.dispose();
+    _taskModalVersion.dispose();
     _messageController.dispose();
     _scrollController.dispose();
     _audioPlayer.dispose();
@@ -5905,40 +5939,40 @@ class _ChatScreenState extends State<ChatScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
+        titleSpacing: 0,
         title: GestureDetector(
           onTap: () => _showUserProfile(),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               CircleAvatar(
-                radius: 20,
+                radius: 15,
                 backgroundColor: _getAvatarColor(),
                 child: Text(
                   widget.otherUser.initials,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 16,
+                    fontSize: 12,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
+              const SizedBox(width: 8),
+              Flexible(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      widget.otherUser.fullName,
+                      widget.otherUser.fullName.split(' ').first,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 16,
+                        fontSize: 15,
                         fontWeight: FontWeight.w600,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: _buildHeaderStatusPill(),
-                    ),
+                    _buildHeaderStatusPill(),
                   ],
                 ),
               ),
@@ -5958,43 +5992,60 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: () => _showCallSetupModal(CallType.audio),
             tooltip: 'Audio Call',
           ),
-          // More options menu (Tasks & Excalidraw)
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white),
-            color: const Color(0xFF1E1E2E),
-            onSelected: (value) {
-              if (value == 'tasks') {
-                _showTasksModal();
-              } else if (value == 'excalidraw') {
-                _showExcalidrawModal();
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'tasks',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.check_circle_outline,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    SizedBox(width: 12),
-                    Text('Tasks', style: TextStyle(color: Colors.white)),
-                  ],
-                ),
+          // Dedicated task button with animated count badge
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.task_alt, color: Colors.white),
+                onPressed: _showTasksModal,
+                tooltip: 'Tasks',
               ),
-              const PopupMenuItem(
-                value: 'excalidraw',
-                child: Row(
-                  children: [
-                    Icon(Icons.draw_outlined, color: Colors.white, size: 20),
-                    SizedBox(width: 12),
-                    Text('Excalidraw', style: TextStyle(color: Colors.white)),
-                  ],
-                ),
+              Builder(
+                builder: (context) {
+                  final count = _messages.where((m) => m.isTask).length;
+                  if (count == 0) return const SizedBox.shrink();
+                  return Positioned(
+                    right: 4,
+                    top: 4,
+                    child: ScaleTransition(
+                      scale: _taskBadgeScale,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF59E0B),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.black.withValues(alpha: 0.3),
+                            width: 1,
+                          ),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            height: 1.0,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ],
+          ),
+          // Excalidraw button
+          IconButton(
+            icon: const Icon(Icons.draw_outlined, color: Colors.white),
+            onPressed: _showExcalidrawModal,
+            tooltip: 'Excalidraw',
           ),
         ],
       ),
@@ -6452,142 +6503,232 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showMessageContextMenu(Message message, bool isSentByMe) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1E1E2E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E2E),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: const Color(0xFF7C3AED).withValues(alpha: 0.28),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF420796).withValues(alpha: 0.28),
+                blurRadius: 24,
+                spreadRadius: 0.2,
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Handle bar
               Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
+                width: 44,
+                height: 5,
+                margin: const EdgeInsets.only(bottom: 10),
                 decoration: BoxDecoration(
-                  color: Colors.grey[600],
-                  borderRadius: BorderRadius.circular(2),
+                  color: Colors.white.withValues(alpha: 0.28),
+                  borderRadius: BorderRadius.circular(999),
                 ),
               ),
-              // Reply option
-              ListTile(
-                leading: const Icon(Icons.reply, color: Colors.white),
-                title: const Text(
-                  'Reply',
-                  style: TextStyle(color: Colors.white),
-                ),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.tune_rounded,
+                    color: Color(0xFFB794F6),
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Message Actions',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (message.isTask)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: const Color(
+                            0xFFF59E0B,
+                          ).withValues(alpha: 0.55),
+                        ),
+                      ),
+                      child: const Text(
+                        'Task',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              _buildContextMenuActionTile(
+                icon: Icons.reply_rounded,
+                label: 'Reply',
                 onTap: () {
                   Navigator.pop(context);
                   _setReplyTo(message);
                 },
               ),
-              // Copy option (for text messages)
               if (message.messageType == 'text' && !message.isDeleted)
-                ListTile(
-                  leading: const Icon(Icons.copy, color: Colors.white),
-                  title: const Text(
-                    'Copy',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                _buildContextMenuActionTile(
+                  icon: Icons.copy_rounded,
+                  label: 'Copy',
                   onTap: () {
                     Navigator.pop(context);
                     _copyMessageToClipboard(message);
                   },
                 ),
-              // Translate option (for incoming text messages)
               if (!isSentByMe &&
                   message.messageType == 'text' &&
                   !message.isDeleted &&
                   message.content.isNotEmpty)
-                ListTile(
-                  leading: Icon(
-                    _messageTranslations.containsKey(message.id)
-                        ? Icons.translate_outlined
-                        : Icons.translate,
-                    color: Colors.blue,
-                  ),
-                  title: Text(
-                    _messageTranslations.containsKey(message.id)
-                        ? 'Hide Translation'
-                        : 'Translate',
-                    style: const TextStyle(color: Colors.white),
-                  ),
+                _buildContextMenuActionTile(
+                  icon: _messageTranslations.containsKey(message.id)
+                      ? Icons.translate_outlined
+                      : Icons.translate,
+                  label: _messageTranslations.containsKey(message.id)
+                      ? 'Hide Translation'
+                      : 'Translate',
+                  iconColor: const Color(0xFF60A5FA),
                   onTap: () {
                     Navigator.pop(context);
                     _translateMessage(message);
                   },
                 ),
-              // Edit option (for own text messages only)
               if (isSentByMe &&
                   message.messageType == 'text' &&
                   !message.isDeleted)
-                ListTile(
-                  leading: const Icon(Icons.edit, color: Colors.white),
-                  title: const Text(
-                    'Edit',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                _buildContextMenuActionTile(
+                  icon: Icons.edit_rounded,
+                  label: 'Edit',
                   onTap: () {
                     Navigator.pop(context);
                     _showEditMessageDialog(message);
                   },
                 ),
-              // Delete option (for own messages)
-              if (isSentByMe && !message.isDeleted)
-                ListTile(
-                  leading: const Icon(Icons.delete, color: Colors.red),
-                  title: const Text(
-                    'Delete',
-                    style: TextStyle(color: Colors.red),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showDeleteConfirmation(message);
-                  },
-                ),
-              // Mark as Task option (for text messages)
               if (message.messageType == 'text' &&
                   !message.isDeleted &&
                   !message.isTask)
-                ListTile(
-                  leading: const Icon(Icons.add_task, color: Colors.orange),
-                  title: const Text(
-                    'Mark as Task',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                _buildContextMenuActionTile(
+                  icon: Icons.add_task,
+                  label: 'Mark as Task',
+                  iconColor: const Color(0xFFF59E0B),
                   onTap: () {
                     Navigator.pop(context);
                     _addMessageToTask(message);
                   },
                 ),
-              // Pin Excalidraw option (for excalidraw links)
+              if (message.messageType == 'text' &&
+                  !message.isDeleted &&
+                  message.isTask)
+                _buildContextMenuActionTile(
+                  icon: Icons.task_alt_outlined,
+                  label: 'Unmark Task',
+                  iconColor: const Color(0xFFF59E0B),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _unmarkMessageTask(message);
+                  },
+                ),
               if ((message.content.contains('excalidraw.com') ||
                       message.isExcalidrawLink) &&
                   !message.isDeleted)
-                ListTile(
-                  leading: Icon(
-                    message.excalidrawPinnedAt != null
-                        ? Icons.push_pin
-                        : Icons.push_pin_outlined,
-                    color: message.excalidrawPinnedAt != null
-                        ? const Color(0xFF420796)
-                        : Colors.white,
-                  ),
-                  title: Text(
-                    message.excalidrawPinnedAt != null
-                        ? 'Unpin Excalidraw'
-                        : 'Pin Excalidraw',
-                    style: const TextStyle(color: Colors.white),
-                  ),
+                _buildContextMenuActionTile(
+                  icon: message.excalidrawPinnedAt != null
+                      ? Icons.push_pin
+                      : Icons.push_pin_outlined,
+                  label: message.excalidrawPinnedAt != null
+                      ? 'Unpin Excalidraw'
+                      : 'Pin Excalidraw',
+                  iconColor: message.excalidrawPinnedAt != null
+                      ? const Color(0xFFB794F6)
+                      : Colors.white,
                   onTap: () {
                     Navigator.pop(context);
                     _toggleExcalidrawPin(message);
                   },
                 ),
+              if (isSentByMe && !message.isDeleted)
+                _buildContextMenuActionTile(
+                  icon: Icons.delete_outline,
+                  label: 'Delete',
+                  iconColor: const Color(0xFFF87171),
+                  textColor: const Color(0xFFFCA5A5),
+                  tileColor: const Color(0xFF341E2A),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showDeleteConfirmation(message);
+                  },
+                ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContextMenuActionTile({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    Color iconColor = Colors.white,
+    Color textColor = Colors.white,
+    Color tileColor = const Color(0xFF252542),
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Ink(
+            decoration: BoxDecoration(
+              color: tileColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              child: Row(
+                children: [
+                  Icon(icon, color: iconColor, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.white.withValues(alpha: 0.35),
+                    size: 18,
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -6602,39 +6743,51 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index != -1) {
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: message.content,
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: message.fileUrl,
-          fileName: message.fileName,
-          fileSize: message.fileSize,
-          fileType: message.fileType,
-          isDeleted: message.isDeleted,
+        _messages[index] = _copyMessageWithTaskState(
+          message,
           isTask: true,
           taskCreatedAt: DateTime.now().toIso8601String(),
+          taskCompletedAt: null,
         );
-        _messages[index] = updatedMessage;
       }
     });
+    _taskBadgeAnimController.forward(from: 0);
+    _notifyTaskModalChanged();
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Added to tasks'),
+        duration: Duration(seconds: 2),
+        backgroundColor: Color(0xFF4CAF50),
+      ),
+    );
+  }
+
+  /// Unmark message as task
+  void _unmarkMessageTask(Message message) {
+    _socketService.unmarkTask(message.id);
+
+    setState(() {
+      final index = _messages.indexWhere((m) => m.id == message.id);
+      if (index != -1) {
+        final currentMessage = _messages[index];
+        _messages[index] = _copyMessageWithTaskState(
+          currentMessage,
+          isTask: false,
+          taskCreatedAt: null,
+          taskCompletedAt: null,
+        );
+      }
+
+      _pendingLiveTaskCreatedAtByMessageId.remove(message.id);
+      _pendingLiveTaskCompletedAtByMessageId.remove(message.id);
+    });
+    _taskBadgeAnimController.forward(from: 0);
+    _notifyTaskModalChanged();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Removed from tasks'),
         duration: Duration(seconds: 2),
         backgroundColor: Color(0xFF4CAF50),
       ),
@@ -7114,11 +7267,20 @@ class _ChatScreenState extends State<ChatScreen> {
           'delivered_at': payload['delivered_at'] ?? message.deliveredAt,
           'delivered_at_ms':
               payload['delivered_at_ms'] ?? message.deliveredAtMs,
-          'is_task': payload['is_task'] ?? message.isTask,
+          'is_task':
+              payload['is_task'] ??
+              (data['is_task'] as bool?) ??
+              message.isTask,
           'task_created_at':
-              payload['task_created_at'] ?? message.taskCreatedAt,
+              payload['task_created_at'] ??
+              data['task_created_at'] ??
+              data['created_at'] ??
+              message.taskCreatedAt,
           'task_completed_at':
-              payload['task_completed_at'] ?? message.taskCompletedAt,
+              payload['task_completed_at'] ??
+              data['task_completed_at'] ??
+              data['completed_at'] ??
+              message.taskCompletedAt,
           'is_excalidraw_link':
               payload['is_excalidraw_link'] ?? message.isExcalidrawLink,
           'excalidraw_pinned_at':
@@ -7175,6 +7337,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       _messages[index] = updatedMessage;
     });
+    _notifyTaskModalChanged();
   }
 
   /// Handle task added event from socket
@@ -7201,6 +7364,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _pendingLiveTaskCompletedAtByMessageId.remove(messageId);
       }
     });
+    if (mounted) _taskBadgeAnimController.forward(from: 0);
+    _notifyTaskModalChanged();
   }
 
   /// Handle task completed event from socket
@@ -7230,6 +7395,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _pendingLiveTaskCompletedAtByMessageId[messageId] = completedAt;
       }
     });
+    _notifyTaskModalChanged();
   }
 
   /// Handle task uncompleted event from socket
@@ -7237,6 +7403,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final messageId = _extractTaskMessageId(data);
     if (messageId == null) return;
 
+    final payload = _extractTaskPayloadMap(data);
+    final explicitTaskState =
+        (payload?['is_task'] as bool?) ?? (data['is_task'] as bool?);
+    final shouldRemainTask = explicitTaskState ?? true;
     final createdAt =
         _extractTaskCreatedAt(data) ?? DateTime.now().toIso8601String();
 
@@ -7244,19 +7414,26 @@ class _ChatScreenState extends State<ChatScreen> {
       final index = _messages.indexWhere((m) => m.id == messageId);
       if (index != -1) {
         final message = _messages[index];
-        final updatedMessage = _copyMessageWithTaskState(
+        _messages[index] = _copyMessageWithTaskState(
           message,
-          isTask: true,
-          taskCreatedAt: message.taskCreatedAt ?? createdAt,
+          isTask: shouldRemainTask,
+          taskCreatedAt: shouldRemainTask
+              ? (message.taskCreatedAt ?? createdAt)
+              : null,
           taskCompletedAt: null,
         );
-        _messages[index] = updatedMessage;
       } else {
-        _pendingLiveTaskCreatedAtByMessageId[messageId] =
-            _pendingLiveTaskCreatedAtByMessageId[messageId] ?? createdAt;
+        if (shouldRemainTask) {
+          _pendingLiveTaskCreatedAtByMessageId[messageId] =
+              _pendingLiveTaskCreatedAtByMessageId[messageId] ?? createdAt;
+        } else {
+          _pendingLiveTaskCreatedAtByMessageId.remove(messageId);
+        }
         _pendingLiveTaskCompletedAtByMessageId.remove(messageId);
       }
     });
+    if (mounted) _taskBadgeAnimController.forward(from: 0);
+    _notifyTaskModalChanged();
   }
 
   /// Handle excalidraw pinned event from socket
@@ -7556,169 +7733,315 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Show tasks modal
   void _showTasksModal() {
-    // Get all task messages from the conversation
-    final tasks = _messages.where((m) => m.isTask).toList();
+    final mediaQuery = MediaQuery.of(context);
+    final topOffset = mediaQuery.padding.top + kToolbarHeight + 6;
+    final bottomOffset = 80.0; // Reserve space for input area
+    final availableHeight = mediaQuery.size.height - topOffset - bottomOffset;
+    final maxDialogHeight = availableHeight > 200 ? availableHeight : 200.0;
 
-    showModalBottomSheet(
+    showGeneralDialog(
       context: context,
-      backgroundColor: const Color(0xFF1E1E2E),
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.3,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) => Column(
-          children: [
-            // Handle bar
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            // Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.check_circle_outline,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Tasks',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
+      barrierDismissible: true,
+      barrierLabel: 'Tasks',
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      transitionDuration: const Duration(milliseconds: 320),
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.08),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return ValueListenableBuilder<int>(
+          valueListenable: _taskModalVersion,
+          builder: (context, _, __) {
+            final tasks = _messages.where((m) => m.isTask).toList();
+            final completedCount =
+                tasks.where((t) => t.taskCompletedAt != null).length;
+            return Padding(
+          padding: EdgeInsets.fromLTRB(10, topOffset, 10, 10),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                constraints: BoxConstraints(maxHeight: maxDialogHeight),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A2B),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 24,
+                      offset: const Offset(0, 12),
                     ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '${tasks.where((t) => t.taskCompletedAt != null).length}/${tasks.length} completed',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 14),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(color: Colors.grey),
-            // Task list
-            Expanded(
-              child: tasks.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Color(0xFF2B2B48), Color(0xFF1F1F34)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(20),
+                        ),
+                      ),
+                      child: Row(
                         children: [
-                          Icon(
-                            Icons.task_alt,
-                            color: Colors.grey[600],
-                            size: 48,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No tasks yet',
-                            style: TextStyle(
-                              color: Colors.grey[500],
-                              fontSize: 16,
+                          Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: const Color(0xFFF59E0B).withValues(alpha: 0.6),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.check_circle_outline,
+                              color: Color(0xFFFBBF24),
+                              size: 16,
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Long-press a message and select "Mark as Task"',
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Tasks',
                             style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 12,
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: const Color(0xFFF59E0B).withValues(alpha: 0.5),
+                              ),
+                            ),
+                            child: Text(
+                              '$completedCount/${tasks.length}',
+                              style: const TextStyle(
+                                color: Color(0xFFFCD34D),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          InkWell(
+                            onTap: () => Navigator.pop(context),
+                            borderRadius: BorderRadius.circular(16),
+                            child: Container(
+                              width: 26,
+                              height: 26,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.08),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.close,
+                                color: Colors.white70,
+                                size: 16,
+                              ),
                             ),
                           ),
                         ],
                       ),
-                    )
-                  : ListView.builder(
-                      controller: scrollController,
-                      itemCount: tasks.length,
-                      itemBuilder: (context, index) {
-                        final task = tasks[index];
-                        final isCompleted = task.taskCompletedAt != null;
-                        return ListTile(
-                          leading: IconButton(
-                            icon: Icon(
-                              isCompleted
-                                  ? Icons.check_circle
-                                  : Icons.circle_outlined,
-                              color: isCompleted
-                                  ? const Color(0xFF4CAF50)
-                                  : Colors.grey,
-                            ),
-                            onPressed: () {
-                              if (isCompleted) {
-                                _socketService.uncompleteTask(task.id);
-                              } else {
-                                _socketService.completeTask(task.id);
-                              }
-                              Navigator.pop(context);
-                              _refreshMessages();
-                            },
-                          ),
-                          title: Text(
-                            task.content.length > 50
-                                ? '${task.content.substring(0, 50)}...'
-                                : task.content,
-                            style: TextStyle(
-                              color: Colors.white,
-                              decoration: isCompleted
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                              decorationColor: Colors.grey,
-                            ),
-                          ),
-                          subtitle: Text(
-                            task.formattedTime,
-                            style: TextStyle(
-                              color: Colors.grey[500],
-                              fontSize: 12,
-                            ),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(
-                              Icons.delete_outline,
-                              color: Colors.red,
-                              size: 20,
-                            ),
-                            onPressed: () {
-                              _removeTask(task);
-                              Navigator.pop(context);
-                            },
-                          ),
-                        );
-                      },
                     ),
+                    Divider(
+                      color: Colors.white.withValues(alpha: 0.08),
+                      height: 1,
+                    ),
+                    Flexible(
+                      child: tasks.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 24),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 50,
+                                      height: 50,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF59E0B).withValues(alpha: 0.14),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        Icons.task_alt,
+                                        color: Color(0xFFFBBF24),
+                                        size: 26,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'No tasks yet',
+                                      style: TextStyle(
+                                        color: Colors.grey[300],
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Long-press a message and select "Mark as Task"',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: Colors.grey[500],
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : GridView.builder(
+                              padding: const EdgeInsets.all(8),
+                              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                crossAxisSpacing: 6,
+                                mainAxisSpacing: 6,
+                                childAspectRatio: 1.2,
+                              ),
+                              itemCount: tasks.length,
+                              itemBuilder: (context, index) {
+                                final task = tasks[index];
+                                final isCompleted = task.taskCompletedAt != null;
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF252542),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: isCompleted
+                                          ? const Color(0xFF22C55E).withValues(alpha: 0.45)
+                                          : Colors.white.withValues(alpha: 0.07),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.fromLTRB(8, 6, 6, 4),
+                                        child: Row(
+                                          children: [
+                                            InkWell(
+                                              onTap: () {
+                                                if (isCompleted) {
+                                                  _socketService.uncompleteTask(task.id);
+                                                } else {
+                                                  _socketService.completeTask(task.id);
+                                                }
+                                                Navigator.pop(context);
+                                                _refreshMessages();
+                                              },
+                                              child: Icon(
+                                                isCompleted
+                                                    ? Icons.check_circle
+                                                    : Icons.circle_outlined,
+                                                color: isCompleted
+                                                    ? const Color(0xFF22C55E)
+                                                    : Colors.grey,
+                                                size: 18,
+                                              ),
+                                            ),
+                                            const Spacer(),
+                                            InkWell(
+                                              onTap: () {
+                                                _removeTask(task);
+                                                Navigator.pop(context);
+                                              },
+                                              child: const Icon(
+                                                Icons.delete_outline,
+                                                color: Color(0xFFF87171),
+                                                size: 16,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  task.content,
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 11,
+                                                    decoration: isCompleted
+                                                        ? TextDecoration.lineThrough
+                                                        : null,
+                                                    decorationColor: Colors.grey,
+                                                    fontWeight: FontWeight.w500,
+                                                    height: 1.3,
+                                                  ),
+                                                  maxLines: 4,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                task.formattedTime,
+                                                style: TextStyle(
+                                                  color: Colors.grey[500],
+                                                  fontSize: 9,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+          },
+        );
+      },
     );
   }
 
   /// Remove task from message
   void _removeTask(Message message) {
-    // This would need a socket event to remove task status
-    // For now, we'll just show a message
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Task removed'),
-        backgroundColor: Color(0xFF4CAF50),
-      ),
-    );
-    _refreshMessages();
+    _unmarkMessageTask(message);
   }
 
   /// Show excalidraw modal
@@ -7737,176 +8060,294 @@ class _ChatScreenState extends State<ChatScreen> {
     final pinnedExcalidraw = excalidrawLinks
         .where((m) => m.excalidrawPinnedAt != null)
         .toList();
+    final mediaQuery = MediaQuery.of(context);
+    final topOffset = mediaQuery.padding.top + kToolbarHeight + 6;
+    final availableHeight = mediaQuery.size.height - topOffset - 10;
+    final maxDialogHeight = availableHeight > 240 ? availableHeight : 240.0;
 
-    showModalBottomSheet(
+    showGeneralDialog(
       context: context,
-      backgroundColor: const Color(0xFF1E1E2E),
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.3,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) => Column(
-          children: [
-            // Handle bar
-            Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            // Title
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.draw_outlined,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Excalidraw',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
+      barrierDismissible: true,
+      barrierLabel: 'Excalidraw',
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      transitionDuration: const Duration(milliseconds: 320),
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.08),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return Padding(
+          padding: EdgeInsets.fromLTRB(10, topOffset, 10, 10),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                constraints: BoxConstraints(maxHeight: maxDialogHeight),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF191729),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 24,
+                      offset: const Offset(0, 12),
                     ),
-                  ),
-                  const Spacer(),
-                  if (pinnedExcalidraw.isNotEmpty)
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF420796),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '${pinnedExcalidraw.length} pinned',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
+                      padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Color(0xFF2A2147), Color(0xFF1C1734)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(20),
                         ),
                       ),
-                    ),
-                ],
-              ),
-            ),
-            const Divider(color: Colors.grey),
-            // Excalidraw list
-            Expanded(
-              child: excalidrawLinks.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                      child: Row(
                         children: [
-                          Icon(Icons.draw, color: Colors.grey[600], size: 48),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No Excalidraw links yet',
-                            style: TextStyle(
-                              color: Colors.grey[500],
-                              fontSize: 16,
+                          Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF7C3AED).withValues(alpha: 0.22),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: const Color(0xFF7C3AED).withValues(alpha: 0.65),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.draw_outlined,
+                              color: Color(0xFFC4B5FD),
+                              size: 19,
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Share an excalidraw.com link in the chat',
+                          const SizedBox(width: 10),
+                          const Text(
+                            'Excalidraw',
                             style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 12,
+                              color: Colors.white,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                          const Spacer(),
+                          if (pinnedExcalidraw.isNotEmpty)
+                            Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF7C3AED).withValues(alpha: 0.22),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: const Color(0xFF7C3AED).withValues(alpha: 0.6),
+                                ),
+                              ),
+                              child: Text(
+                                '${pinnedExcalidraw.length} pinned',
+                                style: const TextStyle(
+                                  color: Color(0xFFE9D5FF),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          InkWell(
+                            onTap: () => Navigator.pop(context),
+                            borderRadius: BorderRadius.circular(16),
+                            child: Container(
+                              width: 30,
+                              height: 30,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.08),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.close,
+                                color: Colors.white70,
+                                size: 18,
+                              ),
                             ),
                           ),
                         ],
                       ),
-                    )
-                  : ListView.builder(
-                      controller: scrollController,
-                      itemCount: excalidrawLinks.length,
-                      itemBuilder: (context, index) {
-                        final link = excalidrawLinks[index];
-                        final isPinned = link.excalidrawPinnedAt != null;
-                        return ListTile(
-                          leading: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: isPinned
-                                  ? const Color(0xFF420796)
-                                  : Colors.grey[800],
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Icon(
-                              isPinned ? Icons.push_pin : Icons.draw_outlined,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          title: Text(
-                            link.content.length > 40
-                                ? '${link.content.substring(0, 40)}...'
-                                : link.content,
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          subtitle: Text(
-                            link.formattedTime,
-                            style: TextStyle(
-                              color: Colors.grey[500],
-                              fontSize: 12,
-                            ),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: Icon(
-                                  isPinned
-                                      ? Icons.push_pin
-                                      : Icons.push_pin_outlined,
-                                  color: isPinned
-                                      ? const Color(0xFF420796)
-                                      : Colors.grey,
-                                  size: 20,
-                                ),
-                                onPressed: () {
-                                  if (isPinned) {
-                                    _socketService.unpinExcalidraw(link.id);
-                                  } else {
-                                    _socketService.pinExcalidraw(link.id);
-                                  }
-                                  Navigator.pop(context);
-                                  _refreshMessages();
-                                },
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.open_in_new,
-                                  color: Colors.blue,
-                                  size: 20,
-                                ),
-                                onPressed: () {
-                                  _openExcalidrawLink(link.content);
-                                },
-                              ),
-                            ],
-                          ),
-                        );
-                      },
                     ),
+                    Divider(
+                      color: Colors.white.withValues(alpha: 0.08),
+                      height: 1,
+                    ),
+                    Flexible(
+                      child: excalidrawLinks.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 24),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 70,
+                                      height: 70,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF7C3AED).withValues(alpha: 0.14),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        Icons.draw,
+                                        color: Color(0xFFC4B5FD),
+                                        size: 34,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'No Excalidraw links yet',
+                                      style: TextStyle(
+                                        color: Colors.grey[300],
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Share an excalidraw.com link in the chat',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: Colors.grey[500],
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : ListView.separated(
+                              padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+                              itemCount: excalidrawLinks.length,
+                              separatorBuilder: (_, __) => const SizedBox(height: 8),
+                              itemBuilder: (context, index) {
+                                final link = excalidrawLinks[index];
+                                final isPinned = link.excalidrawPinnedAt != null;
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF252542),
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: isPinned
+                                          ? const Color(0xFF7C3AED).withValues(alpha: 0.5)
+                                          : Colors.white.withValues(alpha: 0.07),
+                                    ),
+                                  ),
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 2,
+                                    ),
+                                    leading: Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: isPinned
+                                            ? const Color(0xFF7C3AED)
+                                            : Colors.grey[800],
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Icon(
+                                        isPinned
+                                            ? Icons.push_pin
+                                            : Icons.draw_outlined,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                    ),
+                                    title: Text(
+                                      link.content.length > 45
+                                          ? '${link.content.substring(0, 45)}...'
+                                          : link.content,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      link.formattedTime,
+                                      style: TextStyle(
+                                        color: Colors.grey[500],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    trailing: SizedBox(
+                                      width: 88,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            icon: Icon(
+                                              isPinned
+                                                  ? Icons.push_pin
+                                                  : Icons.push_pin_outlined,
+                                              color: isPinned
+                                                  ? const Color(0xFFA78BFA)
+                                                  : Colors.grey,
+                                              size: 20,
+                                            ),
+                                            onPressed: () {
+                                              if (isPinned) {
+                                                _socketService.unpinExcalidraw(link.id);
+                                              } else {
+                                                _socketService.pinExcalidraw(link.id);
+                                              }
+                                              Navigator.pop(context);
+                                              _refreshMessages();
+                                            },
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.open_in_new,
+                                              color: Color(0xFF60A5FA),
+                                              size: 20,
+                                            ),
+                                            onPressed: () {
+                                              Navigator.pop(context);
+                                              _openExcalidrawLink(link.content);
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -7953,6 +8394,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 .map((message) => message.id),
           );
       });
+      _notifyTaskModalChanged();
     } catch (e) {
       debugPrint('Error refreshing messages: $e');
     }
@@ -8404,29 +8846,6 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (isTaskMessage)
-            Padding(
-              padding: const EdgeInsets.only(left: 10, right: 10, top: 10),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: taskAccentColor.withValues(alpha: 0.22),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: taskAccentColor.withValues(alpha: 0.6),
-                    width: 0.9,
-                  ),
-                ),
-                child: Text(
-                  isTaskCompleted ? 'Task completed' : 'Task',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
           // Quoted reply (if this is a reply to another message)
           if (message.replyToId != null || message.replyPreview != null)
             Opacity(
@@ -8610,12 +9029,56 @@ class _ChatScreenState extends State<ChatScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // Original message text
-                  Text(
-                    isMedia
-                        ? (message.fileName ?? message.content)
-                        : message.content,
-                    style: const TextStyle(color: Colors.white, fontSize: 15),
-                  ),
+                  if (isTaskMessage)
+                    Text.rich(
+                      TextSpan(
+                        children: [
+                          WidgetSpan(
+                            alignment: PlaceholderAlignment.middle,
+                            child: Container(
+                              width: 18,
+                              height: 18,
+                              margin: const EdgeInsets.only(right: 6),
+                              decoration: BoxDecoration(
+                                color: taskAccentColor.withValues(alpha: 0.25),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: taskAccentColor.withValues(alpha: 0.75),
+                                  width: 1.2,
+                                ),
+                              ),
+                              child: const Center(
+                                child: Text(
+                                  'T',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.0,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          TextSpan(
+                            text: isMedia
+                                ? (message.fileName ?? message.content)
+                                : message.content,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    Text(
+                      isMedia
+                          ? (message.fileName ?? message.content)
+                          : message.content,
+                      style: const TextStyle(color: Colors.white, fontSize: 15),
+                    ),
                   // Translation (if available)
                   if (_messageTranslations.containsKey(message.id)) ...[
                     const SizedBox(height: 8),
