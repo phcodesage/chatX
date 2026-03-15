@@ -98,6 +98,9 @@ class _ChatScreenState extends State<ChatScreen>
   // Flag to suppress doorbell echo on the triggering device
   bool _localDoorbellPending = false;
 
+  // Keep doorbell AudioPlayer references alive until playback completes (prevents GC mid-play)
+  final List<AudioPlayer> _activeDoorbellPlayers = [];
+
   // Flag to suppress color reset echo on the triggering device
   bool _localColorResetPending = false;
 
@@ -1622,14 +1625,8 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
 
-    // Play doorbell notification sound (create new player so rapid rings overlap)
-    try {
-      final player = AudioPlayer();
-      player.play(AssetSource('sounds/notif-sound.wav'));
-      player.onPlayerComplete.listen((_) => player.dispose());
-    } catch (e) {
-      debugPrint('Error playing doorbell sound: $e');
-    }
+    // Play doorbell notification sound
+    _playDoorbellSound();
 
     // Create incoming notification message
     final doorbellMessage = Message(
@@ -3142,6 +3139,22 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Play doorbell sound, holding the AudioPlayer reference alive in a list
+  /// so it isn't garbage-collected before playback completes.
+  void _playDoorbellSound() {
+    try {
+      final player = AudioPlayer();
+      _activeDoorbellPlayers.add(player);
+      player.play(AssetSource('sounds/notif-sound.wav'));
+      player.onPlayerComplete.listen((_) {
+        _activeDoorbellPlayers.remove(player);
+        player.dispose();
+      });
+    } catch (e) {
+      debugPrint('Error playing doorbell sound: $e');
+    }
+  }
+
   void _ringDoorbell() {
     // Mark that we locally triggered the doorbell so we can suppress the echo
     _localDoorbellPending = true;
@@ -3149,14 +3162,8 @@ class _ChatScreenState extends State<ChatScreen>
     // Send doorbell via Socket.IO
     _socketService.ringDoorbell(widget.otherUser.id);
 
-    // Play doorbell notification sound (create new player so rapid rings overlap)
-    try {
-      final player = AudioPlayer();
-      player.play(AssetSource('sounds/notif-sound.wav'));
-      player.onPlayerComplete.listen((_) => player.dispose());
-    } catch (e) {
-      debugPrint('Error playing doorbell sound: $e');
-    }
+    // Play doorbell notification sound (each tap gets its own player so rapid rings don't cancel each other)
+    _playDoorbellSound();
 
     // Create a system message in chat to show doorbell was sent
     final doorbellMessage = Message(
@@ -3436,9 +3443,7 @@ class _ChatScreenState extends State<ChatScreen>
             _buildActionSheetButton(
               label: 'Ring Doorbell',
               backgroundColor: const Color(0xFF8B5CF6),
-              onPressed: () => _runActionSheetAction(dialogContext, () {
-                _ringDoorbell();
-              }),
+              onPressed: () => _ringDoorbell(),
             ),
             _buildActionSheetButton(
               label: 'Change Color',
@@ -5906,6 +5911,10 @@ class _ChatScreenState extends State<ChatScreen>
     _messageController.dispose();
     _scrollController.dispose();
     _audioPlayer.dispose();
+    for (final p in _activeDoorbellPlayers) {
+      p.dispose();
+    }
+    _activeDoorbellPlayers.clear();
     _inputFocusNode.dispose();
     _typingTimer?.cancel();
     _typingHideTimer?.cancel();
