@@ -1137,18 +1137,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   /// Get the effective status tier: 0=online, 1=away/lastSeen, 2=offline
   int _getStatusTier(LobbyUser user) {
-    if (user.isOnline || user.status == 'online') {
-      // Cross-check with last_seen to detect stale online status
-      // (matches web app's grace-period logic)
+    // Trust explicit online presence first to avoid false "last seen" labels.
+    if (user.isOnline) {
+      return 0;
+    }
+    if (user.status == 'online') {
       if (user.lastSeen != null) {
         try {
           final lastSeenTime = _parseUtcTimestamp(user.lastSeen!);
           final age = DateTime.now().difference(lastSeenTime);
-          if (age.inMinutes > 2) {
-            // Stale online status — treat as away/last seen if recent, offline otherwise
-            return age.inHours < 24 ? 1 : 2;
-          }
-        } catch (_) {}
+          if (age.inMinutes <= 2) return 0;
+          return age.inHours < 24 ? 1 : 2;
+        } catch (_) {
+          return 0;
+        }
       }
       return 0;
     }
@@ -1854,17 +1856,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
   /// who were active within the last 24 hours)
   /// Also validates 'online' status against last_seen to detect stale DB entries
   String _getEffectiveStatus(LobbyUser user) {
-    if (user.isOnline || user.status == 'online') {
-      // Cross-check with last_seen to detect stale online status
+    // Trust explicit online presence first to stay consistent with in-chat header.
+    if (user.isOnline) {
+      return 'online';
+    }
+    if (user.status == 'online') {
       if (user.lastSeen != null) {
         try {
           final lastSeenTime = _parseUtcTimestamp(user.lastSeen!);
           final age = DateTime.now().difference(lastSeenTime);
-          if (age.inMinutes > 2) {
-            // Stale online status — show as away if recent, offline otherwise
-            return age.inHours < 24 ? 'away' : 'offline';
-          }
-        } catch (_) {}
+          if (age.inMinutes <= 2) return 'online';
+          return age.inHours < 24 ? 'away' : 'offline';
+        } catch (_) {
+          return 'online';
+        }
       }
       return 'online';
     }
