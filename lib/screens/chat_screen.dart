@@ -133,7 +133,11 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Backend connectivity state
   bool _isBackendAvailable = true;
-  String _connectionIssueMessage = 'Server unavailable. Reconnecting...';
+  bool _showConnectionIssueBanner = false;
+  Timer? _connectionIssueBannerTimer;
+  static const Duration _connectionIssueBannerDelay = Duration(seconds: 5);
+  String _connectionIssueMessage =
+      'server currently unavailable ,reconnecting';
 
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
@@ -143,6 +147,24 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _notifyTaskModalChanged() {
     _taskModalVersion.value = _taskModalVersion.value + 1;
+  }
+
+  void _startConnectionIssueBannerDelay() {
+    _connectionIssueBannerTimer?.cancel();
+    _showConnectionIssueBanner = false;
+    _connectionIssueBannerTimer = Timer(_connectionIssueBannerDelay, () {
+      if (!mounted || _isBackendAvailable) {
+        return;
+      }
+      setState(() {
+        _showConnectionIssueBanner = true;
+      });
+    });
+  }
+
+  void _clearConnectionIssueBanner() {
+    _connectionIssueBannerTimer?.cancel();
+    _showConnectionIssueBanner = false;
   }
 
   @override
@@ -1119,8 +1141,12 @@ class _ChatScreenState extends State<ChatScreen>
       if (mounted) {
         setState(() {
           _isBackendAvailable = isConnected;
+          _connectionIssueMessage =
+              'server currently unavailable ,reconnecting';
           if (isConnected) {
-            _connectionIssueMessage = 'Server unavailable. Reconnecting...';
+            _clearConnectionIssueBanner();
+          } else {
+            _startConnectionIssueBannerDelay();
           }
         });
       }
@@ -1176,6 +1202,11 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Set initial state from current socket status
     _isBackendAvailable = _socketService.isConnected;
+    if (_isBackendAvailable) {
+      _clearConnectionIssueBanner();
+    } else {
+      _startConnectionIssueBannerDelay();
+    }
   }
 
   /// Insert an ephemeral system message pill for call events (not persisted)
@@ -1840,8 +1871,11 @@ class _ChatScreenState extends State<ChatScreen>
                 .where((message) => message.id > 0)
                 .map((message) => message.id),
           );
+        _isBackendAvailable = true;
         _isLoading = false;
-        _connectionIssueMessage = 'Server unavailable. Reconnecting...';
+        _connectionIssueMessage =
+            'server currently unavailable ,reconnecting';
+        _clearConnectionIssueBanner();
 
         // Populate _messageReactions from loaded messages
         _messageReactions.clear();
@@ -1909,19 +1943,14 @@ class _ChatScreenState extends State<ChatScreen>
       _scrollToBottom();
     } catch (e) {
       debugPrint('âŒ Error loading messages: $e');
-      final friendly = _mapConnectivityError(
-        e,
-        offlineLabel: 'No internet connection. Showing cached messages.',
-        backendLabel: 'Server unreachable. We\'ll retry shortly.',
-      );
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _connectionIssueMessage = friendly;
+          _isBackendAvailable = false;
+          _connectionIssueMessage =
+              'server currently unavailable ,reconnecting';
+          _startConnectionIssueBannerDelay();
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendly), backgroundColor: Colors.red),
-        );
       }
     } finally {
       _isLoadingMessages = false;
@@ -5920,6 +5949,7 @@ class _ChatScreenState extends State<ChatScreen>
     _typingHideTimer?.cancel();
     _typingUpdateThrottle?.cancel();
     _lastSeenRefreshTimer?.cancel();
+    _connectionIssueBannerTimer?.cancel();
 
     // Send typing stop without setState (widget is being disposed)
     _socketService.stopTyping(widget.otherUser.id);
@@ -6065,39 +6095,22 @@ class _ChatScreenState extends State<ChatScreen>
           children: [
             Column(
               children: [
-                // Backend connectivity banner
-                if (!_isBackendAvailable)
+                if (_showConnectionIssueBanner)
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 8,
                     ),
-                    color: const Color(0xFFD32F2F),
-                    child: Row(
-                      children: [
-                        const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            _connectionIssueMessage,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
+                    color: const Color(0xFFFDE68A),
+                    child: Text(
+                      _connectionIssueMessage,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFF78350F),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 // Messages list
