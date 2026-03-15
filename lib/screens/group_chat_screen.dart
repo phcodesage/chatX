@@ -1968,7 +1968,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 children: [
                   // Original message text
                   Text(
-                    isMedia ? (message.fileName ?? message.content) : message.content,
+                    isMedia
+                        ? (message.fileName ?? message.content)
+                        : message.content,
                     style: const TextStyle(color: Colors.white, fontSize: 15),
                   ),
                   // Translation (if available)
@@ -3142,6 +3144,105 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     },
   ];
 
+  // Some newer emoji code points are not available on older Android emoji fonts.
+  // Normalize them to broadly supported alternatives for consistent rendering.
+  static const Map<String, String> _emojiCompatibilityFallbacks = {
+    '🩷': '💗',
+    '🩵': '💙',
+    '🩶': '🤍',
+    '🫶': '🤝',
+    '🫵': '👉',
+    '🫱': '👈',
+    '🫲': '👉',
+    '🫳': '👇',
+    '🫴': '🖐️',
+    '🫰': '👌',
+    '🫠': '🙂',
+    '🫡': '👍',
+    '🫣': '🙈',
+    '🫢': '🤐',
+    '🫥': '😶',
+    '🫨': '😲',
+    '🫦': '💋',
+    '🫀': '❤️',
+    '🫁': '💨',
+    '🩻': '🦴',
+    '🩼': '🦯',
+  };
+
+  bool _isPotentiallyUnsupportedEmoji(String emoji) {
+    for (final rune in emoji.runes) {
+      if (rune >= 0x1FA70 && rune <= 0x1FAFF) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String _normalizeEmojiForCompatibility(String emoji) {
+    final mapped = _emojiCompatibilityFallbacks[emoji];
+    if (mapped != null) {
+      return mapped;
+    }
+
+    // Skip unmapped symbols in newer emoji blocks to avoid tofu squares.
+    if (_isPotentiallyUnsupportedEmoji(emoji)) {
+      return '';
+    }
+
+    return emoji;
+  }
+
+  List<String> _normalizedEmojiList(List<String> emojis) {
+    final normalized = <String>[];
+    final seen = <String>{};
+
+    for (final emoji in emojis) {
+      final safeEmoji = _normalizeEmojiForCompatibility(emoji);
+      if (safeEmoji.isEmpty) {
+        continue;
+      }
+
+      if (seen.add(safeEmoji)) {
+        normalized.add(safeEmoji);
+      }
+    }
+
+    return normalized;
+  }
+
+  String _normalizeTextForEmojiCompatibility(String text) {
+    var normalized = text;
+
+    for (final entry in _emojiCompatibilityFallbacks.entries) {
+      normalized = normalized.replaceAll(entry.key, entry.value);
+    }
+
+    final buffer = StringBuffer();
+    for (final rune in normalized.runes) {
+      if (rune >= 0x1FA70 && rune <= 0x1FAFF) {
+        continue;
+      }
+      buffer.writeCharCode(rune);
+    }
+
+    return buffer.toString();
+  }
+
+  void _replaceInputTextWithSanitized(String sanitizedText) {
+    final selection = _messageController.selection;
+    final rawOffset = selection.baseOffset;
+    final safeOffset = rawOffset < 0
+        ? sanitizedText.length
+        : rawOffset.clamp(0, sanitizedText.length).toInt();
+
+    _messageController.value = TextEditingValue(
+      text: sanitizedText,
+      selection: TextSelection.collapsed(offset: safeOffset),
+      composing: TextRange.empty,
+    );
+  }
+
   /// Toggle emoji picker visibility (inline below input)
   void _showEmojiPickerModal(BuildContext context) {
     if (_showEmojiPicker) {
@@ -3162,7 +3263,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// Build inline emoji picker widget with category tabs
   Widget _buildInlineEmojiPicker() {
     final category = _emojiCategories[_emojiCategoryIndex];
-    final emojis = category['emojis'] as List<String>;
+    final emojis = _normalizedEmojiList(category['emojis'] as List<String>);
 
     return Container(
       height: 260,
@@ -3182,6 +3283,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               itemCount: _emojiCategories.length,
               itemBuilder: (context, index) {
                 final cat = _emojiCategories[index];
+                final icon = _normalizeEmojiForCompatibility(
+                  cat['icon'] as String,
+                );
                 final isSelected = index == _emojiCategoryIndex;
                 return GestureDetector(
                   onTap: () => setState(() => _emojiCategoryIndex = index),
@@ -3199,7 +3303,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     ),
                     child: Center(
                       child: Text(
-                        cat['icon'] as String,
+                        icon.isEmpty ? '🙂' : icon,
                         style: const TextStyle(fontSize: 20),
                       ),
                     ),
@@ -3989,6 +4093,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                               isDense: true,
                             ),
                             onChanged: (text) {
+                              final normalizedText =
+                                  _normalizeTextForEmojiCompatibility(text);
+                              if (normalizedText != text) {
+                                _replaceInputTextWithSanitized(normalizedText);
+                                return;
+                              }
+
                               setState(() {
                                 // Hide action buttons when typing
                                 if (text.isNotEmpty && _showActionButtons) {
