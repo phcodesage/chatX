@@ -7975,7 +7975,6 @@ class _ChatScreenState extends State<ChatScreen>
                                             InkWell(
                                               onTap: () {
                                                 _removeTask(task);
-                                                Navigator.pop(context);
                                               },
                                               child: const Icon(
                                                 Icons.delete_outline,
