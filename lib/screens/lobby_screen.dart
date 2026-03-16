@@ -51,8 +51,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
   Timer? _searchDebounceTimer;
-  Timer? _connectivityBannerDelayTimer;
-  static const Duration _connectivityBannerDelay = Duration(seconds: 5);
   static const String _momentaryConnectivityMessage =
       'server currently unavailable, reconnecting';
   String _connectivityBannerMessage = _momentaryConnectivityMessage;
@@ -120,25 +118,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
     } else {
       debugPrint('📱 LobbyScreen: No pending notifications found');
     }
-  }
-
-  void _startConnectivityBannerDelay() {
-    _connectivityBannerDelayTimer?.cancel();
-    _showConnectivityBanner = false;
-    _connectivityBannerDelayTimer = Timer(_connectivityBannerDelay, () {
-      if (!mounted || _isBackendAvailable) {
-        return;
-      }
-      setState(() {
-        _showConnectivityBanner = true;
-        _connectivityBannerMessage = _momentaryConnectivityMessage;
-      });
-    });
-  }
-
-  void _clearConnectivityBanner() {
-    _connectivityBannerDelayTimer?.cancel();
-    _showConnectivityBanner = false;
   }
 
   Future<void> _loadAdminStatus() async {
@@ -246,12 +225,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
       if (mounted) {
         setState(() {
           _isBackendAvailable = isConnected;
+          _showConnectivityBanner = !isConnected;
           _connectivityBannerMessage = _momentaryConnectivityMessage;
-          if (isConnected) {
-            _clearConnectivityBanner();
-          } else {
-            _startConnectivityBannerDelay();
-          }
         });
       }
     });
@@ -266,12 +241,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     // Set initial state from current socket status
     _isBackendAvailable = _socketService.isConnected;
+    _showConnectivityBanner = !_isBackendAvailable;
     _connectivityBannerMessage = _momentaryConnectivityMessage;
-    if (_isBackendAvailable) {
-      _clearConnectivityBanner();
-    } else {
-      _startConnectivityBannerDelay();
-    }
 
     // Listen for group events
     // Group management events using standardized socket service listeners
@@ -1073,7 +1044,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _searchDebounceTimer?.cancel();
     _searchController.dispose();
     _lastSeenRefreshTimer?.cancel();
-    _connectivityBannerDelayTimer?.cancel();
     // Cancel all active typing timers
     for (final timer in _typingUsers.values) {
       timer.cancel();
@@ -1103,12 +1073,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _lobbyUsers = cached;
           _filteredUsers = List.from(cached);
           _isBackendAvailable = _socketService.isConnected;
+          _showConnectivityBanner = !_socketService.isConnected;
           _connectivityBannerMessage = _momentaryConnectivityMessage;
-          if (_isBackendAvailable) {
-            _clearConnectivityBanner();
-          } else {
-            _startConnectivityBannerDelay();
-          }
         });
       }
     }
@@ -1130,7 +1096,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _lobbyUsers = users;
           _groups = groups;
           _isBackendAvailable = true;
-          _clearConnectivityBanner();
+          _showConnectivityBanner = false;
           _isLoading = false;
           _connectivityBannerMessage = _momentaryConnectivityMessage;
         });
@@ -1150,8 +1116,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
         setState(() {
           _isLoading = false;
           _isBackendAvailable = false;
+          _showConnectivityBanner = true;
           _connectivityBannerMessage = _momentaryConnectivityMessage;
-          _startConnectivityBannerDelay();
         });
       }
       debugPrint('Error loading lobby: $e');
@@ -1687,7 +1653,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
       body: Column(
         children: [
-          // Backend connectivity banner (shown after a short delay while disconnected)
+          // Backend connectivity banner (shown instantly while disconnected)
           if (_showConnectivityBanner)
             Container(
               width: double.infinity,

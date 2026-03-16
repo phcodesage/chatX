@@ -133,9 +133,6 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Backend connectivity state
   bool _isBackendAvailable = true;
-  bool _showConnectionIssueBanner = false;
-  Timer? _connectionIssueBannerTimer;
-  static const Duration _connectionIssueBannerDelay = Duration(seconds: 5);
   String _connectionIssueMessage =
       'server currently unavailable ,reconnecting';
 
@@ -147,24 +144,6 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _notifyTaskModalChanged() {
     _taskModalVersion.value = _taskModalVersion.value + 1;
-  }
-
-  void _startConnectionIssueBannerDelay() {
-    _connectionIssueBannerTimer?.cancel();
-    _showConnectionIssueBanner = false;
-    _connectionIssueBannerTimer = Timer(_connectionIssueBannerDelay, () {
-      if (!mounted || _isBackendAvailable) {
-        return;
-      }
-      setState(() {
-        _showConnectionIssueBanner = true;
-      });
-    });
-  }
-
-  void _clearConnectionIssueBanner() {
-    _connectionIssueBannerTimer?.cancel();
-    _showConnectionIssueBanner = false;
   }
 
   @override
@@ -199,7 +178,7 @@ class _ChatScreenState extends State<ChatScreen>
     _initialize();
     // Periodically refresh "last seen" relative label in header (like the web app does)
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (mounted && _partnerStatus != 'online') setState(() {});
+      if (mounted && _getEffectivePartnerStatus() != 'online') setState(() {});
     });
   }
 
@@ -1143,11 +1122,6 @@ class _ChatScreenState extends State<ChatScreen>
           _isBackendAvailable = isConnected;
           _connectionIssueMessage =
               'server currently unavailable ,reconnecting';
-          if (isConnected) {
-            _clearConnectionIssueBanner();
-          } else {
-            _startConnectionIssueBannerDelay();
-          }
         });
       }
     });
@@ -1202,11 +1176,6 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Set initial state from current socket status
     _isBackendAvailable = _socketService.isConnected;
-    if (_isBackendAvailable) {
-      _clearConnectionIssueBanner();
-    } else {
-      _startConnectionIssueBannerDelay();
-    }
   }
 
   /// Insert an ephemeral system message pill for call events (not persisted)
@@ -1875,7 +1844,6 @@ class _ChatScreenState extends State<ChatScreen>
         _isLoading = false;
         _connectionIssueMessage =
             'server currently unavailable ,reconnecting';
-        _clearConnectionIssueBanner();
 
         // Populate _messageReactions from loaded messages
         _messageReactions.clear();
@@ -1949,7 +1917,6 @@ class _ChatScreenState extends State<ChatScreen>
           _isBackendAvailable = false;
           _connectionIssueMessage =
               'server currently unavailable ,reconnecting';
-          _startConnectionIssueBannerDelay();
         });
       }
     } finally {
@@ -2043,7 +2010,7 @@ class _ChatScreenState extends State<ChatScreen>
 
       // Build the export content
       final buffer = StringBuffer();
-      final myName = 'Me'; // TODO: Get actual user name if available
+      final myName = 'Me'; 
       final otherName = widget.otherUser.fullName;
 
       buffer.writeln('Chat Export');
@@ -3222,19 +3189,45 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  /// Mirrors lobby's _getEffectiveStatus: corrects a stale 'online' flag by
+  /// checking the lastSeen timestamp, so the chat header stays in sync with
+  /// what the contact list shows.
+  String _getEffectivePartnerStatus() {
+    if (_partnerStatus == 'online') {
+      if (_partnerLastSeen != null) {
+        try {
+          final lastSeenTime = _parseUtcTimestamp(_partnerLastSeen!);
+          final age = DateTime.now().difference(lastSeenTime);
+          if (age.inMinutes <= 2) return 'online';
+          return age.inHours < 24 ? 'away' : 'offline';
+        } catch (_) {
+          return 'online';
+        }
+      }
+      return 'online';
+    }
+    return _partnerStatus;
+  }
+
   String _getHeaderStatusLabel() {
     if (_otherUserTyping) {
       return 'typing...';
     }
 
-    if (_partnerStatus == 'online') {
+    final effective = _getEffectivePartnerStatus();
+
+    if (effective == 'online') {
       return 'Online';
     }
 
-    if (_partnerStatus == 'offline') {
+    if (effective == 'offline') {
+      if (_partnerLastSeen != null) {
+        return _formatLastSeen(_partnerLastSeen!);
+      }
       return 'Offline';
     }
 
+    // away
     if (_partnerLastSeen != null) {
       return _formatLastSeen(_partnerLastSeen!);
     }
@@ -3243,11 +3236,12 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Color _getHeaderStatusColor() {
-    if (_otherUserTyping || _partnerStatus == 'online') {
+    final effective = _getEffectivePartnerStatus();
+    if (_otherUserTyping || effective == 'online') {
       return const Color(0xFF22C55E);
     }
 
-    if (_partnerStatus == 'offline') {
+    if (effective == 'offline') {
       return const Color(0xFFEF4444);
     }
 
@@ -3670,14 +3664,15 @@ class _ChatScreenState extends State<ChatScreen>
   void _showUserProfile() {
     final user = widget.otherUser;
     final avatarColor = _getAvatarColor();
-    final statusText = _partnerStatus == 'online'
+    final effectiveStatus = _getEffectivePartnerStatus();
+    final statusText = effectiveStatus == 'online'
         ? 'Online'
-        : _partnerStatus == 'away'
-        ? 'Away'
-        : 'Offline';
-    final statusColor = _partnerStatus == 'online'
+        : effectiveStatus == 'away'
+        ? (_partnerLastSeen != null ? _formatLastSeen(_partnerLastSeen!) : 'Away')
+        : (_partnerLastSeen != null ? _formatLastSeen(_partnerLastSeen!) : 'Offline');
+    final statusColor = effectiveStatus == 'online'
         ? const Color(0xFF00E676)
-        : _partnerStatus == 'away'
+        : effectiveStatus == 'away'
         ? const Color(0xFFFFC107)
         : Colors.grey;
 
@@ -3787,7 +3782,7 @@ class _ChatScreenState extends State<ChatScreen>
             if (user.bio != null && user.bio!.isNotEmpty)
               _buildProfileInfoRow(Icons.info_outline, 'Bio', user.bio!),
             _buildProfileInfoRow(Icons.access_time, 'Timezone', user.timezone),
-            if (_partnerLastSeen != null && _partnerStatus != 'online')
+            if (_partnerLastSeen != null && _getEffectivePartnerStatus() != 'online')
               _buildProfileInfoRow(
                 Icons.visibility_outlined,
                 'Last seen',
@@ -5949,7 +5944,6 @@ class _ChatScreenState extends State<ChatScreen>
     _typingHideTimer?.cancel();
     _typingUpdateThrottle?.cancel();
     _lastSeenRefreshTimer?.cancel();
-    _connectionIssueBannerTimer?.cancel();
 
     // Send typing stop without setState (widget is being disposed)
     _socketService.stopTyping(widget.otherUser.id);
@@ -6095,7 +6089,7 @@ class _ChatScreenState extends State<ChatScreen>
           children: [
             Column(
               children: [
-                if (_showConnectionIssueBanner)
+                if (!_isBackendAvailable)
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(
