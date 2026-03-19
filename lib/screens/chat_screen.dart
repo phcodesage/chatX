@@ -6519,6 +6519,12 @@ class _ChatScreenState extends State<ChatScreen>
     return message.messageType == 'text' && !message.isDeleted;
   }
 
+  bool _canQuickToggleExcalidrawPin(Message message) {
+    return !message.isDeleted &&
+        (message.content.contains('excalidraw.com') ||
+            message.isExcalidrawLink);
+  }
+
   void _toggleTaskActionForMessage(Message message) {
     if (!_canQuickToggleTaskAction(message)) {
       if (_selectedTaskActionMessageId != null) {
@@ -6675,24 +6681,6 @@ class _ChatScreenState extends State<ChatScreen>
                     _showEditMessageDialog(message);
                   },
                 ),
-              if ((message.content.contains('excalidraw.com') ||
-                      message.isExcalidrawLink) &&
-                  !message.isDeleted)
-                _buildContextMenuActionTile(
-                  icon: message.excalidrawPinnedAt != null
-                      ? Icons.push_pin
-                      : Icons.push_pin_outlined,
-                  label: message.excalidrawPinnedAt != null
-                      ? 'Unpin Excalidraw'
-                      : 'Pin Excalidraw',
-                  iconColor: message.excalidrawPinnedAt != null
-                      ? const Color(0xFFB794F6)
-                      : Colors.white,
-                  onTap: () {
-                    Navigator.pop(context);
-                    _toggleExcalidrawPin(message);
-                  },
-                ),
               if (isSentByMe && !message.isDeleted)
                 _buildContextMenuActionTile(
                   icon: Icons.delete_outline,
@@ -6834,6 +6822,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Optimistically update the message locally
     setState(() {
+      _selectedTaskActionMessageId = null;
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index != -1) {
         final updatedMessage = Message(
@@ -6874,6 +6863,7 @@ class _ChatScreenState extends State<ChatScreen>
           message.excalidrawPinnedAt != null
               ? 'Excalidraw unpinned'
               : 'Excalidraw pinned',
+          style: const TextStyle(color: Colors.white),
         ),
         duration: const Duration(seconds: 2),
         backgroundColor: const Color(0xFF420796),
@@ -8434,8 +8424,23 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
 
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    var opened = false;
+
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      debugPrint('Failed to open URL externally: $e');
+    }
+
+    if (!opened) {
+      try {
+        opened = await launchUrl(uri, mode: LaunchMode.platformDefault);
+      } catch (e) {
+        debugPrint('Failed to open URL with platform default mode: $e');
+      }
+    }
+
+    if (opened) {
       return;
     }
 
@@ -8981,9 +8986,16 @@ class _ChatScreenState extends State<ChatScreen>
         _messageReactions[message.id]!.isNotEmpty;
     final isTaskMessage = message.isTask;
     final isTaskCompleted = message.taskCompletedAt != null;
+    final isPinnedExcalidraw =
+      _canQuickToggleExcalidrawPin(message) &&
+      message.excalidrawPinnedAt != null;
+    const excalidrawAccentColor = Color(0xFFB794F6);
     final taskAccentColor = isTaskCompleted
         ? const Color(0xFF22C55E)
         : const Color(0xFFF59E0B);
+    final bubbleAccentColor = isTaskMessage
+      ? taskAccentColor
+      : (isPinnedExcalidraw ? excalidrawAccentColor : null);
 
     // Build the main bubble widget (without Align - alignment handled in return)
     final bubbleWidget = Container(
@@ -8993,16 +9005,16 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       decoration: BoxDecoration(
         color: isSentByMe ? const Color(0xFF420796) : const Color(0xFF3944BC),
-        border: isTaskMessage
+        border: bubbleAccentColor != null
             ? Border.all(
-                color: taskAccentColor.withValues(alpha: 0.85),
+                color: bubbleAccentColor.withValues(alpha: 0.85),
                 width: 1.4,
               )
             : null,
-        boxShadow: isTaskMessage
+        boxShadow: bubbleAccentColor != null
             ? [
                 BoxShadow(
-                  color: taskAccentColor.withValues(alpha: 0.45),
+                  color: bubbleAccentColor.withValues(alpha: 0.45),
                   blurRadius: 14,
                   spreadRadius: 0.2,
                 ),
@@ -9022,38 +9034,101 @@ class _ChatScreenState extends State<ChatScreen>
               _canQuickToggleTaskAction(message))
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
-              child: OutlinedButton(
-                onPressed: () {
-                  if (message.isTask) {
-                    _unmarkMessageTask(message);
-                  } else {
-                    _addMessageToTask(message);
-                  }
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: BorderSide(
-                    color: const Color(0xFFF59E0B).withValues(alpha: 0.8),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  OutlinedButton(
+                    onPressed: () {
+                      if (message.isTask) {
+                        _unmarkMessageTask(message);
+                      } else {
+                        _addMessageToTask(message);
+                      }
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(
+                        color: const Color(0xFFF59E0B).withValues(alpha: 0.8),
+                      ),
+                      backgroundColor: const Color(
+                        0xFFF59E0B,
+                      ).withValues(alpha: 0.16),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 7,
+                      ),
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    child: Text(
+                      message.isTask ? 'Unmark task' : 'Mark as task',
+                    ),
                   ),
-                  backgroundColor: const Color(
-                    0xFFF59E0B,
-                  ).withValues(alpha: 0.16),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 7,
+                  if (_canQuickToggleExcalidrawPin(message))
+                    OutlinedButton(
+                      onPressed: () => _toggleExcalidrawPin(message),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                          color: const Color(0xFFB794F6).withValues(alpha: 0.8),
+                        ),
+                        backgroundColor: const Color(
+                          0xFFB794F6,
+                        ).withValues(alpha: 0.14),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 7,
+                        ),
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      child: Text(
+                        message.excalidrawPinnedAt != null
+                            ? 'Unpin Excalidraw'
+                            : 'Pin Excalidraw',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+
+          if (isPinnedExcalidraw)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                decoration: BoxDecoration(
+                  color: excalidrawAccentColor.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: excalidrawAccentColor.withValues(alpha: 0.55),
                   ),
-                  minimumSize: const Size(0, 32),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  textStyle: const TextStyle(
-                    fontSize: 13,
+                ),
+                child: const Text(
+                  'Pinned Excalidraw',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                child: Text(message.isTask ? 'Unmark task' : 'Mark as task'),
               ),
             ),
 
