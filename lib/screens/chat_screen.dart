@@ -119,6 +119,7 @@ class _ChatScreenState extends State<ChatScreen>
   // Task events can arrive before the corresponding message payload.
   final Map<int, String?> _pendingLiveTaskCreatedAtByMessageId = {};
   final Map<int, String?> _pendingLiveTaskCompletedAtByMessageId = {};
+  int? _selectedTaskActionMessageId;
 
   // Message IDs loaded from local cache/server history.
   // For these historical records, UI should always display status as "sent".
@@ -6083,7 +6084,14 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
       body: GestureDetector(
-        onTap: () => FocusScope.of(context).unfocus(),
+        onTap: () {
+          FocusScope.of(context).unfocus();
+          if (_selectedTaskActionMessageId != null) {
+            setState(() {
+              _selectedTaskActionMessageId = null;
+            });
+          }
+        },
         behavior: HitTestBehavior.translucent,
         child: Stack(
           children: [
@@ -6501,6 +6509,27 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Build swipeable message wrapper with slide animation
+  bool _canQuickToggleTaskAction(Message message) {
+    return message.messageType == 'text' && !message.isDeleted;
+  }
+
+  void _toggleTaskActionForMessage(Message message) {
+    if (!_canQuickToggleTaskAction(message)) {
+      if (_selectedTaskActionMessageId != null) {
+        setState(() {
+          _selectedTaskActionMessageId = null;
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _selectedTaskActionMessageId = _selectedTaskActionMessageId == message.id
+          ? null
+          : message.id;
+    });
+  }
+
   Widget _buildSwipeableMessage(
     Message message,
     bool isSentByMe,
@@ -6510,6 +6539,7 @@ class _ChatScreenState extends State<ChatScreen>
       key: ValueKey<String>('swipe_${message.id}'),
       isSentByMe: isSentByMe,
       onReply: () => _setReplyTo(message),
+      onTap: () => _toggleTaskActionForMessage(message),
       onLongPress: () => _showMessageContextMenu(message, isSentByMe),
       child: child,
     );
@@ -6639,30 +6669,6 @@ class _ChatScreenState extends State<ChatScreen>
                     _showEditMessageDialog(message);
                   },
                 ),
-              if (message.messageType == 'text' &&
-                  !message.isDeleted &&
-                  !message.isTask)
-                _buildContextMenuActionTile(
-                  icon: Icons.add_task,
-                  label: 'Mark as Task',
-                  iconColor: const Color(0xFFF59E0B),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _addMessageToTask(message);
-                  },
-                ),
-              if (message.messageType == 'text' &&
-                  !message.isDeleted &&
-                  message.isTask)
-                _buildContextMenuActionTile(
-                  icon: Icons.task_alt_outlined,
-                  label: 'Unmark Task',
-                  iconColor: const Color(0xFFF59E0B),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _unmarkMessageTask(message);
-                  },
-                ),
               if ((message.content.contains('excalidraw.com') ||
                       message.isExcalidrawLink) &&
                   !message.isDeleted)
@@ -6757,6 +6763,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Optimistically update the message locally
     setState(() {
+      _selectedTaskActionMessageId = null;
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index != -1) {
         _messages[index] = _copyMessageWithTaskState(
@@ -6784,6 +6791,7 @@ class _ChatScreenState extends State<ChatScreen>
     _socketService.unmarkTask(message.id);
 
     setState(() {
+      _selectedTaskActionMessageId = null;
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index != -1) {
         final currentMessage = _messages[index];
@@ -7927,7 +7935,7 @@ class _ChatScreenState extends State<ChatScreen>
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      'Long-press a message and select "Mark as Task"',
+                                      'Tap a message bubble, then tap "Mark as task"',
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                         color: Colors.grey[500],
@@ -8861,6 +8869,45 @@ class _ChatScreenState extends State<ChatScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_selectedTaskActionMessageId == message.id &&
+              _canQuickToggleTaskAction(message))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+              child: OutlinedButton(
+                onPressed: () {
+                  if (message.isTask) {
+                    _unmarkMessageTask(message);
+                  } else {
+                    _addMessageToTask(message);
+                  }
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: BorderSide(
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.8),
+                  ),
+                  backgroundColor: const Color(
+                    0xFFF59E0B,
+                  ).withValues(alpha: 0.16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                child: Text(message.isTask ? 'Unmark task' : 'Mark as task'),
+              ),
+            ),
+
           // Quoted reply (if this is a reply to another message)
           if (message.replyToId != null || message.replyPreview != null)
             Opacity(
@@ -9395,12 +9442,14 @@ class _SwipeableMessage extends StatefulWidget {
     super.key,
     required this.isSentByMe,
     required this.onReply,
+    required this.onTap,
     required this.onLongPress,
     required this.child,
   });
 
   final bool isSentByMe;
   final VoidCallback onReply;
+  final VoidCallback onTap;
   final VoidCallback onLongPress;
   final Widget child;
 
@@ -9441,6 +9490,7 @@ class _SwipeableMessageState extends State<_SwipeableMessage> {
           _dragOffset = 0.0;
         });
       },
+      onTap: widget.onTap,
       onLongPress: widget.onLongPress,
       child: Transform.translate(
         offset: Offset(_dragOffset, 0),

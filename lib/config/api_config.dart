@@ -2,8 +2,8 @@
 /// Change the baseUrl here to point to your backend server
 class ApiConfig {
   // Base URL for the API - change this to switch backends
-  //static const String baseUrl = 'https://inspect.flask-call-app.site';
-  static const String baseUrl = 'https://web.flask-call-app.site'; //production
+  static const String baseUrl = 'https://inspect.flask-call-app.site';
+  //static const String baseUrl = 'https://web.flask-call-app.site'; //production
 
   // API endpoints
   static const String authPrefix = '/api/auth';
