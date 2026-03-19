@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -86,6 +87,11 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Reaction state: { messageId: { emoji: Set<userId> } }
   final Map<int, Map<String, Set<String>>> _messageReactions = {};
+
+  static final RegExp _messageUrlRegex = RegExp(
+    r'((?:https?:\/\/|www\.)[^\s]+)',
+    caseSensitive: false,
+  );
 
   // Translation state: { messageId: translatedText }
   final Map<int, String> _messageTranslations = {};
@@ -8375,28 +8381,171 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Open excalidraw link in browser
-  void _openExcalidrawLink(String content) async {
-    // Extract URL from content if needed
-    final urlRegex = RegExp(r'https?://[^\s]+');
-    final match = urlRegex.firstMatch(content);
-    if (match != null) {
-      final url = match.group(0);
-      if (url != null) {
-        final uri = Uri.parse(url);
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Could not open: $url'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        }
-      }
+  void _openExcalidrawLink(String content) {
+    final match = _messageUrlRegex.firstMatch(content);
+    final rawUrl = match?.group(0);
+    if (rawUrl == null || rawUrl.isEmpty) {
+      return;
     }
+
+    final cleanedUrl = _trimTrailingUrlCharacters(rawUrl);
+    if (cleanedUrl.isEmpty) {
+      return;
+    }
+
+    _openMessageUrl(cleanedUrl);
+  }
+
+  String _trimTrailingUrlCharacters(String url) {
+    const trailingPunctuation = '.,!?;:';
+    var trimmed = url;
+
+    while (trimmed.isNotEmpty &&
+        trailingPunctuation.contains(trimmed[trimmed.length - 1])) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+
+    while (trimmed.endsWith(')')) {
+      final openParens = '('.allMatches(trimmed).length;
+      final closeParens = ')'.allMatches(trimmed).length;
+      if (closeParens <= openParens) {
+        break;
+      }
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+
+    return trimmed;
+  }
+
+  Future<void> _openMessageUrl(String rawUrl) async {
+    final normalizedUrl = rawUrl.toLowerCase().startsWith('http')
+        ? rawUrl
+        : 'https://$rawUrl';
+    final uri = Uri.tryParse(normalizedUrl);
+
+    if (uri == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Invalid link'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      return;
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Could not open: $normalizedUrl'),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
+  List<InlineSpan> _buildLinkifiedTextSpans(String text, TextStyle baseStyle) {
+    final linkStyle = baseStyle.copyWith(
+      color: const Color(0xFF93C5FD),
+      decoration: TextDecoration.underline,
+      decorationColor: const Color(0xFF93C5FD),
+    );
+
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+
+    for (final match in _messageUrlRegex.allMatches(text)) {
+      if (match.start > cursor) {
+        spans.add(
+          TextSpan(text: text.substring(cursor, match.start), style: baseStyle),
+        );
+      }
+
+      final matchedText = match.group(0) ?? '';
+      final cleanedUrl = _trimTrailingUrlCharacters(matchedText);
+      final trailing = matchedText.substring(cleanedUrl.length);
+
+      if (cleanedUrl.isNotEmpty) {
+        spans.add(
+          TextSpan(
+            text: cleanedUrl,
+            style: linkStyle,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () {
+                _openMessageUrl(cleanedUrl);
+              },
+          ),
+        );
+      }
+
+      if (trailing.isNotEmpty) {
+        spans.add(TextSpan(text: trailing, style: baseStyle));
+      }
+
+      cursor = match.end;
+    }
+
+    if (cursor < text.length) {
+      spans.add(TextSpan(text: text.substring(cursor), style: baseStyle));
+    }
+
+    if (spans.isEmpty) {
+      spans.add(TextSpan(text: text, style: baseStyle));
+    }
+
+    return spans;
+  }
+
+  Widget _buildLinkifiedMessageText({
+    required String text,
+    required bool isTaskMessage,
+    required Color taskAccentColor,
+  }) {
+    const baseStyle = TextStyle(color: Colors.white, fontSize: 15);
+    final spans = _buildLinkifiedTextSpans(text, baseStyle);
+
+    if (isTaskMessage) {
+      return Text.rich(
+        TextSpan(
+          children: [
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: Container(
+                width: 18,
+                height: 18,
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  color: taskAccentColor.withValues(alpha: 0.25),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: taskAccentColor.withValues(alpha: 0.75),
+                    width: 1.2,
+                  ),
+                ),
+                child: const Center(
+                  child: Text(
+                    'T',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      height: 1.0,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            ...spans,
+          ],
+        ),
+      );
+    }
+
+    return Text.rich(TextSpan(children: spans));
   }
 
   /// Refresh messages from server
@@ -9091,55 +9240,12 @@ class _ChatScreenState extends State<ChatScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // Original message text
-                  if (isTaskMessage)
-                    Text.rich(
-                      TextSpan(
-                        children: [
-                          WidgetSpan(
-                            alignment: PlaceholderAlignment.middle,
-                            child: Container(
-                              width: 18,
-                              height: 18,
-                              margin: const EdgeInsets.only(right: 6),
-                              decoration: BoxDecoration(
-                                color: taskAccentColor.withValues(alpha: 0.25),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: taskAccentColor.withValues(alpha: 0.75),
-                                  width: 1.2,
-                                ),
-                              ),
-                              child: const Center(
-                                child: Text(
-                                  'T',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w800,
-                                    height: 1.0,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          TextSpan(
-                            text: isMedia
-                                ? (message.fileName ?? message.content)
-                                : message.content,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    Text(
-                      isMedia
-                          ? (message.fileName ?? message.content)
-                          : message.content,
-                      style: const TextStyle(color: Colors.white, fontSize: 15),
+                  _buildLinkifiedMessageText(
+                    text: isMedia
+                        ? (message.fileName ?? message.content)
+                        : message.content,
+                    isTaskMessage: isTaskMessage,
+                    taskAccentColor: taskAccentColor,
                     ),
                   // Translation (if available)
                   if (_messageTranslations.containsKey(message.id)) ...[
