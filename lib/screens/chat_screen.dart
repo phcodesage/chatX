@@ -106,6 +106,10 @@ class _ChatScreenState extends State<ChatScreen>
 
   bool _isActionsPanelOpen = false;
 
+  // Backend restart notification banner
+  bool _showBackendRestartBanner = false;
+  Timer? _backendRestartBannerTimer;
+
   // Flag to suppress doorbell echo on the triggering device
   bool _localDoorbellPending = false;
 
@@ -1134,6 +1138,18 @@ class _ChatScreenState extends State<ChatScreen>
           _isBackendAvailable = isConnected;
           _connectionIssueMessage =
               'server currently unavailable ,reconnecting';
+        });
+      }
+    });
+
+    // Listen for reconnection event to hide banner
+    _socketService.addListener('reconnected', key, (
+      Map<String, dynamic> data,
+    ) {
+      if (mounted) {
+        setState(() {
+          _isBackendAvailable = true;
+          _connectionIssueMessage = '';
         });
       }
     });

@@ -231,12 +231,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
       }
     });
 
-    // Auto-reload lobby when backend reconnects
+    // Backend reconnected - presence snapshot will follow automatically
+    // from the server, so we don't need to force a full reload here.
+    // This prevents UI flickering and allows smooth presence updates.
     _socketService.addListener('reconnected', key, () {
-      if (mounted) {
-        debugPrint('🔄 Backend reconnected - reloading lobby');
-        _loadLobby();
-      }
+      debugPrint('🔄 Backend reconnected - waiting for presence snapshot');
     });
 
     // Set initial state from current socket status
@@ -989,6 +988,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
           unreadCount: user.unreadCount,
           isContact: user.isContact,
           isAdminUser: user.isAdminUser,
+          // ✅ IMPORTANT: Preserve message info from in-memory state
+          lastMessage: user.lastMessage,
+          lastMessageTime: user.lastMessageTime,
+          lastMessageIsFromMe: user.lastMessageIsFromMe,
         );
 
         _lobbyUsers[userIndex] = updatedUser;
@@ -1029,6 +1032,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 unreadCount: user.unreadCount,
                 isContact: user.isContact,
                 isAdminUser: user.isAdminUser,
+                // ✅ IMPORTANT: Preserve message info from in-memory state
+                // This prevents messages received via socket from being wiped out
+                lastMessage: user.lastMessage,
+                lastMessageTime: user.lastMessageTime,
+                lastMessageIsFromMe: user.lastMessageIsFromMe,
               );
             }
           }
