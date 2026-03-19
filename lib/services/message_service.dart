@@ -568,4 +568,119 @@ class MessageService {
       return [];
     }
   }
+
+  /// Pin an Excalidraw message link
+  static Future<bool> pinExcalidrawLink({required int messageId}) async {
+    try {
+      final token = await StorageService.getToken();
+
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.getExcalidrawPinUrl(messageId)),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
+
+      if (response.statusCode == 200) {
+        return true;
+      } else if (response.statusCode == 401) {
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        return false;
+      } else {
+        debugPrint(
+          'Pin excalidraw error - Status: ${response.statusCode}, Body: ${response.body}',
+        );
+        return false;
+      }
+    } catch (e) {
+      debugPrint('Pin excalidraw error: $e');
+      return false;
+    }
+  }
+
+  /// Get pinned Excalidraw links for a conversation
+  static Future<List<Map<String, dynamic>>> getConversationExcalidrawLinks({
+    required int userId,
+  }) async {
+    try {
+      final token = await StorageService.getToken();
+      if (token == null) throw Exception('No authentication token found');
+
+      final response = await http
+          .get(
+            Uri.parse(ApiConfig.getExcalidrawConversationUrl(userId)),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final links = data['excalidraw_links'] as List?;
+        return links?.cast<Map<String, dynamic>>() ?? [];
+      } else if (response.statusCode == 401) {
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        return [];
+      } else {
+        debugPrint(
+          'Get excalidraw links error - Status: ${response.statusCode}',
+        );
+        return [];
+      }
+    } catch (e) {
+      debugPrint('Get excalidraw links error: $e');
+      return [];
+    }
+  }
+
+  /// Unpin an Excalidraw message link
+  static Future<bool> unpinExcalidrawLink({required int messageId}) async {
+    try {
+      final token = await StorageService.getToken();
+
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.getExcalidrawUnpinUrl(messageId)),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
+
+      if (response.statusCode == 200) {
+        return true;
+      } else if (response.statusCode == 401) {
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        return false;
+      } else {
+        debugPrint(
+          'Unpin excalidraw error - Status: ${response.statusCode}, Body: ${response.body}',
+        );
+        return false;
+      }
+    } catch (e) {
+      debugPrint('Unpin excalidraw error: $e');
+      return false;
+    }
+  }
 }

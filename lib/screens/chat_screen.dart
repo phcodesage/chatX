@@ -56,6 +56,7 @@ class _ChatScreenState extends State<ChatScreen>
   final FocusNode _inputFocusNode = FocusNode();
 
   List<Message> _messages = [];
+  List<Map<String, dynamic>> _pinnedExcalidrawLinks = [];
   bool _isLoading = true;
   bool _isLoadingMessages = false; // Guard against concurrent message loads
   bool _isTyping = false;
@@ -90,6 +91,10 @@ class _ChatScreenState extends State<ChatScreen>
 
   static final RegExp _messageUrlRegex = RegExp(
     r'((?:https?:\/\/|www\.)[^\s]+)',
+    caseSensitive: false,
+  );
+  static final RegExp _excalidrawUrlRegex = RegExp(
+    r'((?:https?:\/\/)?(?:www\.)?excalidraw\.com[^\s]*)',
     caseSensitive: false,
   );
 
@@ -140,8 +145,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Backend connectivity state
   bool _isBackendAvailable = true;
-  String _connectionIssueMessage =
-      'server currently unavailable ,reconnecting';
+  String _connectionIssueMessage = 'server currently unavailable ,reconnecting';
 
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
@@ -325,6 +329,7 @@ class _ChatScreenState extends State<ChatScreen>
     await _loadTimestampPreference();
     await _loadCachedMessages();
     await _loadMessages();
+    _loadPinnedExcalidrawLinks();
     _joinChatRoom();
     _setupRealtimeListeners();
   }
@@ -1809,6 +1814,19 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  Future<void> _loadPinnedExcalidrawLinks() async {
+    try {
+      final links = await MessageService.getConversationExcalidrawLinks(
+        userId: widget.otherUser.id,
+      );
+      if (mounted) {
+        setState(() => _pinnedExcalidrawLinks = links);
+      }
+    } catch (e) {
+      debugPrint('Error loading pinned excalidraw links: $e');
+    }
+  }
+
   Future<void> _loadMessages() async {
     // Guard against concurrent calls
     if (_isLoadingMessages) {
@@ -1849,8 +1867,7 @@ class _ChatScreenState extends State<ChatScreen>
           );
         _isBackendAvailable = true;
         _isLoading = false;
-        _connectionIssueMessage =
-            'server currently unavailable ,reconnecting';
+        _connectionIssueMessage = 'server currently unavailable ,reconnecting';
 
         // Populate _messageReactions from loaded messages
         _messageReactions.clear();
@@ -2017,7 +2034,7 @@ class _ChatScreenState extends State<ChatScreen>
 
       // Build the export content
       final buffer = StringBuffer();
-      final myName = 'Me'; 
+      final myName = 'Me';
       final otherName = widget.otherUser.fullName;
 
       buffer.writeln('Chat Export');
@@ -2508,6 +2525,47 @@ class _ChatScreenState extends State<ChatScreen>
       isPinned: message.isPinned,
       pinnedAt: message.pinnedAt,
       pinnedByUserId: message.pinnedByUserId,
+    );
+  }
+
+  Message _copyMessageWithExcalidrawState(
+    Message message, {
+    required bool isExcalidrawLink,
+    String? excalidrawPinnedAt,
+  }) {
+    return Message(
+      id: message.id,
+      senderId: message.senderId,
+      recipientId: message.recipientId,
+      content: message.content,
+      messageType: message.messageType,
+      timestamp: message.timestamp,
+      timestampMs: message.timestampMs,
+      isRead: message.isRead,
+      readAt: message.readAt,
+      readAtMs: message.readAtMs,
+      deliveredAt: message.deliveredAt,
+      deliveredAtMs: message.deliveredAtMs,
+      status: message.status,
+      threadId: message.threadId,
+      replyToId: message.replyToId,
+      replyPreview: message.replyPreview,
+      reactions: message.reactions,
+      fileUrl: message.fileUrl,
+      fileName: message.fileName,
+      fileSize: message.fileSize,
+      fileType: message.fileType,
+      isDeleted: message.isDeleted,
+      isTask: message.isTask,
+      taskCreatedAt: message.taskCreatedAt,
+      taskCompletedAt: message.taskCompletedAt,
+      isExcalidrawLink: isExcalidrawLink,
+      excalidrawPinnedAt: excalidrawPinnedAt,
+      isPinned: excalidrawPinnedAt != null,
+      pinnedAt: excalidrawPinnedAt,
+      pinnedByUserId: excalidrawPinnedAt != null
+          ? (_currentUserId ?? message.pinnedByUserId)
+          : null,
     );
   }
 
@@ -3675,8 +3733,12 @@ class _ChatScreenState extends State<ChatScreen>
     final statusText = effectiveStatus == 'online'
         ? 'Online'
         : effectiveStatus == 'away'
-        ? (_partnerLastSeen != null ? _formatLastSeen(_partnerLastSeen!) : 'Away')
-        : (_partnerLastSeen != null ? _formatLastSeen(_partnerLastSeen!) : 'Offline');
+        ? (_partnerLastSeen != null
+              ? _formatLastSeen(_partnerLastSeen!)
+              : 'Away')
+        : (_partnerLastSeen != null
+              ? _formatLastSeen(_partnerLastSeen!)
+              : 'Offline');
     final statusColor = effectiveStatus == 'online'
         ? const Color(0xFF00E676)
         : effectiveStatus == 'away'
@@ -3789,7 +3851,8 @@ class _ChatScreenState extends State<ChatScreen>
             if (user.bio != null && user.bio!.isNotEmpty)
               _buildProfileInfoRow(Icons.info_outline, 'Bio', user.bio!),
             _buildProfileInfoRow(Icons.access_time, 'Timezone', user.timezone),
-            if (_partnerLastSeen != null && _getEffectivePartnerStatus() != 'online')
+            if (_partnerLastSeen != null &&
+                _getEffectivePartnerStatus() != 'online')
               _buildProfileInfoRow(
                 Icons.visibility_outlined,
                 'Last seen',
@@ -6081,11 +6144,51 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ],
           ),
-          // Excalidraw button
-          IconButton(
-            icon: const Icon(Icons.draw_outlined, color: Colors.white),
-            onPressed: _showExcalidrawModal,
-            tooltip: 'Excalidraw',
+          // Excalidraw button with count badge
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.draw_outlined, color: Colors.white),
+                onPressed: _showExcalidrawModal,
+                tooltip: 'Excalidraw',
+              ),
+              Builder(
+                builder: (context) {
+                  final count = _pinnedExcalidrawLinks.length;
+                  if (count == 0) return const SizedBox.shrink();
+                  return Positioned(
+                    right: 4,
+                    top: 4,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF7C3AED),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Text(
+                        '$count',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          height: 1.0,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
         ],
       ),
@@ -6519,10 +6622,13 @@ class _ChatScreenState extends State<ChatScreen>
     return message.messageType == 'text' && !message.isDeleted;
   }
 
+  bool _isExcalidrawMessage(Message message) {
+    if (message.isDeleted) return false;
+    return _extractExcalidrawUrl(message.content) != null;
+  }
+
   bool _canQuickToggleExcalidrawPin(Message message) {
-    return !message.isDeleted &&
-        (message.content.contains('excalidraw.com') ||
-            message.isExcalidrawLink);
+    return _isExcalidrawMessage(message);
   }
 
   void _toggleTaskActionForMessage(Message message) {
@@ -6813,62 +6919,135 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Toggle excalidraw pin status
-  void _toggleExcalidrawPin(Message message) {
-    if (message.excalidrawPinnedAt != null) {
-      _socketService.unpinExcalidraw(message.id);
-    } else {
-      _socketService.pinExcalidraw(message.id);
-    }
+  Future<void> _toggleExcalidrawPin(Message message) async {
+    final initialIndex = _messages.indexWhere((m) => m.id == message.id);
+    if (initialIndex == -1) return;
 
-    // Optimistically update the message locally
+    final originalMessage = _messages[initialIndex];
+    final wasPinned = originalMessage.excalidrawPinnedAt != null;
+    final hasExcalidrawUrl =
+        _extractExcalidrawUrl(originalMessage.content) != null;
+
+    // Optimistically update before the API response arrives.
     setState(() {
       _selectedTaskActionMessageId = null;
-      final index = _messages.indexWhere((m) => m.id == message.id);
-      if (index != -1) {
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: message.content,
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: message.fileUrl,
-          fileName: message.fileName,
-          fileSize: message.fileSize,
-          fileType: message.fileType,
-          isDeleted: message.isDeleted,
-          isExcalidrawLink: true,
-          excalidrawPinnedAt: message.excalidrawPinnedAt != null
-              ? null
-              : DateTime.now().toIso8601String(),
-        );
-        _messages[index] = updatedMessage;
-      }
+      _messages[initialIndex] = _copyMessageWithExcalidrawState(
+        originalMessage,
+        isExcalidrawLink: hasExcalidrawUrl,
+        excalidrawPinnedAt: wasPinned ? null : DateTime.now().toIso8601String(),
+      );
     });
+
+    final success = wasPinned
+        ? await MessageService.unpinExcalidrawLink(messageId: message.id)
+        : await MessageService.pinExcalidrawLink(messageId: message.id);
+
+    if (!mounted) return;
+
+    if (!success) {
+      setState(() {
+        final currentIndex = _messages.indexWhere((m) => m.id == message.id);
+        if (currentIndex != -1) {
+          _messages[currentIndex] = originalMessage;
+        }
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            wasPinned
+                ? 'Failed to unpin Excalidraw'
+                : 'Failed to pin Excalidraw',
+            style: const TextStyle(color: Colors.white),
+          ),
+          duration: const Duration(seconds: 2),
+          backgroundColor: const Color(0xFFD32F2F),
+        ),
+      );
+      return;
+    }
+
+    await _refreshMessages();
+
+    if (!mounted) return;
+
+    await _loadPinnedExcalidrawLinks();
+
+    if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          message.excalidrawPinnedAt != null
-              ? 'Excalidraw unpinned'
-              : 'Excalidraw pinned',
+          wasPinned ? 'Excalidraw unpinned' : 'Excalidraw pinned',
           style: const TextStyle(color: Colors.white),
         ),
         duration: const Duration(seconds: 2),
         backgroundColor: const Color(0xFF420796),
       ),
     );
+  }
+
+  /// Unpin Excalidraw from modal list with realtime socket event.
+  Future<void> _unpinExcalidrawFromModal(Map<String, dynamic> link) async {
+    final messageId = _toInt(link['id']);
+    if (messageId == null) return;
+
+    final messageIndex = _messages.indexWhere((m) => m.id == messageId);
+    Message? originalMessage;
+
+    setState(() {
+      if (messageIndex != -1) {
+        originalMessage = _messages[messageIndex];
+        final hasExcalidrawUrl =
+            _extractExcalidrawUrl(originalMessage!.content) != null;
+        _messages[messageIndex] = _copyMessageWithExcalidrawState(
+          originalMessage!,
+          isExcalidrawLink: hasExcalidrawUrl,
+          excalidrawPinnedAt: null,
+        );
+      }
+
+      _pinnedExcalidrawLinks.removeWhere(
+        (item) => _toInt(item['id']) == messageId,
+      );
+    });
+
+    // Emit realtime socket event so other active clients update immediately.
+    _socketService.unpinExcalidraw(messageId);
+
+    final success = await MessageService.unpinExcalidrawLink(
+      messageId: messageId,
+    );
+
+    if (!mounted) return;
+
+    if (!success) {
+      if (originalMessage != null) {
+        setState(() {
+          final index = _messages.indexWhere((m) => m.id == messageId);
+          if (index != -1) {
+            _messages[index] = originalMessage!;
+          }
+        });
+      }
+
+      await _loadPinnedExcalidrawLinks();
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Failed to unpin Excalidraw',
+            style: TextStyle(color: Colors.white),
+          ),
+          duration: Duration(seconds: 2),
+          backgroundColor: Color(0xFFD32F2F),
+        ),
+      );
+      return;
+    }
+
+    await _loadPinnedExcalidrawLinks();
   }
 
   /// Copy message content to clipboard
@@ -7456,43 +7635,60 @@ class _ChatScreenState extends State<ChatScreen>
     _notifyTaskModalChanged();
   }
 
+  String? _extractExcalidrawPinnedAtFromEvent(Map<String, dynamic> data) {
+    final directPinnedAt = _asNonEmptyString(data['pinned_at']);
+    if (directPinnedAt != null) {
+      return directPinnedAt;
+    }
+
+    final payload = data['message_data'];
+    if (payload is Map<String, dynamic>) {
+      return _asNonEmptyString(payload['excalidraw_pinned_at']) ??
+          _asNonEmptyString(payload['pinned_at']);
+    }
+    if (payload is Map) {
+      final mapped = Map<String, dynamic>.from(payload);
+      return _asNonEmptyString(mapped['excalidraw_pinned_at']) ??
+          _asNonEmptyString(mapped['pinned_at']);
+    }
+
+    return null;
+  }
+
   /// Handle excalidraw pinned event from socket
   void _handleExcalidrawPinned(Map<String, dynamic> data) {
     final messageId = data['message_id'] as int?;
     if (messageId == null) return;
 
+    final pinnedAt =
+        _extractExcalidrawPinnedAtFromEvent(data) ??
+        DateTime.now().toIso8601String();
+
     setState(() {
       final index = _messages.indexWhere((m) => m.id == messageId);
       if (index != -1) {
         final message = _messages[index];
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: message.content,
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: message.fileUrl,
-          fileName: message.fileName,
-          fileSize: message.fileSize,
-          fileType: message.fileType,
-          isDeleted: message.isDeleted,
-          isExcalidrawLink: true,
-          excalidrawPinnedAt:
-              data['pinned_at'] as String? ?? DateTime.now().toIso8601String(),
+        final hasExcalidrawUrl = _extractExcalidrawUrl(message.content) != null;
+        final updatedMessage = _copyMessageWithExcalidrawState(
+          message,
+          isExcalidrawLink: hasExcalidrawUrl,
+          excalidrawPinnedAt: pinnedAt,
         );
         _messages[index] = updatedMessage;
+
+        // Add to pinned links if not already present
+        if (!_pinnedExcalidrawLinks.any(
+          (l) => (l['id'] as int?) == messageId,
+        )) {
+          _pinnedExcalidrawLinks.add({
+            'id': messageId,
+            'sender_id': message.senderId,
+            'recipient_id': message.recipientId,
+            'content': message.content,
+            'is_excalidraw_link': hasExcalidrawUrl,
+            'excalidraw_pinned_at': pinnedAt,
+          });
+        }
       }
     });
   }
@@ -7506,34 +7702,16 @@ class _ChatScreenState extends State<ChatScreen>
       final index = _messages.indexWhere((m) => m.id == messageId);
       if (index != -1) {
         final message = _messages[index];
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: message.content,
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: message.fileUrl,
-          fileName: message.fileName,
-          fileSize: message.fileSize,
-          fileType: message.fileType,
-          isDeleted: message.isDeleted,
-          isExcalidrawLink: true,
+        final hasExcalidrawUrl = _extractExcalidrawUrl(message.content) != null;
+        final updatedMessage = _copyMessageWithExcalidrawState(
+          message,
+          isExcalidrawLink: hasExcalidrawUrl,
           excalidrawPinnedAt: null,
         );
         _messages[index] = updatedMessage;
       }
+      // Remove from pinned links
+      _pinnedExcalidrawLinks.removeWhere((l) => (l['id'] as int?) == messageId);
     });
   }
 
@@ -7787,271 +7965,317 @@ class _ChatScreenState extends State<ChatScreen>
           valueListenable: _taskModalVersion,
           builder: (context, _, __) {
             final tasks = _messages.where((m) => m.isTask).toList();
-            final completedCount =
-                tasks.where((t) => t.taskCompletedAt != null).length;
+            final completedCount = tasks
+                .where((t) => t.taskCompletedAt != null)
+                .length;
             return Padding(
-          padding: EdgeInsets.fromLTRB(10, topOffset, 10, 10),
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
-                constraints: BoxConstraints(maxHeight: maxDialogHeight),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A2B),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      blurRadius: 24,
-                      offset: const Offset(0, 12),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF2B2B48), Color(0xFF1F1F34)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.vertical(
-                          top: Radius.circular(20),
-                        ),
+              padding: EdgeInsets.fromLTRB(10, topOffset, 10, 10),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: Material(
+                  color: Colors.transparent,
+                  child: Container(
+                    constraints: BoxConstraints(maxHeight: maxDialogHeight),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1A1A2B),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.08),
                       ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: const Color(0xFFF59E0B).withValues(alpha: 0.6),
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.check_circle_outline,
-                              color: Color(0xFFFBBF24),
-                              size: 16,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Tasks',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.2,
-                            ),
-                          ),
-                          const Spacer(),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: const Color(0xFFF59E0B).withValues(alpha: 0.5),
-                              ),
-                            ),
-                            child: Text(
-                              '$completedCount/${tasks.length}',
-                              style: const TextStyle(
-                                color: Color(0xFFFCD34D),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          InkWell(
-                            onTap: () => Navigator.pop(context),
-                            borderRadius: BorderRadius.circular(16),
-                            child: Container(
-                              width: 26,
-                              height: 26,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.08),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.close,
-                                color: Colors.white70,
-                                size: 16,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          blurRadius: 24,
+                          offset: const Offset(0, 12),
+                        ),
+                      ],
                     ),
-                    Divider(
-                      color: Colors.white.withValues(alpha: 0.08),
-                      height: 1,
-                    ),
-                    Flexible(
-                      child: tasks.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 24),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Container(
-                                      width: 50,
-                                      height: 50,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFF59E0B).withValues(alpha: 0.14),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(
-                                        Icons.task_alt,
-                                        color: Color(0xFFFBBF24),
-                                        size: 26,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      'No tasks yet',
-                                      style: TextStyle(
-                                        color: Colors.grey[300],
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Tap a message bubble, then tap "Mark as task"',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.grey[500],
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ],
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Color(0xFF2B2B48), Color(0xFF1F1F34)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(20),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  color: const Color(
+                                    0xFFF59E0B,
+                                  ).withValues(alpha: 0.2),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: const Color(
+                                      0xFFF59E0B,
+                                    ).withValues(alpha: 0.6),
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.check_circle_outline,
+                                  color: Color(0xFFFBBF24),
+                                  size: 16,
                                 ),
                               ),
-                            )
-                          : GridView.builder(
-                              padding: const EdgeInsets.all(8),
-                              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                crossAxisSpacing: 6,
-                                mainAxisSpacing: 6,
-                                childAspectRatio: 1.2,
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Tasks',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.2,
+                                ),
                               ),
-                              itemCount: tasks.length,
-                              itemBuilder: (context, index) {
-                                final task = tasks[index];
-                                final isCompleted = task.taskCompletedAt != null;
-                                return Container(
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF252542),
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: isCompleted
-                                          ? const Color(0xFF22C55E).withValues(alpha: 0.45)
-                                          : Colors.white.withValues(alpha: 0.07),
-                                    ),
+                              const Spacer(),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(
+                                    0xFFF59E0B,
+                                  ).withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: const Color(
+                                      0xFFF59E0B,
+                                    ).withValues(alpha: 0.5),
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.fromLTRB(8, 6, 6, 4),
-                                        child: Row(
-                                          children: [
-                                            InkWell(
-                                              onTap: () {
-                                                if (isCompleted) {
-                                                  _socketService.uncompleteTask(task.id);
-                                                } else {
-                                                  _socketService.completeTask(task.id);
-                                                }
-                                                Navigator.pop(context);
-                                                _refreshMessages();
-                                              },
-                                              child: Icon(
-                                                isCompleted
-                                                    ? Icons.check_circle
-                                                    : Icons.circle_outlined,
-                                                color: isCompleted
-                                                    ? const Color(0xFF22C55E)
-                                                    : Colors.grey,
-                                                size: 18,
-                                              ),
-                                            ),
-                                            const Spacer(),
-                                            InkWell(
-                                              onTap: () {
-                                                _removeTask(task);
-                                              },
-                                              child: const Icon(
-                                                Icons.delete_outline,
-                                                color: Color(0xFFF87171),
-                                                size: 16,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: Padding(
-                                          padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Expanded(
-                                                child: Text(
-                                                  task.content,
-                                                  style: TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 11,
-                                                    decoration: isCompleted
-                                                        ? TextDecoration.lineThrough
-                                                        : null,
-                                                    decorationColor: Colors.grey,
-                                                    fontWeight: FontWeight.w500,
-                                                    height: 1.3,
-                                                  ),
-                                                  maxLines: 4,
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                task.formattedTime,
-                                                style: TextStyle(
-                                                  color: Colors.grey[500],
-                                                  fontSize: 9,
-                                                ),
-                                              ),
-                                            ],
+                                ),
+                                child: Text(
+                                  '$completedCount/${tasks.length}',
+                                  style: const TextStyle(
+                                    color: Color(0xFFFCD34D),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              InkWell(
+                                onTap: () => Navigator.pop(context),
+                                borderRadius: BorderRadius.circular(16),
+                                child: Container(
+                                  width: 26,
+                                  height: 26,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.08),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.close,
+                                    color: Colors.white70,
+                                    size: 16,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Divider(
+                          color: Colors.white.withValues(alpha: 0.08),
+                          height: 1,
+                        ),
+                        Flexible(
+                          child: tasks.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 24,
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          width: 50,
+                                          height: 50,
+                                          decoration: BoxDecoration(
+                                            color: const Color(
+                                              0xFFF59E0B,
+                                            ).withValues(alpha: 0.14),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.task_alt,
+                                            color: Color(0xFFFBBF24),
+                                            size: 26,
                                           ),
                                         ),
-                                      ),
-                                    ],
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          'No tasks yet',
+                                          style: TextStyle(
+                                            color: Colors.grey[300],
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Tap a message bubble, then tap "Mark as task"',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: Colors.grey[500],
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                );
-                              },
-                            ),
+                                )
+                              : GridView.builder(
+                                  padding: const EdgeInsets.all(8),
+                                  gridDelegate:
+                                      const SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: 2,
+                                        crossAxisSpacing: 6,
+                                        mainAxisSpacing: 6,
+                                        childAspectRatio: 1.2,
+                                      ),
+                                  itemCount: tasks.length,
+                                  itemBuilder: (context, index) {
+                                    final task = tasks[index];
+                                    final isCompleted =
+                                        task.taskCompletedAt != null;
+                                    return Container(
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF252542),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: isCompleted
+                                              ? const Color(
+                                                  0xFF22C55E,
+                                                ).withValues(alpha: 0.45)
+                                              : Colors.white.withValues(
+                                                  alpha: 0.07,
+                                                ),
+                                        ),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                              8,
+                                              6,
+                                              6,
+                                              4,
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                InkWell(
+                                                  onTap: () {
+                                                    if (isCompleted) {
+                                                      _socketService
+                                                          .uncompleteTask(
+                                                            task.id,
+                                                          );
+                                                    } else {
+                                                      _socketService
+                                                          .completeTask(
+                                                            task.id,
+                                                          );
+                                                    }
+                                                    Navigator.pop(context);
+                                                    _refreshMessages();
+                                                  },
+                                                  child: Icon(
+                                                    isCompleted
+                                                        ? Icons.check_circle
+                                                        : Icons.circle_outlined,
+                                                    color: isCompleted
+                                                        ? const Color(
+                                                            0xFF22C55E,
+                                                          )
+                                                        : Colors.grey,
+                                                    size: 18,
+                                                  ),
+                                                ),
+                                                const Spacer(),
+                                                InkWell(
+                                                  onTap: () {
+                                                    _removeTask(task);
+                                                  },
+                                                  child: const Icon(
+                                                    Icons.delete_outline,
+                                                    color: Color(0xFFF87171),
+                                                    size: 16,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          Expanded(
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                    8,
+                                                    0,
+                                                    8,
+                                                    6,
+                                                  ),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      task.content,
+                                                      style: TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 11,
+                                                        decoration: isCompleted
+                                                            ? TextDecoration
+                                                                  .lineThrough
+                                                            : null,
+                                                        decorationColor:
+                                                            Colors.grey,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                        height: 1.3,
+                                                      ),
+                                                      maxLines: 4,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    task.formattedTime,
+                                                    style: TextStyle(
+                                                      color: Colors.grey[500],
+                                                      fontSize: 9,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ),
-        );
+            );
           },
         );
       },
@@ -8065,20 +8289,9 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Show excalidraw modal
   void _showExcalidrawModal() {
-    // Get all excalidraw links from the conversation
-    final excalidrawLinks = _messages
-        .where(
-          (m) =>
-              m.isExcalidrawLink ||
-              m.content.contains('excalidraw.com') ||
-              m.content.contains('excalidraw'),
-        )
-        .toList();
-
-    // Get pinned excalidraw
-    final pinnedExcalidraw = excalidrawLinks
-        .where((m) => m.excalidrawPinnedAt != null)
-        .toList();
+    final excalidrawLinks = List<Map<String, dynamic>>.from(
+      _pinnedExcalidrawLinks,
+    );
     final mediaQuery = MediaQuery.of(context);
     final topOffset = mediaQuery.padding.top + kToolbarHeight + 6;
     final availableHeight = mediaQuery.size.height - topOffset - 10;
@@ -8114,65 +8327,72 @@ class _ChatScreenState extends State<ChatScreen>
             alignment: Alignment.topCenter,
             child: Material(
               color: Colors.transparent,
-              child: Container(
-                constraints: BoxConstraints(maxHeight: maxDialogHeight),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF191729),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      blurRadius: 24,
-                      offset: const Offset(0, 12),
+              child: SizedBox(
+                height: maxDialogHeight,
+                child: Container(
+                  clipBehavior: Clip.hardEdge,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF191729),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.08),
                     ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF2A2147), Color(0xFF1C1734)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.vertical(
-                          top: Radius.circular(20),
-                        ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        blurRadius: 24,
+                        offset: const Offset(0, 12),
                       ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 34,
-                            height: 34,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF7C3AED).withValues(alpha: 0.22),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: const Color(0xFF7C3AED).withValues(alpha: 0.65),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Color(0xFF2A2147), Color(0xFF1C1734)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.vertical(
+                            top: Radius.circular(20),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 34,
+                              height: 34,
+                              decoration: BoxDecoration(
+                                color: const Color(
+                                  0xFF7C3AED,
+                                ).withValues(alpha: 0.22),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: const Color(
+                                    0xFF7C3AED,
+                                  ).withValues(alpha: 0.65),
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.draw_outlined,
+                                color: Color(0xFFC4B5FD),
+                                size: 19,
                               ),
                             ),
-                            child: const Icon(
-                              Icons.draw_outlined,
-                              color: Color(0xFFC4B5FD),
-                              size: 19,
+                            const SizedBox(width: 10),
+                            const Text(
+                              'Excalidraw',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 19,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.2,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 10),
-                          const Text(
-                            'Excalidraw',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 19,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.2,
-                            ),
-                          ),
-                          const Spacer(),
-                          if (pinnedExcalidraw.isNotEmpty)
+                            const Spacer(),
                             Container(
                               margin: const EdgeInsets.only(right: 8),
                               padding: const EdgeInsets.symmetric(
@@ -8180,14 +8400,18 @@ class _ChatScreenState extends State<ChatScreen>
                                 vertical: 5,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF7C3AED).withValues(alpha: 0.22),
+                                color: const Color(
+                                  0xFF7C3AED,
+                                ).withValues(alpha: 0.22),
                                 borderRadius: BorderRadius.circular(999),
                                 border: Border.all(
-                                  color: const Color(0xFF7C3AED).withValues(alpha: 0.6),
+                                  color: const Color(
+                                    0xFF7C3AED,
+                                  ).withValues(alpha: 0.6),
                                 ),
                               ),
                               child: Text(
-                                '${pinnedExcalidraw.length} pinned',
+                                '${excalidrawLinks.length} pinned',
                                 style: const TextStyle(
                                   color: Color(0xFFE9D5FF),
                                   fontSize: 12,
@@ -8195,172 +8419,216 @@ class _ChatScreenState extends State<ChatScreen>
                                 ),
                               ),
                             ),
-                          InkWell(
-                            onTap: () => Navigator.pop(context),
-                            borderRadius: BorderRadius.circular(16),
-                            child: Container(
-                              width: 30,
-                              height: 30,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.08),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.close,
-                                color: Colors.white70,
-                                size: 18,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Divider(
-                      color: Colors.white.withValues(alpha: 0.08),
-                      height: 1,
-                    ),
-                    Flexible(
-                      child: excalidrawLinks.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 24),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Container(
-                                      width: 70,
-                                      height: 70,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF7C3AED).withValues(alpha: 0.14),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(
-                                        Icons.draw,
-                                        color: Color(0xFFC4B5FD),
-                                        size: 34,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'No Excalidraw links yet',
-                                      style: TextStyle(
-                                        color: Colors.grey[300],
-                                        fontSize: 17,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      'Share an excalidraw.com link in the chat',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.grey[500],
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
+                            InkWell(
+                              onTap: () => Navigator.pop(context),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Container(
+                                width: 30,
+                                height: 30,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.08),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  color: Colors.white70,
+                                  size: 18,
                                 ),
                               ),
-                            )
-                          : ListView.separated(
-                              padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
-                              itemCount: excalidrawLinks.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 8),
-                              itemBuilder: (context, index) {
-                                final link = excalidrawLinks[index];
-                                final isPinned = link.excalidrawPinnedAt != null;
-                                return Container(
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF252542),
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(
-                                      color: isPinned
-                                          ? const Color(0xFF7C3AED).withValues(alpha: 0.5)
-                                          : Colors.white.withValues(alpha: 0.07),
-                                    ),
-                                  ),
-                                  child: ListTile(
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 2,
-                                    ),
-                                    leading: Container(
-                                      padding: const EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        color: isPinned
-                                            ? const Color(0xFF7C3AED)
-                                            : Colors.grey[800],
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Icon(
-                                        isPinned
-                                            ? Icons.push_pin
-                                            : Icons.draw_outlined,
-                                        color: Colors.white,
-                                        size: 18,
-                                      ),
-                                    ),
-                                    title: Text(
-                                      link.content.length > 45
-                                          ? '${link.content.substring(0, 45)}...'
-                                          : link.content,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    subtitle: Text(
-                                      link.formattedTime,
-                                      style: TextStyle(
-                                        color: Colors.grey[500],
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                    trailing: SizedBox(
-                                      width: 88,
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          IconButton(
-                                            icon: Icon(
-                                              isPinned
-                                                  ? Icons.push_pin
-                                                  : Icons.push_pin_outlined,
-                                              color: isPinned
-                                                  ? const Color(0xFFA78BFA)
-                                                  : Colors.grey,
-                                              size: 20,
-                                            ),
-                                            onPressed: () {
-                                              if (isPinned) {
-                                                _socketService.unpinExcalidraw(link.id);
-                                              } else {
-                                                _socketService.pinExcalidraw(link.id);
-                                              }
-                                              Navigator.pop(context);
-                                              _refreshMessages();
-                                            },
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.open_in_new,
-                                              color: Color(0xFF60A5FA),
-                                              size: 20,
-                                            ),
-                                            onPressed: () {
-                                              Navigator.pop(context);
-                                              _openExcalidrawLink(link.content);
-                                            },
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
                             ),
-                    ),
-                  ],
+                          ],
+                        ),
+                      ),
+                      Divider(
+                        color: Colors.white.withValues(alpha: 0.08),
+                        height: 1,
+                      ),
+                      Flexible(
+                        child: excalidrawLinks.isEmpty
+                            ? Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 24,
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 70,
+                                        height: 70,
+                                        decoration: BoxDecoration(
+                                          color: const Color(
+                                            0xFF7C3AED,
+                                          ).withValues(alpha: 0.14),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.draw,
+                                          color: Color(0xFFC4B5FD),
+                                          size: 34,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        'No pinned Excalidraw links',
+                                        style: TextStyle(
+                                          color: Colors.grey[300],
+                                          fontSize: 17,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'Pin an Excalidraw link in chat to see it here',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Colors.grey[500],
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            : GridView.builder(
+                                padding: const EdgeInsets.all(8),
+                                gridDelegate:
+                                    const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 2,
+                                      crossAxisSpacing: 6,
+                                      mainAxisSpacing: 6,
+                                      childAspectRatio: 1.2,
+                                    ),
+                                itemCount: excalidrawLinks.length,
+                                itemBuilder: (context, index) {
+                                  final link = excalidrawLinks[index];
+                                  const isPinned = true;
+                                  final content =
+                                      (link['content'] as String?) ?? '';
+                                  final extractedUrl = _extractExcalidrawUrl(
+                                    content,
+                                  );
+                                  final displayText =
+                                      (extractedUrl ?? content).trim().isEmpty
+                                      ? 'Excalidraw link'
+                                      : (extractedUrl ?? content).trim();
+                                  return Container(
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF252542),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: isPinned
+                                            ? const Color(
+                                                0xFF7C3AED,
+                                              ).withValues(alpha: 0.5)
+                                            : Colors.white.withValues(
+                                                alpha: 0.07,
+                                              ),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            8,
+                                            6,
+                                            6,
+                                            4,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              InkWell(
+                                                onTap: () async {
+                                                  Navigator.pop(context);
+                                                  await _unpinExcalidrawFromModal(
+                                                    link,
+                                                  );
+                                                },
+                                                child: Icon(
+                                                  isPinned
+                                                      ? Icons.push_pin
+                                                      : Icons.push_pin_outlined,
+                                                  color: isPinned
+                                                      ? const Color(0xFFA78BFA)
+                                                      : Colors.grey,
+                                                  size: 18,
+                                                ),
+                                              ),
+                                              const Spacer(),
+                                              InkWell(
+                                                onTap: () {
+                                                  Navigator.pop(context);
+                                                  if (extractedUrl != null) {
+                                                    _openMessageUrl(
+                                                      extractedUrl,
+                                                    );
+                                                  } else {
+                                                    _openExcalidrawLink(
+                                                      content,
+                                                    );
+                                                  }
+                                                },
+                                                child: const Icon(
+                                                  Icons.open_in_new,
+                                                  color: Color(0xFF60A5FA),
+                                                  size: 16,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                              8,
+                                              0,
+                                              8,
+                                              6,
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    displayText,
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      height: 1.3,
+                                                    ),
+                                                    maxLines: 4,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  _formatPinnedAt(
+                                                    link['excalidraw_pinned_at']
+                                                        as String?,
+                                                  ),
+                                                  style: TextStyle(
+                                                    color: Colors.grey[500],
+                                                    fontSize: 9,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -8370,20 +8638,59 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  String _formatPinnedAt(String? pinnedAt) {
+    if (pinnedAt == null) return '';
+    try {
+      final dt = DateTime.parse(pinnedAt).toLocal();
+      final now = DateTime.now();
+      final diff = now.difference(dt);
+      if (diff.inDays == 0) {
+        final hour = dt.hour;
+        final min = dt.minute.toString().padLeft(2, '0');
+        final period = hour >= 12 ? 'PM' : 'AM';
+        final h = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+        return '$h:$min $period';
+      } else if (diff.inDays == 1) {
+        return 'Yesterday';
+      } else if (diff.inDays < 7) {
+        return '${diff.inDays}d ago';
+      } else {
+        return '${dt.month}/${dt.day}/${dt.year}';
+      }
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String? _extractExcalidrawUrl(String content) {
+    for (final match in _excalidrawUrlRegex.allMatches(content)) {
+      final rawUrl = match.group(0);
+      if (rawUrl == null || rawUrl.isEmpty) continue;
+
+      final cleanedUrl = _trimTrailingUrlCharacters(rawUrl);
+      if (cleanedUrl.isEmpty) continue;
+
+      final normalizedUrl = cleanedUrl.toLowerCase().startsWith('http')
+          ? cleanedUrl
+          : 'https://$cleanedUrl';
+
+      final uri = Uri.tryParse(normalizedUrl);
+      if (uri != null && uri.host.toLowerCase().contains('excalidraw.com')) {
+        return normalizedUrl;
+      }
+    }
+
+    return null;
+  }
+
   /// Open excalidraw link in browser
   void _openExcalidrawLink(String content) {
-    final match = _messageUrlRegex.firstMatch(content);
-    final rawUrl = match?.group(0);
-    if (rawUrl == null || rawUrl.isEmpty) {
+    final extractedUrl = _extractExcalidrawUrl(content);
+    if (extractedUrl == null) {
       return;
     }
 
-    final cleanedUrl = _trimTrailingUrlCharacters(rawUrl);
-    if (cleanedUrl.isEmpty) {
-      return;
-    }
-
-    _openMessageUrl(cleanedUrl);
+    _openMessageUrl(extractedUrl);
   }
 
   String _trimTrailingUrlCharacters(String url) {
@@ -8559,14 +8866,14 @@ class _ChatScreenState extends State<ChatScreen>
       final messages = await MessageService.getConversationMessages(
         userId: widget.otherUser.id,
         limit: 50,
+        offlineFirst: false,
       );
       setState(() {
-        _messages.clear();
-        _messages.addAll(messages);
+        _messages = messages.reversed.toList();
         _databaseLoadedMessageIds
           ..clear()
           ..addAll(
-            messages
+            _messages
                 .where((message) => message.id > 0)
                 .map((message) => message.id),
           );
@@ -8987,15 +9294,15 @@ class _ChatScreenState extends State<ChatScreen>
     final isTaskMessage = message.isTask;
     final isTaskCompleted = message.taskCompletedAt != null;
     final isPinnedExcalidraw =
-      _canQuickToggleExcalidrawPin(message) &&
-      message.excalidrawPinnedAt != null;
+        _canQuickToggleExcalidrawPin(message) &&
+        message.excalidrawPinnedAt != null;
     const excalidrawAccentColor = Color(0xFFB794F6);
     final taskAccentColor = isTaskCompleted
         ? const Color(0xFF22C55E)
         : const Color(0xFFF59E0B);
     final bubbleAccentColor = isTaskMessage
-      ? taskAccentColor
-      : (isPinnedExcalidraw ? excalidrawAccentColor : null);
+        ? taskAccentColor
+        : (isPinnedExcalidraw ? excalidrawAccentColor : null);
 
     // Build the main bubble widget (without Align - alignment handled in return)
     final bubbleWidget = Container(
@@ -9321,7 +9628,7 @@ class _ChatScreenState extends State<ChatScreen>
                         : message.content,
                     isTaskMessage: isTaskMessage,
                     taskAccentColor: taskAccentColor,
-                    ),
+                  ),
                   // Translation (if available)
                   if (_messageTranslations.containsKey(message.id)) ...[
                     const SizedBox(height: 8),

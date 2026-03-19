@@ -2,7 +2,7 @@
 /// Change the baseUrl here to point to your backend server
 class ApiConfig {
   // Base URL for the API - change this to switch backends
-  static const String baseUrl = 'https://inspect.flask-call-app.site';
+  static const String baseUrl = 'https://inspect.flask-call-app.site'; //development locally
   //static const String baseUrl = 'https://web.flask-call-app.site'; //production
 
   // API endpoints
@@ -46,6 +46,14 @@ class ApiConfig {
       '$baseUrl$mobilePrefix/tasks/$taskId/complete';
 
   // Excalidraw endpoints
+  static String getExcalidrawConversationUrl(int userId) =>
+      '$baseUrl$mobilePrefix/messages/excalidraw/conversation/$userId';
+  static String getExcalidrawPinUrl(int messageId) =>
+      '$baseUrl$mobilePrefix/messages/excalidraw/pin/$messageId';
+  static String getExcalidrawUnpinUrl(int messageId) =>
+      '$baseUrl$mobilePrefix/messages/excalidraw/unpin/$messageId';
+
+  // Legacy Excalidraw board endpoints (kept for backward compatibility)
   static String get excalidrawBoardsUrl =>
       '$baseUrl$mobilePrefix/excalidraw/boards';
   static String getExcalidrawBoardUrl(String boardId) =>

@@ -1175,10 +1175,18 @@ class SocketService {
       debugPrint('📌 Excalidraw pinned: $data');
       _broadcast(_excalidrawPinnedListeners, data as Map<String, dynamic>);
     });
+    _socket!.on('excalidraw_link_pinned', (data) {
+      debugPrint('📌 Excalidraw link pinned: $data');
+      _broadcast(_excalidrawPinnedListeners, data as Map<String, dynamic>);
+    });
 
     // Excalidraw unpinned event
     _socket!.on('excalidraw_unpinned', (data) {
       debugPrint('📌 Excalidraw unpinned: $data');
+      _broadcast(_excalidrawUnpinnedListeners, data as Map<String, dynamic>);
+    });
+    _socket!.on('excalidraw_link_unpinned', (data) {
+      debugPrint('📌 Excalidraw link unpinned: $data');
       _broadcast(_excalidrawUnpinnedListeners, data as Map<String, dynamic>);
     });
 
