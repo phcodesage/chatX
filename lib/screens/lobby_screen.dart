@@ -40,13 +40,14 @@ class LobbyScreen extends StatefulWidget {
 enum LobbySortMode { recentChats, onlineFirst, allUsers }
 
 class _LobbyScreenState extends State<LobbyScreen> {
+  static const String _lobbySortModeKey = 'lobby_sort_mode';
   List<LobbyUser> _lobbyUsers = [];
   List<LobbyUser> _filteredUsers = [];
   List<Group> _groups = []; // Group chats
   List<Group> _filteredGroups = []; // Filtered group chats
   bool _isLoading = false;
   bool _isCurrentUserAdmin = false;
-  LobbySortMode _sortMode = LobbySortMode.recentChats;
+  LobbySortMode _sortMode = LobbySortMode.allUsers;
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
@@ -76,7 +77,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   void initState() {
     super.initState();
-    _loadLobby();
+    _initializeLobby();
     _loadAdminStatus();
     _searchController.addListener(_onSearchQueryChanged);
     _setupRealtimeListeners();
@@ -96,6 +97,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkPendingNotification();
     });
+  }
+
+  Future<void> _initializeLobby() async {
+    await _restoreSortMode();
+    if (!mounted) return;
+    await _loadLobby();
+  }
+
+  Future<void> _restoreSortMode() async {
+    final prefs = await StorageService.getPreferences();
+    final storedName = prefs.getString(_lobbySortModeKey);
+    final restoredMode = LobbySortMode.values.where((mode) {
+      return mode.name == storedName;
+    }).firstOrNull;
+
+    if (!mounted || restoredMode == null || restoredMode == _sortMode) return;
+
+    setState(() {
+      _sortMode = restoredMode;
+    });
+  }
+
+  Future<void> _persistSortMode() async {
+    final prefs = await StorageService.getPreferences();
+    await prefs.setString(_lobbySortModeKey, _sortMode.name);
   }
 
   /// Check if there's a pending notification to handle
@@ -1426,6 +1452,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           break;
       }
     });
+    unawaited(_persistSortMode());
     _filterUsers();
   }
 
