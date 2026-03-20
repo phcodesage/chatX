@@ -7,6 +7,7 @@ import 'screens/auth_check_screen.dart';
 import 'screens/sign_in_page.dart';
 import 'screens/register_page.dart';
 import 'screens/forgot_password_page.dart';
+import 'screens/reset_password_page.dart';
 import 'screens/home_page.dart';
 import 'screens/lobby_screen.dart';
 import 'services/firebase_messaging_service.dart';
@@ -100,6 +101,7 @@ class MessengerApp extends StatelessWidget {
         SignInPage.route: (_) => const SignInPage(),
         RegisterPage.route: (_) => const RegisterPage(),
         ForgotPasswordPage.route: (_) => const ForgotPasswordPage(),
+        ResetPasswordPage.route: (_) => const ResetPasswordPage(),
         HomePage.route: (_) => const HomePage(),
         LobbyScreen.route: (_) => const LobbyScreen(),
       },

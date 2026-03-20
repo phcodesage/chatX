@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
@@ -236,7 +237,7 @@ class AuthService {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'email_or_username': emailOrUsername}),
           )
-          .timeout(ApiConfig.connectionTimeout);
+          .timeout(ApiConfig.forgotPasswordTimeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -246,6 +247,15 @@ class AuthService {
           _extractErrorMessage(response.body, 'Failed to send reset link'),
         );
       }
+    } on TimeoutException {
+      throw Exception(
+        'The reset request timed out. Please try again in a moment. '
+        'If the email arrives later, you can still use the token to reset your password.',
+      );
+    } on http.ClientException {
+      throw Exception(
+        'Could not reach the server. Please check your internet connection and try again.',
+      );
     } catch (e) {
       debugPrint('Forgot password error: $e');
       rethrow;
@@ -274,6 +284,12 @@ class AuthService {
           _extractErrorMessage(response.body, 'Failed to reset password'),
         );
       }
+    } on TimeoutException {
+      throw Exception('The reset request timed out. Please try again.');
+    } on http.ClientException {
+      throw Exception(
+        'Could not reach the server. Please check your internet connection and try again.',
+      );
     } catch (e) {
       debugPrint('Reset password error: $e');
       rethrow;

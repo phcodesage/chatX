@@ -3,6 +3,7 @@ import '../services/auth_service.dart';
 import '../widgets/auth_scaffold.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/primary_button.dart';
+import 'reset_password_page.dart';
 import 'sign_in_page.dart';
 
 /// Forgot password screen
@@ -35,16 +36,19 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     setState(() => _isLoading = true);
 
     try {
-      final message = await AuthService.forgotPassword(emailOrUsername: emailOrUsername);
-      
+      final message = await AuthService.forgotPassword(
+        emailOrUsername: emailOrUsername,
+      );
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message), backgroundColor: Colors.green),
         );
-        // Navigate back to sign in after a delay
-        Future.delayed(const Duration(seconds: 2), () {
+
+        // Continue directly to the token entry step after sending reset email.
+        Future.delayed(const Duration(seconds: 1), () {
           if (mounted) {
-            Navigator.pushReplacementNamed(context, SignInPage.route);
+            Navigator.pushReplacementNamed(context, ResetPasswordPage.route);
           }
         });
       }
@@ -75,7 +79,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           AppTextField(label: 'Email or Username', controller: _userOrEmail),
           const SizedBox(height: 22),
           PrimaryButton(
-            text: 'Send Reset Link',
+            text: 'Send Reset Email',
             onPressed: _isLoading ? null : _handleForgotPassword,
           ),
           if (_isLoading)
@@ -86,10 +90,26 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           const SizedBox(height: 16),
           Center(
             child: TextButton(
-              onPressed: () => Navigator.pushReplacementNamed(context, SignInPage.route),
-              child: const Text('Back to sign in', style: TextStyle(color: Color(0xFF00E5FF))),
+              onPressed: () => Navigator.pushReplacementNamed(
+                context,
+                ResetPasswordPage.route,
+              ),
+              child: const Text(
+                'I already have a reset token',
+                style: TextStyle(color: Color(0xFF00E5FF)),
+              ),
             ),
-          )
+          ),
+          Center(
+            child: TextButton(
+              onPressed: () =>
+                  Navigator.pushReplacementNamed(context, SignInPage.route),
+              child: const Text(
+                'Back to sign in',
+                style: TextStyle(color: Color(0xFF00E5FF)),
+              ),
+            ),
+          ),
         ],
       ),
     );

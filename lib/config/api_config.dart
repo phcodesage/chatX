@@ -2,7 +2,8 @@
 /// Change the baseUrl here to point to your backend server
 class ApiConfig {
   // Base URL for the API - change this to switch backends
-  static const String baseUrl = 'https://inspect.flask-call-app.site'; //development locally
+  static const String baseUrl =
+      'https://inspect.flask-call-app.site'; //development locally
   //static const String baseUrl = 'https://web.flask-call-app.site'; //production
 
   // API endpoints
@@ -34,6 +35,7 @@ class ApiConfig {
   // Timeouts
   static const Duration connectionTimeout = Duration(seconds: 30);
   static const Duration receiveTimeout = Duration(seconds: 30);
+  static const Duration forgotPasswordTimeout = Duration(seconds: 60);
 
   // App update endpoints
   static String get appVersionUrl => '$baseUrl$mobilePrefix/app-version';
