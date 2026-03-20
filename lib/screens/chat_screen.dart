@@ -4329,43 +4329,71 @@ class _ChatScreenState extends State<ChatScreen>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.7,
+        height: MediaQuery.of(context).size.height * 0.8,
         decoration: const BoxDecoration(
-          color: Color(0xFF2D2D2D),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          color: Color(0xFF1A1A2E),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black45,
+              blurRadius: 12,
+              spreadRadius: 2,
+            ),
+          ],
         ),
         child: Column(
           children: [
             // Handle bar
             Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
+              margin: const EdgeInsets.only(top: 14, bottom: 8),
+              width: 48,
+              height: 5,
               decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
+                color: Colors.white.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(3),
               ),
             ),
-            // Title
+            
+            // Title with close button
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(20, 4, 12, 16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Send File',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Send File',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Preview before sending',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.6),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
+                    icon: const Icon(Icons.close, color: Colors.white70),
                     onPressed: () => Navigator.pop(context),
+                    splashRadius: 24,
                   ),
                 ],
               ),
+            ),
+            
+            const Divider(
+              color: Colors.white10,
+              height: 1,
+              thickness: 1,
             ),
             // Preview area
             Expanded(
@@ -4494,32 +4522,51 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
             // Action buttons
-            Padding(
-              padding: const EdgeInsets.all(16),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.02),
+                border: Border(
+                  top: BorderSide(
+                    color: Colors.white.withValues(alpha: 0.08),
+                  ),
+                ),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                16,
+                20,
+                16 + MediaQuery.of(context).viewInsets.bottom,
+              ),
               child: Column(
                 children: [
-                  // Camera switch button (only for camera captures)
                   if (isFromCamera) ...[
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        setState(() {
-                          _useFrontCamera = !_useFrontCamera;
-                        });
-                        _takePhoto();
-                      },
-                      icon: const Icon(Icons.cameraswitch),
-                      label: Text(
-                        _useFrontCamera
-                            ? 'Switch to Back Camera'
-                            : 'Switch to Front Camera',
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white70,
-                        side: const BorderSide(color: Colors.white30),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          setState(() {
+                            _useFrontCamera = !_useFrontCamera;
+                          });
+                          _takePhoto();
+                        },
+                        icon: const Icon(Icons.flip_camera_ios_outlined),
+                        label: Text(
+                          _useFrontCamera
+                              ? 'Switch to Back Camera'
+                              : 'Switch to Front Camera',
+                          style: const TextStyle(fontSize: 15),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            width: 1.5,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
                       ),
                     ),
@@ -4527,29 +4574,35 @@ class _ChatScreenState extends State<ChatScreen>
                   ],
                   Row(
                     children: [
-                      // Replace / Take Another button
+                      // Replace/Take Another Button
                       Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            if (isFromCamera) {
-                              _takePhoto();
-                            } else {
-                              _pickFile();
-                            }
-                          },
-                          icon: Icon(
-                            isFromCamera ? Icons.camera_alt : Icons.refresh,
-                          ),
-                          label: Text(
-                            isFromCamera ? 'Take Another' : 'Replace',
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            side: const BorderSide(color: Colors.white54),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          height: 52,
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              if (isFromCamera) {
+                                _takePhoto();
+                              } else {
+                                _pickFile();
+                              }
+                            },
+                            icon: Icon(
+                              isFromCamera ? Icons.camera_alt_outlined : Icons.refresh,
+                            ),
+                            label: Text(
+                              isFromCamera ? 'Take Another' : 'Replace',
+                              style: const TextStyle(fontSize: 15),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                width: 1.5,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
                           ),
                         ),
@@ -4557,20 +4610,26 @@ class _ChatScreenState extends State<ChatScreen>
                       const SizedBox(width: 12),
                       // Send button
                       Expanded(
-                        flex: 2,
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _uploadAndSendFile(file, fileName, mimeType);
-                          },
-                          icon: const Icon(Icons.send),
-                          label: const Text('Send'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF6D28D9),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          height: 52,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _uploadAndSendFile(file, fileName, mimeType);
+                            },
+                            icon: const Icon(Icons.send_rounded),
+                            label: const Text(
+                              'Send',
+                              style: TextStyle(fontSize: 15),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF7C3AED),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              elevation: 0,
+                              padding: EdgeInsets.zero,
                             ),
                           ),
                         ),
@@ -6632,8 +6691,6 @@ class _ChatScreenState extends State<ChatScreen>
       key: ValueKey<String>('swipe_${message.id}'),
       isSentByMe: isSentByMe,
       onReply: () => _setReplyTo(message),
-      onTap: () => _toggleTaskActionForMessage(message),
-      onLongPress: () => _showMessageContextMenu(message, isSentByMe),
       child: child,
     );
   }
@@ -9282,36 +9339,39 @@ class _ChatScreenState extends State<ChatScreen>
         ? taskAccentColor
         : (isPinnedExcalidraw ? excalidrawAccentColor : null);
 
-    // Build the main bubble widget (without Align - alignment handled in return)
-    final bubbleWidget = Container(
-      margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
-      constraints: BoxConstraints(
-        maxWidth: MediaQuery.of(context).size.width * (scale < 0.9 ? 0.82 : 0.70),
-      ),
-      decoration: BoxDecoration(
-        color: isSentByMe ? const Color(0xFF420796) : const Color(0xFF3944BC),
-        border: bubbleAccentColor != null
-            ? Border.all(
-                color: bubbleAccentColor.withValues(alpha: 0.85),
-                width: 1.4,
-              )
-            : null,
-        boxShadow: bubbleAccentColor != null
-            ? [
-                BoxShadow(
-                  color: bubbleAccentColor.withValues(alpha: 0.45),
-                  blurRadius: 14,
-                  spreadRadius: 0.2,
-                ),
-              ]
-            : null,
-        borderRadius: BorderRadius.only(
-          topLeft: const Radius.circular(16),
-          topRight: const Radius.circular(16),
-          bottomLeft: Radius.circular(isSentByMe ? 16 : 4),
-          bottomRight: Radius.circular(isSentByMe ? 4 : 16),
+    // Build the main bubble widget (wrapped with tap handlers)
+    final bubbleWidget = GestureDetector(
+      onTap: () => _toggleTaskActionForMessage(message),
+      onLongPress: () => _showMessageContextMenu(message, isSentByMe),
+      child: Container(
+        margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * (scale < 0.9 ? 0.82 : 0.70),
         ),
-      ),
+        decoration: BoxDecoration(
+          color: isSentByMe ? const Color(0xFF420796) : const Color(0xFF3944BC),
+          border: bubbleAccentColor != null
+              ? Border.all(
+                  color: bubbleAccentColor.withValues(alpha: 0.85),
+                  width: 1.4,
+                )
+              : null,
+          boxShadow: bubbleAccentColor != null
+              ? [
+                  BoxShadow(
+                    color: bubbleAccentColor.withValues(alpha: 0.45),
+                    blurRadius: 14,
+                    spreadRadius: 0.2,
+                  ),
+                ]
+              : null,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isSentByMe ? 16 : 4),
+            bottomRight: Radius.circular(isSentByMe ? 4 : 16),
+          ),
+        ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -9688,6 +9748,7 @@ class _ChatScreenState extends State<ChatScreen>
             ),
         ],
       ),
+    ),
     );
 
     // Wrap bubble with Column for reactions below (Column keeps pills in hit-test bounds)
@@ -9908,15 +9969,11 @@ class _SwipeableMessage extends StatefulWidget {
     super.key,
     required this.isSentByMe,
     required this.onReply,
-    required this.onTap,
-    required this.onLongPress,
     required this.child,
   });
 
   final bool isSentByMe;
   final VoidCallback onReply;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
   final Widget child;
 
   @override
@@ -9956,8 +10013,6 @@ class _SwipeableMessageState extends State<_SwipeableMessage> {
           _dragOffset = 0.0;
         });
       },
-      onTap: widget.onTap,
-      onLongPress: widget.onLongPress,
       child: Transform.translate(
         offset: Offset(_dragOffset, 0),
         child: Stack(
