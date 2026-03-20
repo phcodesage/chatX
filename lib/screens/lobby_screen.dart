@@ -13,12 +13,11 @@ import '../services/socket_service.dart';
 import '../widgets/app_version_text.dart';
 import '../services/call_service.dart';
 import '../widgets/incoming_call_setup_modal.dart';
-import 'sign_in_page.dart';
 import 'chat_screen.dart';
 import 'connected_call_screen.dart';
-import 'task_list_screen.dart';
 import 'group_chat_screen.dart';
 import 'create_group_screen.dart';
+import 'sign_in_page.dart';
 import '../services/app_update_service.dart';
 import '../services/storage_service.dart';
 import '../config/api_config.dart';
@@ -37,17 +36,16 @@ class LobbyScreen extends StatefulWidget {
   State<LobbyScreen> createState() => _LobbyScreenState();
 }
 
-enum LobbySortMode { recentChats, onlineFirst, allUsers }
+enum LobbyQuickFilter { all, online, groups, offline }
 
 class _LobbyScreenState extends State<LobbyScreen> {
-  static const String _lobbySortModeKey = 'lobby_sort_mode';
   List<LobbyUser> _lobbyUsers = [];
   List<LobbyUser> _filteredUsers = [];
   List<Group> _groups = []; // Group chats
   List<Group> _filteredGroups = []; // Filtered group chats
   bool _isLoading = false;
   bool _isCurrentUserAdmin = false;
-  LobbySortMode _sortMode = LobbySortMode.allUsers;
+  LobbyQuickFilter _activeFilter = LobbyQuickFilter.all;
   final TextEditingController _searchController = TextEditingController();
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
@@ -77,7 +75,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeLobby();
+    _loadLobby();
     _loadAdminStatus();
     _searchController.addListener(_onSearchQueryChanged);
     _setupRealtimeListeners();
@@ -97,31 +95,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkPendingNotification();
     });
-  }
-
-  Future<void> _initializeLobby() async {
-    await _restoreSortMode();
-    if (!mounted) return;
-    await _loadLobby();
-  }
-
-  Future<void> _restoreSortMode() async {
-    final prefs = await StorageService.getPreferences();
-    final storedName = prefs.getString(_lobbySortModeKey);
-    final restoredMode = LobbySortMode.values.where((mode) {
-      return mode.name == storedName;
-    }).firstOrNull;
-
-    if (!mounted || restoredMode == null || restoredMode == _sortMode) return;
-
-    setState(() {
-      _sortMode = restoredMode;
-    });
-  }
-
-  Future<void> _persistSortMode() async {
-    final prefs = await StorageService.getPreferences();
-    await prefs.setString(_lobbySortModeKey, _sortMode.name);
   }
 
   /// Check if there's a pending notification to handle
@@ -1142,10 +1115,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     if (useCacheFirst && userId != null) {
       final cached = await ChatCacheService.loadLobbyUsers(userId);
       if (cached.isNotEmpty && mounted) {
+        final sortedCachedUsers = _sortUsersByRecentActivity(cached);
         setState(() {
-          _lobbyUsers = cached;
-          _filteredUsers = List.from(cached);
+          _lobbyUsers = sortedCachedUsers;
+          _filteredUsers = List.from(sortedCachedUsers);
         });
+        _filterUsers();
       }
     }
     try {
@@ -1158,8 +1133,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
         }),
       ]);
 
-      final users = results[0] as List<LobbyUser>;
-      final groups = results[1] as List<Group>;
+      final users = _sortUsersByRecentActivity(results[0] as List<LobbyUser>);
+      final groups = _sortGroupsByRecentActivity(results[1] as List<Group>);
 
       if (mounted) {
         setState(() {
@@ -1240,15 +1215,39 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return 2;
   }
 
-  /// Parse lastMessageTime to DateTime for sorting (returns epoch 0 if null)
-  DateTime _parseMessageTime(LobbyUser user) {
-    if (user.lastMessageTime == null)
+  DateTime _parseMessageTime(String? timestamp) {
+    if (timestamp == null || timestamp.isEmpty) {
       return DateTime.fromMillisecondsSinceEpoch(0);
+    }
     try {
-      return _parseUtcTimestamp(user.lastMessageTime!);
+      return _parseUtcTimestamp(timestamp);
     } catch (_) {
       return DateTime.fromMillisecondsSinceEpoch(0);
     }
+  }
+
+  List<LobbyUser> _sortUsersByRecentActivity(List<LobbyUser> users) {
+    final sortedUsers = List<LobbyUser>.from(users);
+    sortedUsers.sort((a, b) {
+      final timeCompare = _parseMessageTime(
+        b.lastMessageTime,
+      ).compareTo(_parseMessageTime(a.lastMessageTime));
+      if (timeCompare != 0) return timeCompare;
+      return a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase());
+    });
+    return sortedUsers;
+  }
+
+  List<Group> _sortGroupsByRecentActivity(List<Group> groups) {
+    final sortedGroups = List<Group>.from(groups);
+    sortedGroups.sort((a, b) {
+      final timeCompare = (b.lastMessage?.timestampMs ?? 0).compareTo(
+        a.lastMessage?.timestampMs ?? 0,
+      );
+      if (timeCompare != 0) return timeCompare;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return sortedGroups;
   }
 
   void _filterUsers() {
@@ -1276,84 +1275,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
         }).toList();
       }
 
-      switch (_sortMode) {
-        case LobbySortMode.recentChats:
-          // Sort by status tier first, then by most recent message within each tier
-          filtered.sort((a, b) {
-            final tierA = _getStatusTier(a);
-            final tierB = _getStatusTier(b);
-            if (tierA != tierB) return tierA.compareTo(tierB);
-            // Within same tier, sort by last message time (most recent first)
-            final timeA = _parseMessageTime(a);
-            final timeB = _parseMessageTime(b);
-            return timeB.compareTo(timeA);
-          });
-          // Sort groups by last message time
-          filteredGroups.sort((a, b) {
-            final timeA = a.lastMessage?.timestampMs ?? 0;
-            final timeB = b.lastMessage?.timestampMs ?? 0;
-            return timeB.compareTo(timeA);
-          });
-          break;
-        case LobbySortMode.onlineFirst:
-          // Sort purely by status tier, then alphabetically
-          filtered.sort((a, b) {
-            final tierA = _getStatusTier(a);
-            final tierB = _getStatusTier(b);
-            if (tierA != tierB) return tierA.compareTo(tierB);
-            return a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase());
-          });
-          // Sort groups alphabetically
-          filteredGroups.sort(
-            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-          );
-          break;
-        case LobbySortMode.allUsers:
-          // Alphabetical only
-          filtered.sort(
-            (a, b) =>
-                a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
-          );
-          filteredGroups.sort(
-            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-          );
-          break;
-      }
+      filtered = _sortUsersByRecentActivity(filtered);
+      filteredGroups = _sortGroupsByRecentActivity(filteredGroups);
 
       _filteredUsers = filtered;
       _filteredGroups = filteredGroups;
     });
-  }
-
-  Future<void> _handleLogout() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF2D2D2D),
-        title: const Text('Logout', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'Are you sure you want to logout?',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Logout', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true && mounted) {
-      await AuthService.logout();
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, SignInPage.route);
-      }
-    }
   }
 
   Color _getAvatarColor(int index) {
@@ -1416,44 +1343,67 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
-  String _sortModeLabel(LobbySortMode mode) {
-    switch (mode) {
-      case LobbySortMode.recentChats:
-        return 'Recent Chats';
-      case LobbySortMode.onlineFirst:
-        return 'Online First';
-      case LobbySortMode.allUsers:
-        return 'A-Z';
+  Future<void> _handleLogout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2D2D2D),
+        title: const Text('Logout', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Are you sure you want to logout?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Logout', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      await AuthService.logout();
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, SignInPage.route);
+      }
     }
   }
 
-  IconData _sortModeIcon(LobbySortMode mode) {
-    switch (mode) {
-      case LobbySortMode.recentChats:
-        return Icons.access_time;
-      case LobbySortMode.onlineFirst:
-        return Icons.circle;
-      case LobbySortMode.allUsers:
-        return Icons.sort_by_alpha;
+  int _activeFilterIndex() {
+    switch (_activeFilter) {
+      case LobbyQuickFilter.all:
+        return 0;
+      case LobbyQuickFilter.online:
+        return 1;
+      case LobbyQuickFilter.groups:
+        return 2;
+      case LobbyQuickFilter.offline:
+        return 3;
     }
   }
 
-  void _cycleSortMode() {
+  void _setActiveFilter(int index) {
     setState(() {
-      switch (_sortMode) {
-        case LobbySortMode.recentChats:
-          _sortMode = LobbySortMode.onlineFirst;
+      switch (index) {
+        case 0:
+          _activeFilter = LobbyQuickFilter.all;
           break;
-        case LobbySortMode.onlineFirst:
-          _sortMode = LobbySortMode.allUsers;
+        case 1:
+          _activeFilter = LobbyQuickFilter.online;
           break;
-        case LobbySortMode.allUsers:
-          _sortMode = LobbySortMode.recentChats;
+        case 2:
+          _activeFilter = LobbyQuickFilter.groups;
+          break;
+        case 3:
+          _activeFilter = LobbyQuickFilter.offline;
           break;
       }
     });
-    unawaited(_persistSortMode());
-    _filterUsers();
   }
 
   Widget _buildSectionHeader(String title, int count, Color color) {
@@ -1673,129 +1623,111 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Separate into 3 tiers
+    // Split users into status tiers for quick filter tabs.
     final onlineUsers = _filteredUsers
         .where((u) => _getStatusTier(u) == 0)
         .toList();
-    final lastSeenUsers = _filteredUsers
-        .where((u) => _getStatusTier(u) == 1)
-        .toList();
     final offlineUsers = _filteredUsers
-        .where((u) => _getStatusTier(u) == 2)
+        .where((u) => _getStatusTier(u) != 0)
         .toList();
+
+    final selectedUsers = switch (_activeFilter) {
+      LobbyQuickFilter.all => _filteredUsers,
+      LobbyQuickFilter.online => onlineUsers,
+      LobbyQuickFilter.groups => const <LobbyUser>[],
+      LobbyQuickFilter.offline => offlineUsers,
+    };
+
+    final selectedSectionTitle = switch (_activeFilter) {
+      LobbyQuickFilter.all => 'ALL CHATS',
+      LobbyQuickFilter.online => 'ONLINE',
+      LobbyQuickFilter.groups => 'GROUPS',
+      LobbyQuickFilter.offline => 'OFFLINE',
+    };
+
+    final selectedSectionColor = switch (_activeFilter) {
+      LobbyQuickFilter.all => const Color(0xFF00D9FF),
+      LobbyQuickFilter.online => const Color(0xFF00E676),
+      LobbyQuickFilter.groups => const Color(0xFF00D9FF),
+      LobbyQuickFilter.offline => Colors.grey,
+    };
+
+    final isFilterEmpty = _activeFilter == LobbyQuickFilter.all
+        ? _filteredUsers.isEmpty && _filteredGroups.isEmpty
+        : _activeFilter == LobbyQuickFilter.groups
+        ? _filteredGroups.isEmpty
+        : selectedUsers.isEmpty;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A2E),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1A2E),
         elevation: 0,
+        centerTitle: true,
         title: const Text(
           'Chats',
           style: TextStyle(
             color: Color(0xFF00D9FF),
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
           ),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.check_circle_outline, color: Colors.white70),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const TaskListScreen()),
-              );
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white70),
+            color: const Color(0xFF252542),
+            onSelected: (value) {
+              if (value == 'logout') {
+                _handleLogout();
+              }
             },
-            tooltip: 'Tasks',
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white70),
-            onPressed: () => _loadLobby(useCacheFirst: false),
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white70),
-            onPressed: _handleLogout,
+            itemBuilder: (context) => const [
+              PopupMenuItem<String>(
+                value: 'logout',
+                child: Text('Logout', style: TextStyle(color: Colors.white)),
+              ),
+            ],
           ),
         ],
       ),
       body: Column(
         children: [
-          // Search bar + sort button row
+          // Search bar
           Padding(
             padding: const EdgeInsets.symmetric(
               horizontal: 16.0,
               vertical: 8.0,
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      hintText: 'Search conversations...',
-                      hintStyle: TextStyle(color: Colors.grey[500]),
-                      prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
-                      filled: true,
-                      fillColor: const Color(0xFF252542),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Sort/filter button
-                Material(
-                  color: const Color(0xFF252542),
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Search conversations...',
+                hintStyle: TextStyle(color: Colors.grey[500]),
+                prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
+                filled: true,
+                fillColor: const Color(0xFF252542),
+                border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(8),
-                    onTap: _cycleSortMode,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 12,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _sortModeIcon(_sortMode),
-                            color: const Color(0xFF00D9FF),
-                            size: 16,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            _sortModeLabel(_sortMode),
-                            style: const TextStyle(
-                              color: Color(0xFF00D9FF),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  borderSide: BorderSide.none,
                 ),
-              ],
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+              ),
             ),
           ),
-          // User list
           Expanded(
             child: (_isLoading && _lobbyUsers.isEmpty && _groups.isEmpty)
                 ? _buildLoadingShimmer()
-                : (_filteredUsers.isEmpty && _filteredGroups.isEmpty)
+                : isFilterEmpty
                 ? Center(
                     child: Text(
                       _searchController.text.isEmpty
-                          ? 'No conversations yet'
+                          ? _activeFilter == LobbyQuickFilter.all
+                                ? 'No chats yet'
+                                : 'No ${selectedSectionTitle.toLowerCase()} yet'
                           : 'No results found',
                       style: TextStyle(color: Colors.grey[500], fontSize: 16),
                     ),
@@ -1804,81 +1736,72 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     onRefresh: () => _loadLobby(useCacheFirst: false),
                     color: const Color(0xFF00D9FF),
                     backgroundColor: const Color(0xFF252542),
-                    child: _sortMode == LobbySortMode.allUsers
-                        // A-Z mode: groups first, then flat list of users
-                        ? ListView(
-                            children: [
-                              // Groups section (always at top)
-                              _buildGroupsSectionHeader(),
-                              if (_filteredGroups.isNotEmpty)
-                                ..._filteredGroups.map(
-                                  (group) => _buildGroupTile(group),
-                                ),
-                              // Users
-                              ..._filteredUsers.map(
-                                (user) => _buildUserTile(
-                                  user,
-                                  isOnlineSection: _getStatusTier(user) == 0,
-                                ),
-                              ),
-                            ],
-                          )
-                        // Grouped mode: groups first, then 3-tier sections
-                        : ListView(
-                            children: [
-                              // Groups section (always at top)
-                              _buildGroupsSectionHeader(),
-                              if (_filteredGroups.isNotEmpty)
-                                ..._filteredGroups.map(
-                                  (group) => _buildGroupTile(group),
-                                ),
-                              // Online section
-                              if (onlineUsers.isNotEmpty) ...[
-                                _buildSectionHeader(
-                                  'ONLINE',
-                                  onlineUsers.length,
-                                  const Color(0xFF00E676),
-                                ),
-                                ...onlineUsers.map(
-                                  (user) => _buildUserTile(
-                                    user,
-                                    isOnlineSection: true,
-                                  ),
-                                ),
-                              ],
-                              // Last Seen section
-                              if (lastSeenUsers.isNotEmpty) ...[
-                                _buildSectionHeader(
-                                  'LAST SEEN',
-                                  lastSeenUsers.length,
-                                  const Color(0xFFFFC107),
-                                ),
-                                ...lastSeenUsers.map(
-                                  (user) => _buildUserTile(
-                                    user,
-                                    isOnlineSection: false,
-                                  ),
-                                ),
-                              ],
-                              // Offline section
-                              if (offlineUsers.isNotEmpty) ...[
-                                _buildSectionHeader(
-                                  'OFFLINE',
-                                  offlineUsers.length,
-                                  Colors.grey,
-                                ),
-                                ...offlineUsers.map(
-                                  (user) => _buildUserTile(
-                                    user,
-                                    isOnlineSection: false,
-                                  ),
-                                ),
-                              ],
-                            ],
+                    child: ListView(
+                      children: [
+                        if (_activeFilter == LobbyQuickFilter.groups)
+                          _buildGroupsSectionHeader(),
+                        if (_activeFilter == LobbyQuickFilter.all &&
+                            _filteredGroups.isNotEmpty)
+                          _buildGroupsSectionHeader(),
+                        if (_activeFilter != LobbyQuickFilter.all &&
+                            _activeFilter != LobbyQuickFilter.groups)
+                          _buildSectionHeader(
+                            selectedSectionTitle,
+                            selectedUsers.length,
+                            selectedSectionColor,
                           ),
+                        if (_activeFilter == LobbyQuickFilter.all) ...[
+                          if (_filteredGroups.isNotEmpty)
+                            ..._filteredGroups.map(
+                              (group) => _buildGroupTile(group),
+                            ),
+                          ...selectedUsers.map((user) => _buildUserTile(user)),
+                        ] else if (_activeFilter == LobbyQuickFilter.groups)
+                          ..._filteredGroups.map(
+                            (group) => _buildGroupTile(group),
+                          )
+                        else
+                          ...selectedUsers.map(
+                            (user) => _buildUserTile(
+                              user,
+                              isOnlineSection:
+                                  _activeFilter == LobbyQuickFilter.online,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
           ),
           const AppVersionText(),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        backgroundColor: const Color(0xFF1A1A2E),
+        indicatorColor: const Color(0xFF252542),
+        selectedIndex: _activeFilterIndex(),
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        onDestinationSelected: _setActiveFilter,
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard, color: Color(0xFF00D9FF)),
+            label: 'All',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.circle_outlined),
+            selectedIcon: Icon(Icons.circle, color: Color(0xFF00E676)),
+            label: 'Online',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.groups_outlined),
+            selectedIcon: Icon(Icons.groups, color: Color(0xFF00D9FF)),
+            label: 'Groups',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.circle_outlined),
+            selectedIcon: Icon(Icons.circle, color: Colors.grey),
+            label: 'Offline',
+          ),
         ],
       ),
     );
@@ -1931,7 +1854,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _buildGroupTile(Group group) {
-    final hasUnread = false; // TODO: Implement unread count for groups
     final lastMessageText = group.lastMessage?.content ?? 'No messages yet';
     final lastMessageTime = group.lastMessage?.formattedTime ?? '';
 
@@ -2021,37 +1943,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       Text(
                         lastMessageTime,
                         style: TextStyle(
-                          color: hasUnread
-                              ? const Color(0xFF00D9FF)
-                              : Colors.grey[500],
+                          color: Colors.grey[500],
                           fontSize: 11,
-                          fontWeight: hasUnread
-                              ? FontWeight.bold
-                              : FontWeight.normal,
+                          fontWeight: FontWeight.normal,
                         ),
                       ),
-                    // Unread badge (when implemented)
-                    if (hasUnread) ...[
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF00D9FF),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Text(
-                          '1', // TODO: Replace with actual unread count
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ],
@@ -2065,17 +1961,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget _buildUserTile(LobbyUser user, {bool isOnlineSection = false}) {
     final avatarColor = _getAvatarColor(user.avatarColorIndex);
     final effectiveStatus = _getEffectiveStatus(user);
-
-    // Format last seen date for offline users
-    String _formatLastSeenDate(String? lastSeen) {
-      if (lastSeen == null) return '';
-      try {
-        final dateTime = _parseUtcTimestamp(lastSeen);
-        return 'Last seen: ${dateTime.month}/${dateTime.day}/${dateTime.year}';
-      } catch (e) {
-        return '';
-      }
-    }
 
     // Get last message preview
     String _getLastMessagePreview() {
