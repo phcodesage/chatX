@@ -135,8 +135,9 @@ class _RegisterPageState extends State<RegisterPage> {
               child: Center(child: CircularProgressIndicator()),
             ),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               const Text(
                 'Already have an account? ',

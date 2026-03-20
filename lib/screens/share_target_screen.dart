@@ -1,4 +1,4 @@
- import 'dart:io';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -252,14 +252,24 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
     Navigator.pushReplacementNamed(context, LobbyScreen.route);
   }
 
-  Widget _buildPreviewCard() {
+  Widget _buildPreviewCard({
+    required double previewHeight,
+    required double horizontalPadding,
+    required double topPadding,
+    required double scale,
+  }) {
     final firstItem = widget.sharedItems.first;
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      margin: EdgeInsets.fromLTRB(
+        horizontalPadding,
+        topPadding,
+        horizontalPadding,
+        8 * scale,
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF252542),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(14 * scale),
         border: Border.all(
           color: const Color(0xFF00D9FF).withValues(alpha: 0.25),
         ),
@@ -268,49 +278,56 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(14 * scale),
+            ),
             child: SizedBox(
               width: double.infinity,
-              height: 180,
+              height: previewHeight,
               child: firstItem.isImage
                   ? Image.file(
                       File(firstItem.path),
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
-                        return const ColoredBox(
+                        return ColoredBox(
                           color: Color(0xFF1A1A2E),
                           child: Center(
                             child: Icon(
                               Icons.image_not_supported_outlined,
                               color: Colors.white54,
-                              size: 44,
+                              size: 44 * scale,
                             ),
                           ),
                         );
                       },
                     )
-                  : const ColoredBox(
+                  : ColoredBox(
                       color: Color(0xFF1A1A2E),
                       child: Center(
                         child: Icon(
                           Icons.insert_drive_file_outlined,
                           color: Colors.white54,
-                          size: 44,
+                          size: 44 * scale,
                         ),
                       ),
                     ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            padding: EdgeInsets.fromLTRB(
+              12 * scale,
+              10 * scale,
+              12 * scale,
+              12 * scale,
+            ),
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.share_outlined,
                   color: Color(0xFF00D9FF),
-                  size: 18,
+                  size: 18 * scale,
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: 8 * scale),
                 Expanded(
                   child: Text(
                     widget.sharedItems.length == 1
@@ -331,16 +348,21 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
     );
   }
 
-  Widget _buildUserTile(LobbyUser user) {
+  Widget _buildUserTile(LobbyUser user, double scale) {
     final isSelected = _selectedUserIds.contains(user.id);
+    final avatarRadius = 24 * scale;
+    final avatarDiameter = avatarRadius * 2;
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      margin: EdgeInsets.symmetric(
+        horizontal: 12 * scale,
+        vertical: 4 * scale,
+      ),
       decoration: BoxDecoration(
         color: isSelected
             ? const Color(0xFF00D9FF).withValues(alpha: 0.18)
             : const Color(0xFF252542),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(12 * scale),
         border: Border.all(
           color: isSelected ? const Color(0xFF00D9FF) : const Color(0xFF252542),
         ),
@@ -348,7 +370,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(12 * scale),
           onTap: () {
             setState(() {
               if (isSelected) {
@@ -359,18 +381,21 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
             });
           },
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: EdgeInsets.symmetric(
+              horizontal: 12 * scale,
+              vertical: 10 * scale,
+            ),
             child: Row(
               children: [
                 CircleAvatar(
-                  radius: 24,
+                  radius: avatarRadius,
                   backgroundColor: _avatarColorForUser(user),
                   child: user.avatarUrl != null
                       ? ClipOval(
                           child: Image.network(
                             user.avatarUrl!,
-                            width: 48,
-                            height: 48,
+                            width: avatarDiameter,
+                            height: avatarDiameter,
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {
                               return Text(
@@ -393,7 +418,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
                           ),
                         ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: 12 * scale),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,7 +432,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
+                      SizedBox(height: 2 * scale),
                       Text(
                         '@${user.username}',
                         style: TextStyle(color: Colors.grey[400], fontSize: 12),
@@ -434,6 +459,23 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final screenHeight = mediaQuery.size.height;
+    final screenWidth = mediaQuery.size.width;
+    final compactHeight = screenHeight < 760;
+    final compactWidth = screenWidth < 380;
+    final layoutScale = screenWidth < 360 || screenHeight < 700
+        ? 0.88
+        : (compactHeight || compactWidth)
+        ? 0.94
+        : 1.0;
+    final horizontalPadding = (compactWidth ? 12.0 : 16.0) * layoutScale;
+    final topPadding = (compactHeight ? 8.0 : 12.0) * layoutScale;
+    final searchBottomPadding = (compactHeight ? 6.0 : 8.0) * layoutScale;
+    final composerPadding = (compactHeight ? 8.0 : 12.0) * layoutScale;
+    final previewHeight = (compactHeight ? 132.0 : 180.0) * layoutScale;
+    final toolbarHeight = kToolbarHeight * (layoutScale < 1 ? 0.92 : 1.0);
+
     return PopScope(
       canPop: !widget.openLobbyOnExit,
       onPopInvokedWithResult: (didPop, _) {
@@ -442,144 +484,177 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
         }
         _goToLobby();
       },
-      child: Scaffold(
-        backgroundColor: const Color(0xFF1A1A2E),
-        appBar: AppBar(
+      child: MediaQuery(
+        data: mediaQuery.copyWith(textScaler: TextScaler.linear(layoutScale)),
+        child: Scaffold(
           backgroundColor: const Color(0xFF1A1A2E),
-          elevation: 0,
-          leading: widget.openLobbyOnExit
-              ? IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: _goToLobby,
-                )
-              : null,
-          title: const Text(
-            'Send to',
-            style: TextStyle(
-              color: Color(0xFF00D9FF),
-              fontWeight: FontWeight.bold,
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF1A1A2E),
+            elevation: 0,
+            toolbarHeight: toolbarHeight,
+            iconTheme: IconThemeData(size: 24 * layoutScale),
+            leading: widget.openLobbyOnExit
+                ? IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: _goToLobby,
+                  )
+                : null,
+            title: const Text(
+              'Send to',
+              style: TextStyle(
+                color: Color(0xFF00D9FF),
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
-        ),
-        body: Column(
-          children: [
-            _buildPreviewCard(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-              child: TextField(
-                controller: _searchController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: 'Search contacts',
-                  hintStyle: TextStyle(color: Colors.grey[500]),
-                  prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
-                  filled: true,
-                  fillColor: const Color(0xFF252542),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
+          body: Column(
+            children: [
+              _buildPreviewCard(
+                previewHeight: previewHeight,
+                horizontalPadding: horizontalPadding,
+                topPadding: topPadding,
+                scale: layoutScale,
+              ),
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  horizontalPadding,
+                  4 * layoutScale,
+                  horizontalPadding,
+                  searchBottomPadding,
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Search contacts',
+                    hintStyle: TextStyle(color: Colors.grey[500]),
+                    prefixIcon: Icon(
+                      Icons.search,
+                      color: Colors.grey[500],
+                      size: 20 * layoutScale,
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xFF252542),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10 * layoutScale),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12 * layoutScale,
+                      vertical: 12 * layoutScale,
+                    ),
                   ),
                 ),
               ),
-            ),
-            Expanded(
-              child: _isLoadingContacts && _filteredUsers.isEmpty
-                  ? const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircularProgressIndicator(strokeWidth: 2),
-                          SizedBox(height: 10),
-                          Text(
-                            'Loading contacts...',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ],
+              Expanded(
+                child: _isLoadingContacts && _filteredUsers.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const CircularProgressIndicator(strokeWidth: 2),
+                            SizedBox(height: 10 * layoutScale),
+                            const Text(
+                              'Loading contacts...',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                          ],
+                        ),
+                      )
+                    : _filteredUsers.isEmpty
+                    ? Center(
+                        child: Text(
+                          'No contacts found',
+                          style: TextStyle(color: Colors.grey[500], fontSize: 15),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: EdgeInsets.only(bottom: 4 * layoutScale),
+                        itemCount: _filteredUsers.length,
+                        itemBuilder: (context, index) {
+                          final user = _filteredUsers[index];
+                          return _buildUserTile(user, layoutScale);
+                        },
                       ),
-                    )
-                  : _filteredUsers.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No contacts found',
-                        style: TextStyle(color: Colors.grey[500], fontSize: 15),
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: _filteredUsers.length,
-                      itemBuilder: (context, index) {
-                        final user = _filteredUsers[index];
-                        return _buildUserTile(user);
-                      },
-                    ),
-            ),
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _captionController,
-                        enabled: !_isSending,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          hintText: 'Add a caption (optional)',
-                          hintStyle: TextStyle(color: Colors.grey[500]),
-                          filled: true,
-                          fillColor: const Color(0xFF252542),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
-                            borderSide: BorderSide.none,
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
+              ),
+              SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding - (4 * layoutScale),
+                    (compactHeight ? 6 : 8) * layoutScale,
+                    horizontalPadding - (4 * layoutScale),
+                    composerPadding,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _captionController,
+                          enabled: !_isSending,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: InputDecoration(
+                            hintText: 'Add a caption (optional)',
+                            hintStyle: TextStyle(color: Colors.grey[500]),
+                            filled: true,
+                            fillColor: const Color(0xFF252542),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24 * layoutScale),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 16 * layoutScale,
+                              vertical: 12 * layoutScale,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    SizedBox(
-                      height: 48,
-                      child: ElevatedButton(
-                        onPressed: (_selectedUserIds.isEmpty || _isSending)
-                            ? null
-                            : _sendSharedItems,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF00D9FF),
-                          foregroundColor: const Color(0xFF10212E),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
+                      SizedBox(width: 10 * layoutScale),
+                      SizedBox(
+                        height: 48 * layoutScale,
+                        child: ElevatedButton(
+                          onPressed: (_selectedUserIds.isEmpty || _isSending)
+                              ? null
+                              : _sendSharedItems,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00D9FF),
+                            foregroundColor: const Color(0xFF10212E),
+                            tapTargetSize: layoutScale < 1
+                                ? MaterialTapTargetSize.shrinkWrap
+                                : MaterialTapTargetSize.padded,
+                            visualDensity: layoutScale < 1
+                                ? const VisualDensity(horizontal: -1, vertical: -1)
+                                : VisualDensity.standard,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24 * layoutScale),
+                            ),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 18 * layoutScale,
+                            ),
                           ),
-                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          child: _isSending
+                              ? SizedBox(
+                                  width: 20 * layoutScale,
+                                  height: 20 * layoutScale,
+                                  child: const CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Text(
+                                  _selectedUserIds.isEmpty
+                                      ? 'Send'
+                                      : 'Send (${_selectedUserIds.length})',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
                         ),
-                        child: _isSending
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Text(
-                                _selectedUserIds.isEmpty
-                                    ? 'Send'
-                                    : 'Send (${_selectedUserIds.length})',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -120,7 +120,9 @@ class _SignInPageState extends State<SignInPage> {
             ),
           ),
           const SizedBox(height: 8),
-          Row(
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 4,
             children: [
               Checkbox(
                 value: remember,
@@ -143,8 +145,9 @@ class _SignInPageState extends State<SignInPage> {
               child: Center(child: CircularProgressIndicator()),
             ),
           const SizedBox(height: 18),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               const Text(
                 "Don't have an account? ",
