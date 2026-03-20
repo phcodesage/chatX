@@ -10,6 +10,7 @@ import '../services/lobby_service.dart';
 import '../services/message_service.dart';
 import '../services/share_intent_service.dart';
 import '../services/storage_service.dart';
+import 'chat_screen.dart';
 import 'lobby_screen.dart';
 
 class ShareTargetScreen extends StatefulWidget {
@@ -166,6 +167,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
     final caption = _captionController.text.trim();
     int sentCount = 0;
     final failedRecipients = <String>[];
+    final successfulUsers = <LobbyUser>[];
 
     for (final user in selectedUsers) {
       try {
@@ -201,6 +203,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
         }
 
         sentCount++;
+        successfulUsers.add(user);
       } catch (e) {
         failedRecipients.add(user.fullName);
       }
@@ -213,6 +216,13 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
     setState(() => _isSending = false);
 
     if (sentCount > 0) {
+      // If one chat was selected from share sheet and send succeeded,
+      // open that chat room immediately.
+      if (_selectedUserIds.length == 1 && successfulUsers.length == 1) {
+        _openChatRoom(successfulUsers.first);
+        return;
+      }
+
       if (widget.openLobbyOnExit) {
         _goToLobby();
         return;
@@ -229,6 +239,19 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
       const SnackBar(
         content: Text('Could not send. Please try again.'),
         backgroundColor: Colors.red,
+      ),
+    );
+  }
+
+  void _openChatRoom(LobbyUser user) {
+    if (!mounted) {
+      return;
+    }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChatScreen(otherUser: user),
       ),
     );
   }

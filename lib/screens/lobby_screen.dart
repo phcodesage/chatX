@@ -45,8 +45,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
   List<Group> _groups = []; // Group chats
   List<Group> _filteredGroups = []; // Filtered group chats
   bool _isLoading = false;
-  bool _isBackendAvailable = true;
-  bool _showConnectivityBanner = false;
   bool _isCurrentUserAdmin = false;
   LobbySortMode _sortMode = LobbySortMode.recentChats;
   final TextEditingController _searchController = TextEditingController();
@@ -54,9 +52,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Timer? _lastSeenRefreshTimer;
   Timer? _searchDebounceTimer;
   StreamSubscription<List<SharedMediaItem>>? _shareIntentSubscription;
-  static const String _momentaryConnectivityMessage =
-      'server currently unavailable, reconnecting';
-  String _connectivityBannerMessage = _momentaryConnectivityMessage;
   Future<int?> _currentUserId = StorageService.getUserId();
   bool _isSharePickerOpen = false;
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
@@ -222,31 +217,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
       _handleIncomingCall(convertedData);
     });
 
-    // Listen for backend connection state changes
-    _socketService.addListener('connectionChanged', key, (
-      Map<String, dynamic> data,
-    ) {
-      final isConnected = data['connected'] as bool;
-      if (mounted) {
-        setState(() {
-          _isBackendAvailable = isConnected;
-          _showConnectivityBanner = !isConnected;
-          _connectivityBannerMessage = _momentaryConnectivityMessage;
-        });
-      }
-    });
-
     // Backend reconnected - presence snapshot will follow automatically
     // from the server, so we don't need to force a full reload here.
     // This prevents UI flickering and allows smooth presence updates.
     _socketService.addListener('reconnected', key, () {
       debugPrint('🔄 Backend reconnected - waiting for presence snapshot');
     });
-
-    // Set initial state from current socket status
-    _isBackendAvailable = _socketService.isConnected;
-    _showConnectivityBanner = !_isBackendAvailable;
-    _connectivityBannerMessage = _momentaryConnectivityMessage;
 
     // Listen for group events
     // Group management events using standardized socket service listeners
@@ -1143,9 +1119,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
         setState(() {
           _lobbyUsers = cached;
           _filteredUsers = List.from(cached);
-          _isBackendAvailable = _socketService.isConnected;
-          _showConnectivityBanner = !_socketService.isConnected;
-          _connectivityBannerMessage = _momentaryConnectivityMessage;
         });
       }
     }
@@ -1166,10 +1139,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         setState(() {
           _lobbyUsers = users;
           _groups = groups;
-          _isBackendAvailable = true;
-          _showConnectivityBanner = false;
           _isLoading = false;
-          _connectivityBannerMessage = _momentaryConnectivityMessage;
         });
         _filterUsers();
         _openSharePickerIfNeeded();
@@ -1187,9 +1157,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _isBackendAvailable = false;
-          _showConnectivityBanner = true;
-          _connectivityBannerMessage = _momentaryConnectivityMessage;
         });
         _openSharePickerIfNeeded();
       }
@@ -1726,22 +1693,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
       body: Column(
         children: [
-          // Backend connectivity banner (shown instantly while disconnected)
-          if (_showConnectivityBanner)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              color: const Color(0xFFFDE68A),
-              child: Text(
-                _connectivityBannerMessage,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFF78350F),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
           // Search bar + sort button row
           Padding(
             padding: const EdgeInsets.symmetric(

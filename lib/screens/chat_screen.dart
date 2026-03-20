@@ -147,10 +147,6 @@ class _ChatScreenState extends State<ChatScreen>
   // Rebuild open task modal on live task updates.
   final ValueNotifier<int> _taskModalVersion = ValueNotifier<int>(0);
 
-  // Backend connectivity state
-  bool _isBackendAvailable = true;
-  String _connectionIssueMessage = 'server currently unavailable ,reconnecting';
-
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
   // Presence state for the chat partner
@@ -1128,32 +1124,6 @@ class _ChatScreenState extends State<ChatScreen>
       }
     });
 
-    // Listen for backend connection state changes
-    _socketService.addListener('connectionChanged', key, (
-      Map<String, dynamic> data,
-    ) {
-      final isConnected = data['connected'] as bool;
-      if (mounted) {
-        setState(() {
-          _isBackendAvailable = isConnected;
-          _connectionIssueMessage =
-              'server currently unavailable ,reconnecting';
-        });
-      }
-    });
-
-    // Listen for reconnection event to hide banner
-    _socketService.addListener('reconnected', key, (
-      Map<String, dynamic> data,
-    ) {
-      if (mounted) {
-        setState(() {
-          _isBackendAvailable = true;
-          _connectionIssueMessage = '';
-        });
-      }
-    });
-
     // â”€â”€ Call summary system messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Show an in-chat pill when a call ends, is missed, or is declined.
     // Only insert if the event involves the person we are currently chatting with.
@@ -1202,8 +1172,6 @@ class _ChatScreenState extends State<ChatScreen>
       _insertCallSummaryMessage('ðŸ“ž Missed call');
     });
 
-    // Set initial state from current socket status
-    _isBackendAvailable = _socketService.isConnected;
   }
 
   /// Insert an ephemeral system message pill for call events (not persisted)
@@ -1881,9 +1849,7 @@ class _ChatScreenState extends State<ChatScreen>
                 .where((message) => message.id > 0)
                 .map((message) => message.id),
           );
-        _isBackendAvailable = true;
         _isLoading = false;
-        _connectionIssueMessage = 'server currently unavailable ,reconnecting';
 
         // Populate _messageReactions from loaded messages
         _messageReactions.clear();
@@ -1954,9 +1920,6 @@ class _ChatScreenState extends State<ChatScreen>
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _isBackendAvailable = false;
-          _connectionIssueMessage =
-              'server currently unavailable ,reconnecting';
         });
       }
     } finally {
@@ -6235,24 +6198,6 @@ class _ChatScreenState extends State<ChatScreen>
           children: [
             Column(
               children: [
-                if (!_isBackendAvailable)
-                  Container(
-                    width: double.infinity,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 16 * scale,
-                      vertical: 8 * scale,
-                    ),
-                    color: const Color(0xFFFDE68A),
-                    child: Text(
-                      _connectionIssueMessage,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: const Color(0xFF78350F),
-                        fontSize: 13 * scale,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
                 // Messages list
                 Expanded(
                   child: _isLoading
