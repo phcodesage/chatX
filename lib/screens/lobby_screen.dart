@@ -24,7 +24,9 @@ import '../services/storage_service.dart';
 import '../config/api_config.dart';
 import '../services/presence_service.dart';
 import '../services/chat_cache_service.dart';
+import '../services/share_intent_service.dart';
 import '../utils/notification_handler.dart';
+import 'share_target_screen.dart';
 
 /// Lobby/Chat list screen
 class LobbyScreen extends StatefulWidget {
@@ -51,10 +53,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
   Timer? _searchDebounceTimer;
+  StreamSubscription<List<SharedMediaItem>>? _shareIntentSubscription;
   static const String _momentaryConnectivityMessage =
       'server currently unavailable, reconnecting';
   String _connectivityBannerMessage = _momentaryConnectivityMessage;
   Future<int?> _currentUserId = StorageService.getUserId();
+  bool _isSharePickerOpen = false;
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
   // Typing indicator: maps userId → auto-clear timer
@@ -81,6 +85,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _loadAdminStatus();
     _searchController.addListener(_onSearchQueryChanged);
     _setupRealtimeListeners();
+    _setupShareIntentListener();
     // Check for app updates after a short delay
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) {
@@ -509,6 +514,63 @@ class _LobbyScreenState extends State<LobbyScreen> {
         });
       });
     });
+  }
+
+  void _setupShareIntentListener() {
+    _shareIntentSubscription?.cancel();
+    _shareIntentSubscription = ShareIntentService.instance.sharedItemsStream
+        .listen((_) {
+          _openSharePickerIfNeeded();
+        });
+  }
+
+  Future<void> _openSharePickerIfNeeded() async {
+    if (!mounted || _isSharePickerOpen || _isLoading || _lobbyUsers.isEmpty) {
+      return;
+    }
+
+    if (!ShareIntentService.instance.hasPendingItems) {
+      return;
+    }
+
+    final sharedItems = await ShareIntentService.instance
+        .takePendingSharedItems();
+    if (!mounted || sharedItems.isEmpty) {
+      return;
+    }
+
+    _isSharePickerOpen = true;
+    try {
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) =>
+              ShareTargetScreen(sharedItems: sharedItems, users: _lobbyUsers),
+        ),
+      );
+
+      if (!mounted || result is! Map<String, dynamic>) {
+        return;
+      }
+
+      final sentCount = result['sentCount'] as int? ?? 0;
+      final failedCount = result['failedCount'] as int? ?? 0;
+
+      if (sentCount > 0) {
+        final message = failedCount > 0
+            ? 'Sent to $sentCount chats, failed for $failedCount.'
+            : 'Sent to $sentCount chats.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: failedCount > 0 ? Colors.orange : Colors.green,
+          ),
+        );
+        _loadLobby(useCacheFirst: false);
+      }
+    } finally {
+      _isSharePickerOpen = false;
+    }
   }
 
   /// Handle cross-room call offer from web client
@@ -1057,6 +1119,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       timer.cancel();
     }
     _typingUsers.clear();
+    _shareIntentSubscription?.cancel();
     // Clear all lobby socket listeners to prevent memory leaks
     _socketService.removeListenersForKey('lobby');
     super.dispose();
@@ -1109,6 +1172,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _connectivityBannerMessage = _momentaryConnectivityMessage;
         });
         _filterUsers();
+        _openSharePickerIfNeeded();
       }
       if (userId != null) {
         await ChatCacheService.saveLobbyUsers(userId, users);
@@ -1127,6 +1191,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _showConnectivityBanner = true;
           _connectivityBannerMessage = _momentaryConnectivityMessage;
         });
+        _openSharePickerIfNeeded();
       }
       debugPrint('Error loading lobby: $e');
     }

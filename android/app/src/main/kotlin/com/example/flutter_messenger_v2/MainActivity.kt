@@ -12,9 +12,13 @@ import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.drawable.Icon
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.provider.OpenableColumns
 import android.util.Log
 import android.util.Rational
+import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
@@ -22,13 +26,18 @@ import androidx.core.app.RemoteInput
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : FlutterActivity() {
     private val TAG = "PiP"
     private val CHANNEL = "com.example.flutter_messenger_v2/pip"
     private val AUDIO_CHANNEL = "com.example.flutter_messenger_v2/audio_recorder"
     private val QUICK_REPLY_CHANNEL = "com.example.flutter_messenger_v2/quick_reply"
+    private val SHARE_CHANNEL = "com.example.flutter_messenger_v2/share_target"
     private var methodChannel: MethodChannel? = null
+    private var shareMethodChannel: MethodChannel? = null
+    private var pendingSharedItems: List<Map<String, String>> = emptyList()
     private var isInCall = false
     private var isMuted = false
 
@@ -68,8 +77,28 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        pendingSharedItems = extractSharedItemsFromIntent(intent)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        shareMethodChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SHARE_CHANNEL,
+        )
+        shareMethodChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "consumeInitialSharedItems" -> {
+                    val currentItems = pendingSharedItems
+                    pendingSharedItems = emptyList()
+                    result.success(currentItems)
+                }
+                else -> result.notImplemented()
+            }
+        }
 
         // ── Audio recorder channel ─────────────────────────────────────────
         // Uses MediaRecorder.getMaxAmplitude() for accurate real-time amplitude.
@@ -268,7 +297,145 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             Log.w(TAG, "Receiver already unregistered")
         }
+        shareMethodChannel = null
         super.onDestroy()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+
+        val sharedItems = extractSharedItemsFromIntent(intent)
+        if (sharedItems.isEmpty()) {
+            return
+        }
+
+        pendingSharedItems = sharedItems
+        shareMethodChannel?.invokeMethod("onSharedItems", sharedItems)
+    }
+
+    private fun extractSharedItemsFromIntent(intent: Intent?): List<Map<String, String>> {
+        if (intent == null) {
+            return emptyList()
+        }
+
+        val action = intent.action ?: return emptyList()
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
+            return emptyList()
+        }
+
+        val uris = mutableListOf<Uri>()
+        if (action == Intent.ACTION_SEND) {
+            val singleUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            }
+            if (singleUri != null) {
+                uris.add(singleUri)
+            }
+        } else if (action == Intent.ACTION_SEND_MULTIPLE) {
+            val multipleUris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+            }
+            if (multipleUris != null) {
+                uris.addAll(multipleUris)
+            }
+        }
+
+        if (uris.isEmpty() && intent.clipData != null) {
+            val clipData = intent.clipData ?: return emptyList()
+            for (index in 0 until clipData.itemCount) {
+                val uri = clipData.getItemAt(index).uri
+                if (uri != null) {
+                    uris.add(uri)
+                }
+            }
+        }
+
+        if (uris.isEmpty()) {
+            return emptyList()
+        }
+
+        val extractedItems = mutableListOf<Map<String, String>>()
+        uris.forEachIndexed { index, uri ->
+            try {
+                val sharedItem = copySharedUriToCache(uri, index)
+                if (sharedItem != null) {
+                    extractedItems.add(sharedItem)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse shared URI: $uri", e)
+            }
+        }
+
+        return extractedItems
+    }
+
+    private fun copySharedUriToCache(uri: Uri, index: Int): Map<String, String>? {
+        val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
+        val defaultExtension = extensionFromMimeType(mimeType)
+        val displayName = resolveDisplayName(uri)
+            ?: "shared_${System.currentTimeMillis()}_$index.$defaultExtension"
+        val safeName = sanitizeFileName(displayName)
+
+        val sharedDir = File(cacheDir, "shared_imports")
+        if (!sharedDir.exists()) {
+            sharedDir.mkdirs()
+        }
+
+        val targetFile = File(
+            sharedDir,
+            "${System.currentTimeMillis()}_$index-$safeName",
+        )
+
+        contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(targetFile).use { output ->
+                input.copyTo(output)
+            }
+        } ?: return null
+
+        return mapOf(
+            "path" to targetFile.absolutePath,
+            "fileName" to safeName,
+            "mimeType" to mimeType,
+        )
+    }
+
+    private fun resolveDisplayName(uri: Uri): String? {
+        if (uri.scheme == "file") {
+            return File(uri.path ?: return null).name
+        }
+
+        contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val columnIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (columnIndex != -1) {
+                    return cursor.getString(columnIndex)
+                }
+            }
+        }
+
+        return null
+    }
+
+    private fun sanitizeFileName(fileName: String): String {
+        return fileName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+    }
+
+    private fun extensionFromMimeType(mimeType: String): String {
+        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+        return if (ext.isNullOrBlank()) "bin" else ext
     }
 
     private fun isPipAvailable(): Boolean {

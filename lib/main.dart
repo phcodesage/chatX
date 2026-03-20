@@ -14,6 +14,7 @@ import 'services/firebase_messaging_service.dart';
 import 'services/auth_error_handler.dart';
 import 'services/chat_cache_service.dart';
 import 'services/storage_service.dart';
+import 'services/share_intent_service.dart';
 import 'utils/notification_handler.dart';
 
 void main() async {
@@ -21,6 +22,7 @@ void main() async {
 
   await ChatCacheService.init();
   await StorageService.init();
+  await ShareIntentService.instance.initialize();
 
   // Initialize Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
