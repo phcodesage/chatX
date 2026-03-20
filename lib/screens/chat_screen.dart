@@ -54,6 +54,7 @@ class _ChatScreenState extends State<ChatScreen>
   final ScrollController _scrollController = ScrollController();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FocusNode _inputFocusNode = FocusNode();
+  final GlobalKey _bottomBarKey = GlobalKey();
 
   List<Message> _messages = [];
   List<Map<String, dynamic>> _pinnedExcalidrawLinks = [];
@@ -70,7 +71,7 @@ class _ChatScreenState extends State<ChatScreen>
   Timer? _typingUpdateThrottle;
   Timer? _lastSeenRefreshTimer;
   DateTime? _lastTypingUpdate;
-  Color _headerColor = const Color(0xFF4C1D95); // Default purple color
+  Color _headerColor = const Color(0xFF121212); // Default chat surface color
   bool _showResetButton = false;
 
   // Timestamp visibility toggle (hidden by default like web)
@@ -340,9 +341,20 @@ class _ChatScreenState extends State<ChatScreen>
     final savedColorHex = prefs.getString('chat_color_${widget.otherUser.id}');
     if (savedColorHex != null && mounted) {
       try {
-        final hexColor = savedColorHex.replaceAll('#', '');
-        final color = Color(int.parse('FF$hexColor', radix: 16));
-        final defaultColor = const Color(0xFF4C1D95);
+        final normalizedHex = savedColorHex.replaceAll('#', '').toUpperCase();
+        final defaultColor = const Color(0xFF121212);
+        const legacyDefaultHexes = {'4C1D95', '1E1E1E'};
+
+        if (legacyDefaultHexes.contains(normalizedHex)) {
+          setState(() {
+            _headerColor = defaultColor;
+            _showResetButton = false;
+          });
+          await _saveChatColor('#121212');
+          return;
+        }
+
+        final color = Color(int.parse('FF$normalizedHex', radix: 16));
         setState(() {
           _headerColor = color;
           _showResetButton = color.toARGB32() != defaultColor.toARGB32();
@@ -1171,7 +1183,6 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _insertCallSummaryMessage('ðŸ“ž Missed call');
     });
-
   }
 
   /// Insert an ephemeral system message pill for call events (not persisted)
@@ -1563,12 +1574,12 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Always reset bg color â€” whether incoming (other user resets) or
     // cross-device (we reset from another device), our bg should update
-    const defaultColor = Color(0xFF1E1E1E);
+    const defaultColor = Color(0xFF121212);
     setState(() {
       _headerColor = defaultColor;
       _showResetButton = false;
     });
-    _saveChatColor('#1E1E1E');
+    _saveChatColor('#121212');
 
     // Create system message
     final resetMessage = Message(
@@ -2926,75 +2937,86 @@ class _ChatScreenState extends State<ChatScreen>
           return const SizedBox.shrink();
         }
 
+        final sendToManyButton = Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: _showSendToManyDialog,
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A1F45),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: const Color(0xFF7C3AED).withValues(alpha: 0.8),
+                  width: 1,
+                ),
+              ),
+              child: const Text(
+                'send to many',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final markAsTaskButton = Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              setState(() {
+                _markNextMessageAsTask = !_markNextMessageAsTask;
+              });
+            },
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: _markNextMessageAsTask
+                    ? const Color(0xFF7C2D12)
+                    : const Color(0xFF2D2A1F),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: _markNextMessageAsTask
+                      ? const Color(0xFFF59E0B)
+                      : const Color(0xFFB45309).withValues(alpha: 0.75),
+                  width: 1,
+                ),
+              ),
+              child: const Text(
+                'mark as task',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        );
+
         return Padding(
           padding: const EdgeInsets.only(bottom: 6),
           child: Row(
             children: [
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: _showSendToManyDialog,
-                  borderRadius: BorderRadius.circular(18),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2A1F45),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: const Color(0xFF7C3AED).withValues(alpha: 0.8),
-                        width: 1,
-                      ),
-                    ),
-                    child: const Text(
-                      'send to many',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: sendToManyButton,
                 ),
               ),
-              const Spacer(),
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () {
-                    setState(() {
-                      _markNextMessageAsTask = !_markNextMessageAsTask;
-                    });
-                  },
-                  borderRadius: BorderRadius.circular(18),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _markNextMessageAsTask
-                          ? const Color(0xFF7C2D12)
-                          : const Color(0xFF2D2A1F),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: _markNextMessageAsTask
-                            ? const Color(0xFFF59E0B)
-                            : const Color(0xFFB45309).withValues(alpha: 0.75),
-                        width: 1,
-                      ),
-                    ),
-                    child: Text(
-                      'mark as task',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
+              _buildActionsPlusButton(
+                iconSize: 18,
+                padding: const EdgeInsets.all(4),
+              ),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: markAsTaskButton,
                 ),
               ),
             ],
@@ -3081,7 +3103,7 @@ class _ChatScreenState extends State<ChatScreen>
     _localColorResetPending = true;
 
     // Reset to default color
-    const defaultColor = Color(0xFF1E1E1E);
+    const defaultColor = Color(0xFF121212);
 
     setState(() {
       _headerColor = defaultColor;
@@ -3089,7 +3111,7 @@ class _ChatScreenState extends State<ChatScreen>
     });
 
     // Persist the reset color
-    _saveChatColor('#1E1E1E');
+    _saveChatColor('#121212');
 
     // Emit reset color event (must be 'reset_color' so backend broadcasts to all devices)
     _socketService.emit('reset_color', {'recipient_id': widget.otherUser.id});
@@ -3304,7 +3326,10 @@ class _ChatScreenState extends State<ChatScreen>
     final scale = _uiScale(context);
 
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 10 * scale, vertical: 4 * scale),
+      padding: EdgeInsets.symmetric(
+        horizontal: 10 * scale,
+        vertical: 4 * scale,
+      ),
       decoration: BoxDecoration(
         color: statusColor.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(999),
@@ -3388,95 +3413,45 @@ class _ChatScreenState extends State<ChatScreen>
       style: ElevatedButton.styleFrom(
         backgroundColor: backgroundColor,
         foregroundColor: foregroundColor,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        minimumSize: const Size(0, 0),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        elevation: 0,
       ),
-      child: Text(label),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
     );
   }
 
-  Widget _buildFloatingActionsToggle() {
-    const toggleHeight = 62.0;
-    const verticalPadding = 12.0;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
-        final visibleHeight = math.max(
-          0.0,
-          constraints.maxHeight - keyboardInset,
-        );
-        final maxTop = math.max(
-          verticalPadding,
-          visibleHeight - toggleHeight - verticalPadding,
-        );
-        final top = ((visibleHeight - toggleHeight) / 2)
-            .clamp(verticalPadding, maxTop)
-            .toDouble();
-
-        return Stack(
-          children: [
-            Positioned(
-              top: top,
-              right: 0,
-              child: Tooltip(
-                message: 'Actions',
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.horizontal(
-                    left: Radius.circular(16),
-                  ),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _showActionsSheet,
-                        onHorizontalDragUpdate: (details) {
-                          if (details.primaryDelta != null &&
-                              details.primaryDelta! < -2) {
-                            _showActionsSheet();
-                          }
-                        },
-                        child: Container(
-                          width: 28,
-                          height: toggleHeight,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.1),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.2),
-                            ),
-                            borderRadius: const BorderRadius.horizontal(
-                              left: Radius.circular(16),
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.18),
-                                blurRadius: 10,
-                                offset: const Offset(-2, 3),
-                              ),
-                            ],
-                          ),
-                          child: const Center(
-                            child: Icon(
-                              Icons.chevron_left_rounded,
-                              color: Colors.white,
-                              size: 18,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+  Widget _buildActionsPlusButton({
+    required double iconSize,
+    required EdgeInsetsGeometry padding,
+  }) {
+    return IconButton(
+      onPressed: _showActionsSheet,
+      icon: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 150),
+        transitionBuilder: (child, animation) => FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(scale: animation, child: child),
+        ),
+        child: Icon(
+          _isActionsPanelOpen ? Icons.close : Icons.add,
+          key: ValueKey<bool>(_isActionsPanelOpen),
+          color: Colors.white70,
+          size: iconSize,
+        ),
+      ),
+      padding: padding,
+      constraints: const BoxConstraints(),
+      tooltip: 'Actions',
     );
   }
 
@@ -3485,7 +3460,9 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
 
-    _isActionsPanelOpen = true;
+    setState(() {
+      _isActionsPanelOpen = true;
+    });
     _keepInputUnfocused();
     if (_showEmojiPicker) {
       setState(() {
@@ -3499,20 +3476,29 @@ class _ChatScreenState extends State<ChatScreen>
         barrierDismissible: false,
         barrierLabel: 'Chat actions',
         barrierColor: Colors.transparent,
-        transitionDuration: const Duration(milliseconds: 260),
+        transitionDuration: Duration.zero,
         pageBuilder: (dialogContext, animation, secondaryAnimation) {
-          final media = MediaQuery.of(dialogContext);
-          final topInset = media.padding.top + kToolbarHeight + 10;
-          final bottomInset =
-              media.padding.bottom + media.viewInsets.bottom + 10;
-          final availableHeight = math.max(
-            180.0,
-            media.size.height - topInset - bottomInset,
-          );
-          final maxPanelHeight = math.min(
-            availableHeight,
-            media.size.height * 0.7,
-          );
+          return Material(
+            color: Colors.transparent,
+            child: Builder(
+              builder: (builderContext) {
+                // Re-evaluated on every MediaQuery change (keyboard show/hide),
+                // so the modal follows the bar in real time.
+                final media = MediaQuery.of(builderContext);
+                final topInset = media.padding.top + kToolbarHeight + 8;
+                // Use bar height (stable) + live keyboard inset so the modal
+                // stays flush against the top of the bar as keyboard animates.
+                final barBox = _bottomBarKey.currentContext
+                    ?.findRenderObject() as RenderBox?;
+                final barHeight = barBox?.size.height ?? 82.0;
+                final bottomInset =
+                    media.padding.bottom + media.viewInsets.bottom + barHeight;
+                final availableHeight = math.max(
+                  150.0,
+                  media.size.height - topInset - bottomInset,
+                );
+                final maxPanelHeight =
+                    math.min(availableHeight, media.size.height * 0.5);
 
           final actionButtons = <Widget>[
             _buildActionSheetButton(
@@ -3587,126 +3573,63 @@ class _ChatScreenState extends State<ChatScreen>
               ),
           ];
 
-          return Material(
-            color: Colors.transparent,
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: GestureDetector(
-                    onTap: () => _closeActionsPanel(dialogContext),
-                    behavior: HitTestBehavior.opaque,
-                    child: const SizedBox.expand(),
-                  ),
-                ),
-                Positioned.fill(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(12, topInset, 12, bottomInset),
-                    child: Align(
-                      alignment: Alignment.center,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: 560,
-                          maxHeight: maxPanelHeight,
-                        ),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1F1F24),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.1),
+                return Stack(
+                  children: [
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: () => _closeActionsPanel(dialogContext),
+                        behavior: HitTestBehavior.opaque,
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: Padding(
+                        padding:
+                            EdgeInsets.fromLTRB(10, topInset, 10, bottomInset),
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: 520,
+                              maxHeight: maxPanelHeight,
                             ),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  14,
-                                  10,
-                                  14,
-                                  4,
-                                ),
-                                child: SizedBox(
-                                  height: 38,
-                                  child: Stack(
-                                    alignment: Alignment.center,
-                                    children: [
-                                      const Center(
-                                        child: Text(
-                                          'Chat Actions',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      ),
-                                      Positioned(
-                                        right: 0,
-                                        child: TextButton(
-                                          onPressed: () =>
-                                              _closeActionsPanel(dialogContext),
-                                          style: TextButton.styleFrom(
-                                            foregroundColor: Colors.white70,
-                                            textStyle: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          child: const Text('Close'),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1E1F23),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.1),
                                 ),
                               ),
-                              Flexible(
+                              child: Flexible(
                                 child: SingleChildScrollView(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    16,
-                                    8,
-                                    16,
-                                    16,
-                                  ),
+                                  padding: const EdgeInsets.all(12),
                                   child: Wrap(
-                                    alignment: WrapAlignment.center,
-                                    spacing: 10,
-                                    runSpacing: 10,
+                                    spacing: 8,
+                                    runSpacing: 8,
                                     children: actionButtons,
                                   ),
                                 ),
                               ),
-                            ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-              ],
+                  ],
+                );
+              },
             ),
           );
         },
         transitionBuilder:
-            (dialogContext, animation, secondaryAnimation, child) {
-              final curved = CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-                reverseCurve: Curves.easeInCubic,
-              );
-
-              return SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(1, 0),
-                  end: Offset.zero,
-                ).animate(curved),
-                child: child,
-              );
-            },
+            (dialogContext, animation, secondaryAnimation, child) => child,
       );
     } finally {
-      _isActionsPanelOpen = false;
       if (mounted) {
+        setState(() {
+          _isActionsPanelOpen = false;
+        });
         _keepInputUnfocused();
       }
     }
@@ -3739,169 +3662,206 @@ class _ChatScreenState extends State<ChatScreen>
       builder: (context) {
         final scale = _uiScale(context);
         return Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF1E1E2E),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        padding: EdgeInsets.symmetric(horizontal: 24 * scale, vertical: 16 * scale),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Drag handle
-            Container(
-              width: 40 * scale,
-              height: 4,
-              margin: EdgeInsets.only(bottom: 20 * scale),
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
+          decoration: const BoxDecoration(
+            color: Color(0xFF1E1E2E),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: EdgeInsets.symmetric(
+            horizontal: 24 * scale,
+            vertical: 16 * scale,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag handle
+              Container(
+                width: 40 * scale,
+                height: 4,
+                margin: EdgeInsets.only(bottom: 20 * scale),
+                decoration: BoxDecoration(
+                  color: Colors.grey[600],
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            // Profile picture
-            CircleAvatar(
-              radius: 48 * scale,
-              backgroundColor: avatarColor,
-              child: user.avatarUrl != null
-                  ? ClipOval(
-                      child: Image.network(
-                        user.avatarUrl!,
-                        width: 96 * scale,
-                        height: 96 * scale,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) => Text(
-                          user.initials,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 36 * scale,
-                            fontWeight: FontWeight.bold,
+              // Profile picture
+              CircleAvatar(
+                radius: 48 * scale,
+                backgroundColor: avatarColor,
+                child: user.avatarUrl != null
+                    ? ClipOval(
+                        child: Image.network(
+                          user.avatarUrl!,
+                          width: 96 * scale,
+                          height: 96 * scale,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Text(
+                            user.initials,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 36 * scale,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
+                      )
+                    : Text(
+                        user.initials,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 36 * scale,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    )
-                  : Text(
-                      user.initials,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 36 * scale,
-                        fontWeight: FontWeight.bold,
+              ),
+              SizedBox(height: 16 * scale),
+              // Full name
+              Text(
+                user.fullName,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22 * scale,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              SizedBox(height: 4 * scale),
+              // Username
+              Text(
+                '@${user.username}',
+                style: TextStyle(color: Colors.grey[400], fontSize: 14 * scale),
+              ),
+              SizedBox(height: 8 * scale),
+              // Status badge
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 12 * scale,
+                  vertical: 4 * scale,
+                ),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8 * scale,
+                      height: 8 * scale,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
                       ),
                     ),
-            ),
-            SizedBox(height: 16 * scale),
-            // Full name
-            Text(
-              user.fullName,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22 * scale,
-                fontWeight: FontWeight.bold,
+                    SizedBox(width: 6 * scale),
+                    Text(
+                      statusText,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 13 * scale,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            SizedBox(height: 4 * scale),
-            // Username
-            Text(
-              '@${user.username}',
-              style: TextStyle(color: Colors.grey[400], fontSize: 14 * scale),
-            ),
-            SizedBox(height: 8 * scale),
-            // Status badge
-            Container(
-              padding: EdgeInsets.symmetric(horizontal: 12 * scale, vertical: 4 * scale),
-              decoration: BoxDecoration(
-                color: statusColor.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(12),
+              SizedBox(height: 20 * scale),
+              // Info rows
+              _buildProfileInfoRow(
+                Icons.email_outlined,
+                'Email',
+                user.email,
+                scale,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+              if (user.bio != null && user.bio!.isNotEmpty)
+                _buildProfileInfoRow(
+                  Icons.info_outline,
+                  'Bio',
+                  user.bio!,
+                  scale,
+                ),
+              _buildProfileInfoRow(
+                Icons.access_time,
+                'Timezone',
+                user.timezone,
+                scale,
+              ),
+              if (_partnerLastSeen != null &&
+                  _getEffectivePartnerStatus() != 'online')
+                _buildProfileInfoRow(
+                  Icons.visibility_outlined,
+                  'Last seen',
+                  _formatLastSeen(_partnerLastSeen!),
+                  scale,
+                ),
+              if (user.isAdmin || user.isAdminUser)
+                _buildProfileInfoRow(
+                  Icons.shield_outlined,
+                  'Role',
+                  'Admin',
+                  scale,
+                ),
+              SizedBox(height: 16 * scale),
+              // Action buttons
+              Row(
                 children: [
-                  Container(
-                    width: 8 * scale,
-                    height: 8 * scale,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _showCallSetupModal(CallType.audio);
+                      },
+                      icon: Icon(Icons.call, size: 18 * scale),
+                      label: Text(
+                        'Call',
+                        style: TextStyle(fontSize: 14 * scale),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF4CAF50),
+                        side: const BorderSide(color: Color(0xFF4CAF50)),
+                        padding: EdgeInsets.symmetric(vertical: 12 * scale),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
                     ),
                   ),
-                  SizedBox(width: 6 * scale),
-                  Text(
-                    statusText,
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: 13 * scale,
-                      fontWeight: FontWeight.w500,
+                  SizedBox(width: 12 * scale),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _showCallSetupModal(CallType.video);
+                      },
+                      icon: Icon(Icons.videocam, size: 18 * scale),
+                      label: Text(
+                        'Video',
+                        style: TextStyle(fontSize: 14 * scale),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF3B82F6),
+                        side: const BorderSide(color: Color(0xFF3B82F6)),
+                        padding: EdgeInsets.symmetric(vertical: 12 * scale),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
                     ),
                   ),
                 ],
               ),
-            ),
-            SizedBox(height: 20 * scale),
-            // Info rows
-            _buildProfileInfoRow(Icons.email_outlined, 'Email', user.email, scale),
-            if (user.bio != null && user.bio!.isNotEmpty)
-              _buildProfileInfoRow(Icons.info_outline, 'Bio', user.bio!, scale),
-            _buildProfileInfoRow(Icons.access_time, 'Timezone', user.timezone, scale),
-            if (_partnerLastSeen != null &&
-                _getEffectivePartnerStatus() != 'online')
-              _buildProfileInfoRow(
-                Icons.visibility_outlined,
-                'Last seen',
-                _formatLastSeen(_partnerLastSeen!),
-                scale,
-              ),
-            if (user.isAdmin || user.isAdminUser)
-              _buildProfileInfoRow(Icons.shield_outlined, 'Role', 'Admin', scale),
-            SizedBox(height: 16 * scale),
-            // Action buttons
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _showCallSetupModal(CallType.audio);
-                    },
-                    icon: Icon(Icons.call, size: 18 * scale),
-                    label: Text('Call', style: TextStyle(fontSize: 14 * scale)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF4CAF50),
-                      side: const BorderSide(color: Color(0xFF4CAF50)),
-                      padding: EdgeInsets.symmetric(vertical: 12 * scale),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-                ),
-                SizedBox(width: 12 * scale),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _showCallSetupModal(CallType.video);
-                    },
-                    icon: Icon(Icons.videocam, size: 18 * scale),
-                    label: Text('Video', style: TextStyle(fontSize: 14 * scale)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF3B82F6),
-                      side: const BorderSide(color: Color(0xFF3B82F6)),
-                      padding: EdgeInsets.symmetric(vertical: 12 * scale),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: MediaQuery.of(context).viewPadding.bottom + 8),
-          ],
-        ),
-      );
+              SizedBox(height: MediaQuery.of(context).viewPadding.bottom + 8),
+            ],
+          ),
+        );
       },
     );
   }
 
-  Widget _buildProfileInfoRow(IconData icon, String label, String value, [double scale = 1.0]) {
+  Widget _buildProfileInfoRow(
+    IconData icon,
+    String label,
+    String value, [
+    double scale = 1.0,
+  ]) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 6 * scale),
       child: Row(
@@ -4334,11 +4294,7 @@ class _ChatScreenState extends State<ChatScreen>
           color: Color(0xFF1A1A2E),
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           boxShadow: [
-            BoxShadow(
-              color: Colors.black45,
-              blurRadius: 12,
-              spreadRadius: 2,
-            ),
+            BoxShadow(color: Colors.black45, blurRadius: 12, spreadRadius: 2),
           ],
         ),
         child: Column(
@@ -4353,7 +4309,7 @@ class _ChatScreenState extends State<ChatScreen>
                 borderRadius: BorderRadius.circular(3),
               ),
             ),
-            
+
             // Title with close button
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 4, 12, 16),
@@ -4389,12 +4345,8 @@ class _ChatScreenState extends State<ChatScreen>
                 ],
               ),
             ),
-            
-            const Divider(
-              color: Colors.white10,
-              height: 1,
-              thickness: 1,
-            ),
+
+            const Divider(color: Colors.white10, height: 1, thickness: 1),
             // Preview area
             Expanded(
               child: Padding(
@@ -4526,9 +4478,7 @@ class _ChatScreenState extends State<ChatScreen>
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.02),
                 border: Border(
-                  top: BorderSide(
-                    color: Colors.white.withValues(alpha: 0.08),
-                  ),
+                  top: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
                 ),
               ),
               padding: EdgeInsets.fromLTRB(
@@ -4588,7 +4538,9 @@ class _ChatScreenState extends State<ChatScreen>
                               }
                             },
                             icon: Icon(
-                              isFromCamera ? Icons.camera_alt_outlined : Icons.refresh,
+                              isFromCamera
+                                  ? Icons.camera_alt_outlined
+                                  : Icons.refresh,
                             ),
                             label: Text(
                               isFromCamera ? 'Take Another' : 'Replace',
@@ -6151,7 +6103,11 @@ class _ChatScreenState extends State<ChatScreen>
             clipBehavior: Clip.none,
             children: [
               IconButton(
-                icon: Icon(Icons.task_alt, color: Colors.white, size: 24 * scale),
+                icon: Icon(
+                  Icons.task_alt,
+                  color: Colors.white,
+                  size: 24 * scale,
+                ),
                 onPressed: _showTasksModal,
                 tooltip: 'Tasks',
               ),
@@ -6200,7 +6156,11 @@ class _ChatScreenState extends State<ChatScreen>
             clipBehavior: Clip.none,
             children: [
               IconButton(
-                icon: Icon(Icons.draw_outlined, color: Colors.white, size: 24 * scale),
+                icon: Icon(
+                  Icons.draw_outlined,
+                  color: Colors.white,
+                  size: 24 * scale,
+                ),
                 onPressed: _showExcalidrawModal,
                 tooltip: 'Excalidraw',
               ),
@@ -6427,11 +6387,10 @@ class _ChatScreenState extends State<ChatScreen>
                                                   color: Colors.red,
                                                   shape: BoxShape.circle,
                                                 ),
-                                                constraints:
-                                                    BoxConstraints(
-                                                      minWidth: 18 * scale,
-                                                      minHeight: 18 * scale,
-                                                    ),
+                                                constraints: BoxConstraints(
+                                                  minWidth: 18 * scale,
+                                                  minHeight: 18 * scale,
+                                                ),
                                                 child: Text(
                                                   _unreadCount > 99
                                                       ? '99+'
@@ -6454,6 +6413,11 @@ class _ChatScreenState extends State<ChatScreen>
                           ],
                         ),
                 ),
+                // Bottom bar: typing preview + message input (keyed for modal positioning)
+                Column(
+                  key: _bottomBarKey,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                 // Typing preview - pinned at bottom, always visible
                 Container(
                   height: (_otherUserTyping && _typingPreview.isNotEmpty)
@@ -6472,7 +6436,7 @@ class _ChatScreenState extends State<ChatScreen>
                       ? RepaintBoundary(child: _buildTypingPreviewBubble())
                       : const SizedBox.shrink(),
                 ),
-                // Message input
+                // Message input — closing bracket of bottom bar Column added below
                 RepaintBoundary(
                   child: Container(
                     padding: EdgeInsets.only(
@@ -6495,109 +6459,128 @@ class _ChatScreenState extends State<ChatScreen>
                         // Quick bulk-send button above the input; in-flow layout avoids covering chat bubbles.
                         _buildSendToManyQuickAction(),
                         // Text input field with embedded emoji button and send button
-                        RepaintBoundary(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              // Text input field with embedded emoji button
-                              Expanded(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF4D4D4D),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      // Emoji picker button (inside input) - toggles between emoji/keyboard icon
-                                      IconButton(
-                                        onPressed: () =>
-                                            _showEmojiPickerModal(context),
-                                        icon: Icon(
-                                          _showEmojiPicker
-                                              ? Icons.keyboard_outlined
-                                              : Icons
-                                                    .sentiment_satisfied_alt_outlined,
-                                          color: Colors.white70,
-                                          size: 18 * scale,
-                                        ),
-                                        padding: EdgeInsets.all(4 * scale),
-                                        constraints: const BoxConstraints(),
-                                        tooltip: _showEmojiPicker
-                                            ? 'Keyboard'
-                                            : 'Emoji',
+                        ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: _messageController,
+                          builder: (context, value, _) {
+                            final hasDraftText = value.text.trim().isNotEmpty;
+
+                            return RepaintBoundary(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  // Text input field with embedded controls
+                                  Expanded(
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF4D4D4D),
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
-                                      // Text input
-                                      Expanded(
-                                        child: TextField(
-                                          key: const ValueKey('message_input'),
-                                          controller: _messageController,
-                                          focusNode: _inputFocusNode,
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 14 * scale,
-                                          ),
-                                          decoration: InputDecoration(
-                                            hintText: 'Type a message...',
-                                            hintStyle: TextStyle(
-                                              color: Colors.grey[600],
-                                              fontSize: 14 * scale,
+                                      child: Row(
+                                        children: [
+                                          // Emoji picker button (inside input) - toggles between emoji/keyboard icon
+                                          IconButton(
+                                            onPressed: () =>
+                                                _showEmojiPickerModal(context),
+                                            icon: Icon(
+                                              _showEmojiPicker
+                                                  ? Icons.keyboard_outlined
+                                                  : Icons
+                                                        .sentiment_satisfied_alt_outlined,
+                                              color: Colors.white70,
+                                              size: 18 * scale,
                                             ),
-                                            border: InputBorder.none,
-                                            filled: false,
-                                            contentPadding:
-                                                const EdgeInsets.only(
-                                                  left: 0,
-                                                  right: 4,
-                                                  top: 10,
-                                                  bottom: 10,
-                                                ),
-                                            isDense: true,
+                                            padding: EdgeInsets.all(4 * scale),
+                                            constraints: const BoxConstraints(),
+                                            tooltip: _showEmojiPicker
+                                                ? 'Keyboard'
+                                                : 'Emoji',
                                           ),
-                                          onChanged: _onTextChanged,
-                                          minLines: 1,
-                                          maxLines: 5,
-                                          textInputAction:
-                                              TextInputAction.newline,
-                                          keyboardType: TextInputType.multiline,
-                                          textCapitalization:
-                                              TextCapitalization.sentences,
-                                          enableInteractiveSelection: true,
-                                          autocorrect: true,
-                                          enableSuggestions: true,
-                                          stylusHandwritingEnabled: false,
+                                          // Text input
+                                          Expanded(
+                                            child: TextField(
+                                              key: const ValueKey(
+                                                'message_input',
+                                              ),
+                                              controller: _messageController,
+                                              focusNode: _inputFocusNode,
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 14 * scale,
+                                              ),
+                                              decoration: InputDecoration(
+                                                hintText: 'Type a message...',
+                                                hintStyle: TextStyle(
+                                                  color: Colors.grey[600],
+                                                  fontSize: 14 * scale,
+                                                ),
+                                                border: InputBorder.none,
+                                                filled: false,
+                                                contentPadding:
+                                                    const EdgeInsets.only(
+                                                      left: 0,
+                                                      right: 4,
+                                                      top: 10,
+                                                      bottom: 10,
+                                                    ),
+                                                isDense: true,
+                                              ),
+                                              onChanged: _onTextChanged,
+                                              minLines: 1,
+                                              maxLines: 5,
+                                              textInputAction:
+                                                  TextInputAction.newline,
+                                              keyboardType:
+                                                  TextInputType.multiline,
+                                              textCapitalization:
+                                                  TextCapitalization.sentences,
+                                              enableInteractiveSelection: true,
+                                              autocorrect: true,
+                                              enableSuggestions: true,
+                                              stylusHandwritingEnabled: false,
+                                            ),
+                                          ),
+                                          if (!hasDraftText)
+                                            _buildActionsPlusButton(
+                                              iconSize: 18 * scale,
+                                              padding: EdgeInsets.all(4 * scale),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  // Send button â€” always visible, vertically centred
+                                  Container(
+                                    margin: const EdgeInsets.only(left: 6),
+                                    child: ElevatedButton(
+                                      onPressed: _sendMessage,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(
+                                          0xFF6D28D9,
+                                        ),
+                                        foregroundColor: Colors.white,
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 12 * scale,
+                                          vertical: 8 * scale,
+                                        ),
+                                        minimumSize: const Size(0, 0),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                         ),
                                       ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              // Send button â€” always visible, vertically centred
-                              Container(
-                                margin: const EdgeInsets.only(left: 6),
-                                child: ElevatedButton(
-                                  onPressed: _sendMessage,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF6D28D9),
-                                    foregroundColor: Colors.white,
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 12 * scale,
-                                      vertical: 8 * scale,
-                                    ),
-                                    minimumSize: const Size(0, 0),
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
+                                      child: Text(
+                                        'Send',
+                                        style: TextStyle(fontSize: 12 * scale),
+                                      ),
                                     ),
                                   ),
-                                  child: Text(
-                                    'Send',
-                                    style: TextStyle(fontSize: 12 * scale),
-                                  ),
-                                ),
+                                ],
                               ),
-                            ],
-                          ),
+                            );
+                          },
                         ),
                         // Inline emoji picker (shown when active)
                         if (_showEmojiPicker) _buildInlineEmojiPicker(),
@@ -6605,9 +6588,10 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                   ),
                 ),
+                  ], // end _bottomBarKey Column children
+                ), // end _bottomBarKey Column
               ],
             ),
-            Positioned.fill(child: _buildFloatingActionsToggle()),
           ],
         ),
       ),
@@ -6619,7 +6603,10 @@ class _ChatScreenState extends State<ChatScreen>
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 16 * scale, vertical: 10 * scale),
+        padding: EdgeInsets.symmetric(
+          horizontal: 16 * scale,
+          vertical: 10 * scale,
+        ),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
@@ -9046,7 +9033,10 @@ class _ChatScreenState extends State<ChatScreen>
         padding: EdgeInsets.symmetric(vertical: 16 * scale),
         child: Center(
           child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 16 * scale, vertical: 8 * scale),
+            padding: EdgeInsets.symmetric(
+              horizontal: 16 * scale,
+              vertical: 8 * scale,
+            ),
             decoration: BoxDecoration(
               color: const Color(0xFF3D4752), // Dark gray like the image
               borderRadius: BorderRadius.circular(20),
@@ -9346,7 +9336,8 @@ class _ChatScreenState extends State<ChatScreen>
       child: Container(
         margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * (scale < 0.9 ? 0.82 : 0.70),
+          maxWidth:
+              MediaQuery.of(context).size.width * (scale < 0.9 ? 0.82 : 0.70),
         ),
         decoration: BoxDecoration(
           color: isSentByMe ? const Color(0xFF420796) : const Color(0xFF3944BC),
@@ -9372,63 +9363,38 @@ class _ChatScreenState extends State<ChatScreen>
             bottomRight: Radius.circular(isSentByMe ? 4 : 16),
           ),
         ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_selectedTaskActionMessageId == message.id &&
-              _canQuickToggleTaskAction(message))
-            Padding(
-              padding: EdgeInsets.fromLTRB(12 * scale, 10 * scale, 12 * scale, 2),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  OutlinedButton(
-                    onPressed: () {
-                      if (message.isTask) {
-                        _unmarkMessageTask(message);
-                      } else {
-                        _addMessageToTask(message);
-                      }
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: BorderSide(
-                        color: const Color(0xFFF59E0B).withValues(alpha: 0.8),
-                      ),
-                      backgroundColor: const Color(
-                        0xFFF59E0B,
-                      ).withValues(alpha: 0.16),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 12 * scale,
-                        vertical: 7 * scale,
-                      ),
-                      minimumSize: const Size(0, 32),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.compact,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      textStyle: TextStyle(
-                        fontSize: 13 * scale,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    child: Text(
-                      message.isTask ? 'Unmark task' : 'Mark as task',
-                    ),
-                  ),
-                  if (_canQuickToggleExcalidrawPin(message))
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_selectedTaskActionMessageId == message.id &&
+                _canQuickToggleTaskAction(message))
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  12 * scale,
+                  10 * scale,
+                  12 * scale,
+                  2,
+                ),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
                     OutlinedButton(
-                      onPressed: () => _toggleExcalidrawPin(message),
+                      onPressed: () {
+                        if (message.isTask) {
+                          _unmarkMessageTask(message);
+                        } else {
+                          _addMessageToTask(message);
+                        }
+                      },
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.white,
                         side: BorderSide(
-                          color: const Color(0xFFB794F6).withValues(alpha: 0.8),
+                          color: const Color(0xFFF59E0B).withValues(alpha: 0.8),
                         ),
                         backgroundColor: const Color(
-                          0xFFB794F6,
-                        ).withValues(alpha: 0.14),
+                          0xFFF59E0B,
+                        ).withValues(alpha: 0.16),
                         padding: EdgeInsets.symmetric(
                           horizontal: 12 * scale,
                           vertical: 7 * scale,
@@ -9445,310 +9411,366 @@ class _ChatScreenState extends State<ChatScreen>
                         ),
                       ),
                       child: Text(
-                        message.excalidrawPinnedAt != null
-                            ? 'Unpin Excalidraw'
-                            : 'Pin Excalidraw',
+                        message.isTask ? 'Unmark task' : 'Mark as task',
                       ),
                     ),
-                ],
+                    if (_canQuickToggleExcalidrawPin(message))
+                      OutlinedButton(
+                        onPressed: () => _toggleExcalidrawPin(message),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: BorderSide(
+                            color: const Color(
+                              0xFFB794F6,
+                            ).withValues(alpha: 0.8),
+                          ),
+                          backgroundColor: const Color(
+                            0xFFB794F6,
+                          ).withValues(alpha: 0.14),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 12 * scale,
+                            vertical: 7 * scale,
+                          ),
+                          minimumSize: const Size(0, 32),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          textStyle: TextStyle(
+                            fontSize: 13 * scale,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        child: Text(
+                          message.excalidrawPinnedAt != null
+                              ? 'Unpin Excalidraw'
+                              : 'Pin Excalidraw',
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
 
-          if (isPinnedExcalidraw)
-            Padding(
-              padding: EdgeInsets.fromLTRB(12 * scale, 8 * scale, 12 * scale, 2),
-              child: Container(
-                padding: EdgeInsets.symmetric(horizontal: 9 * scale, vertical: 3 * scale),
-                decoration: BoxDecoration(
-                  color: excalidrawAccentColor.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: excalidrawAccentColor.withValues(alpha: 0.55),
+            if (isPinnedExcalidraw)
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  12 * scale,
+                  8 * scale,
+                  12 * scale,
+                  2,
+                ),
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 9 * scale,
+                    vertical: 3 * scale,
+                  ),
+                  decoration: BoxDecoration(
+                    color: excalidrawAccentColor.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: excalidrawAccentColor.withValues(alpha: 0.55),
+                    ),
+                  ),
+                  child: Text(
+                    'Pinned Excalidraw',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11 * scale,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-                child: Text(
-                  'Pinned Excalidraw',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 11 * scale,
-                    fontWeight: FontWeight.w700,
+              ),
+
+            // Quoted reply (if this is a reply to another message)
+            if (message.replyToId != null || message.replyPreview != null)
+              Opacity(
+                opacity: 0.85, // WhatsApp-like dimmed effect
+                child: Container(
+                  margin: EdgeInsets.only(
+                    left: 8 * scale,
+                    right: 8 * scale,
+                    top: 8 * scale,
+                  ),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 10 * scale,
+                    vertical: 6 * scale,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: const Border(
+                      left: BorderSide(color: Color(0xFFB794F6), width: 3),
+                    ),
+                  ),
+                  child: Builder(
+                    builder: (context) {
+                      // Parse reply preview
+                      final preview = message.replyPreview ?? '';
+                      final colonIndex = preview.indexOf(':');
+                      final senderName = colonIndex > 0
+                          ? preview.substring(0, colonIndex)
+                          : 'Reply';
+                      var contentText = colonIndex > 0
+                          ? preview.substring(colonIndex + 1).trim()
+                          : preview;
+
+                      // Improve display for file messages
+                      if (contentText.contains('<audio') ||
+                          contentText.contains('audio/')) {
+                        contentText = 'ðŸŽ¤ Voice message';
+                      } else if (contentText.contains('<img') ||
+                          contentText.contains('image/')) {
+                        contentText = 'ðŸ“· Photo';
+                      } else if (contentText.contains('<video') ||
+                          contentText.contains('video/')) {
+                        contentText = 'ðŸŽ¬ Video';
+                      } else if (contentText.contains('file/') ||
+                          contentText.endsWith('.pdf') ||
+                          contentText.endsWith('.doc')) {
+                        contentText = 'ðŸ“Ž File';
+                      }
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            senderName,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.9),
+                              fontSize: 11 * scale,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          SizedBox(height: 2 * scale),
+                          Text(
+                            contentText,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.7),
+                              fontSize: 12 * scale,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
               ),
-            ),
-
-          // Quoted reply (if this is a reply to another message)
-          if (message.replyToId != null || message.replyPreview != null)
-            Opacity(
-              opacity: 0.85, // WhatsApp-like dimmed effect
-              child: Container(
-                margin: EdgeInsets.only(left: 8 * scale, right: 8 * scale, top: 8 * scale),
+            // Image/Video content
+            if (isMedia && message.fileUrl != null) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: Radius.circular(
+                    message.content.isNotEmpty &&
+                            !_isOnlyFilename(message.content)
+                        ? 0
+                        : (isSentByMe ? 16 : 4),
+                  ),
+                  bottomRight: Radius.circular(
+                    message.content.isNotEmpty &&
+                            !_isOnlyFilename(message.content)
+                        ? 0
+                        : (isSentByMe ? 4 : 16),
+                  ),
+                ),
+                child: GestureDetector(
+                  onTap: () => _openMediaViewer(message),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      if (isImage)
+                        Image.network(
+                          message.fileUrl!,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Container(
+                              height: 150,
+                              color: Colors.grey[800],
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value:
+                                      loadingProgress.expectedTotalBytes != null
+                                      ? loadingProgress.cumulativeBytesLoaded /
+                                            loadingProgress.expectedTotalBytes!
+                                      : null,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              height: 100,
+                              color: Colors.grey[800],
+                              child: const Center(
+                                child: Icon(
+                                  Icons.broken_image,
+                                  color: Colors.white54,
+                                  size: 40,
+                                ),
+                              ),
+                            );
+                          },
+                        )
+                      else if (isVideo)
+                        Container(
+                          height: 150,
+                          color: Colors.black87,
+                          child: const Center(
+                            child: Icon(
+                              Icons.play_circle_fill,
+                              color: Colors.white,
+                              size: 60,
+                            ),
+                          ),
+                        ),
+                      // Play button overlay for video
+                      if (isVideo)
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.black45,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.play_arrow,
+                            color: Colors.white,
+                            size: 36,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            // Audio/Voice message content
+            if (isAudio && message.fileUrl != null) ...[
+              _AudioMessagePlayer(
+                audioUrl: message.fileUrl!,
+                fileSize: message.fileSize,
+              ),
+            ],
+            // Text content (if not just filename and not audio)
+            if ((!isMedia && !isAudio) ||
+                (message.content.isNotEmpty &&
+                    !_isOnlyFilename(message.content) &&
+                    !isAudio))
+              Padding(
                 padding: EdgeInsets.symmetric(
-                  horizontal: 10 * scale,
+                  horizontal: 16 * scale,
+                  vertical: 10 * scale,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Original message text
+                    _buildLinkifiedMessageText(
+                      text: isMedia
+                          ? (message.fileName ?? message.content)
+                          : message.content,
+                      isTaskMessage: isTaskMessage,
+                      taskAccentColor: taskAccentColor,
+                    ),
+                    // Translation (if available)
+                    if (_messageTranslations.containsKey(message.id)) ...[
+                      const SizedBox(height: 8),
+                      // Separator line
+                      Container(
+                        height: 1,
+                        color: Colors.white.withValues(alpha: 0.3),
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                      ),
+                      // Translated text with language indicator
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Globe icon
+                          Icon(
+                            Icons.language,
+                            size: 14,
+                            color: Colors.white.withValues(alpha: 0.7),
+                          ),
+                          const SizedBox(width: 4),
+                          // Language indicator (placeholder for now)
+                          Text(
+                            'auto â†’ en',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.7),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      // Translated text in italic
+                      Text(
+                        _messageTranslations[message.id]!,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.9),
+                          fontSize: 14,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              )
+            else if (isMedia || isAudio)
+              const SizedBox(height: 8),
+            // Message status indicator and timestamp for sent messages
+            if (isSentByMe)
+              Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 16 * scale,
                   vertical: 6 * scale,
                 ),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(6),
-                  border: const Border(
-                    left: BorderSide(color: Color(0xFFB794F6), width: 3),
-                  ),
-                ),
-                child: Builder(
-                  builder: (context) {
-                    // Parse reply preview
-                    final preview = message.replyPreview ?? '';
-                    final colonIndex = preview.indexOf(':');
-                    final senderName = colonIndex > 0
-                        ? preview.substring(0, colonIndex)
-                        : 'Reply';
-                    var contentText = colonIndex > 0
-                        ? preview.substring(colonIndex + 1).trim()
-                        : preview;
-
-                    // Improve display for file messages
-                    if (contentText.contains('<audio') ||
-                        contentText.contains('audio/')) {
-                      contentText = 'ðŸŽ¤ Voice message';
-                    } else if (contentText.contains('<img') ||
-                        contentText.contains('image/')) {
-                      contentText = 'ðŸ“· Photo';
-                    } else if (contentText.contains('<video') ||
-                        contentText.contains('video/')) {
-                      contentText = 'ðŸŽ¬ Video';
-                    } else if (contentText.contains('file/') ||
-                        contentText.endsWith('.pdf') ||
-                        contentText.endsWith('.doc')) {
-                      contentText = 'ðŸ“Ž File';
-                    }
-
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          senderName,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.9),
-                            fontSize: 11 * scale,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        SizedBox(height: 2 * scale),
-                        Text(
-                          contentText,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.7),
-                            fontSize: 12 * scale,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-            ),
-          // Image/Video content
-          if (isMedia && message.fileUrl != null) ...[
-            ClipRRect(
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(16),
-                topRight: const Radius.circular(16),
-                bottomLeft: Radius.circular(
-                  message.content.isNotEmpty &&
-                          !_isOnlyFilename(message.content)
-                      ? 0
-                      : (isSentByMe ? 16 : 4),
-                ),
-                bottomRight: Radius.circular(
-                  message.content.isNotEmpty &&
-                          !_isOnlyFilename(message.content)
-                      ? 0
-                      : (isSentByMe ? 4 : 16),
-                ),
-              ),
-              child: GestureDetector(
-                onTap: () => _openMediaViewer(message),
-                child: Stack(
-                  alignment: Alignment.center,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    if (isImage)
-                      Image.network(
-                        message.fileUrl!,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return Container(
-                            height: 150,
-                            color: Colors.grey[800],
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                value:
-                                    loadingProgress.expectedTotalBytes != null
-                                    ? loadingProgress.cumulativeBytesLoaded /
-                                          loadingProgress.expectedTotalBytes!
-                                    : null,
-                                color: Colors.white,
-                              ),
-                            ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            height: 100,
-                            color: Colors.grey[800],
-                            child: const Center(
-                              child: Icon(
-                                Icons.broken_image,
-                                color: Colors.white54,
-                                size: 40,
-                              ),
-                            ),
-                          );
-                        },
-                      )
-                    else if (isVideo)
-                      Container(
-                        height: 150,
-                        color: Colors.black87,
-                        child: const Center(
-                          child: Icon(
-                            Icons.play_circle_fill,
-                            color: Colors.white,
-                            size: 60,
-                          ),
-                        ),
-                      ),
-                    // Play button overlay for video
-                    if (isVideo)
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.black45,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.play_arrow,
-                          color: Colors.white,
-                          size: 36,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-          // Audio/Voice message content
-          if (isAudio && message.fileUrl != null) ...[
-            _AudioMessagePlayer(
-              audioUrl: message.fileUrl!,
-              fileSize: message.fileSize,
-            ),
-          ],
-          // Text content (if not just filename and not audio)
-          if ((!isMedia && !isAudio) ||
-              (message.content.isNotEmpty &&
-                  !_isOnlyFilename(message.content) &&
-                  !isAudio))
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16 * scale, vertical: 10 * scale),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Original message text
-                  _buildLinkifiedMessageText(
-                    text: isMedia
-                        ? (message.fileName ?? message.content)
-                        : message.content,
-                    isTaskMessage: isTaskMessage,
-                    taskAccentColor: taskAccentColor,
-                  ),
-                  // Translation (if available)
-                  if (_messageTranslations.containsKey(message.id)) ...[
-                    const SizedBox(height: 8),
-                    // Separator line
-                    Container(
-                      height: 1,
-                      color: Colors.white.withValues(alpha: 0.3),
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                    ),
-                    // Translated text with language indicator
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Globe icon
-                        Icon(
-                          Icons.language,
-                          size: 14,
-                          color: Colors.white.withValues(alpha: 0.7),
-                        ),
-                        const SizedBox(width: 4),
-                        // Language indicator (placeholder for now)
-                        Text(
-                          'auto â†’ en',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.7),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    // Translated text in italic
+                    // Timestamp (always shown for sent messages)
                     Text(
-                      _messageTranslations[message.id]!,
+                      message.formattedTime,
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 14,
-                        fontStyle: FontStyle.italic,
+                        color: Colors.white70,
+                        fontSize: 11 * scale,
                       ),
                     ),
+                    SizedBox(width: 4 * scale),
+                    // Status indicator
+                    _buildStatusIndicator(_statusForUi(message), scale),
                   ],
-                ],
-              ),
-            )
-          else if (isMedia || isAudio)
-            const SizedBox(height: 8),
-          // Message status indicator and timestamp for sent messages
-          if (isSentByMe)
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16 * scale, vertical: 6 * scale),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  // Timestamp (always shown for sent messages)
-                  Text(
-                    message.formattedTime,
-                    style: TextStyle(color: Colors.white70, fontSize: 11 * scale),
-                  ),
-                  SizedBox(width: 4 * scale),
-                  // Status indicator
-                  _buildStatusIndicator(_statusForUi(message), scale),
-                ],
-              ),
-            ),
-          // Full timestamp - only visible when _showTimestamps is true
-          if (_showTimestamps)
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16 * scale, vertical: 6 * scale),
-              child: Text(
-                message.formattedTimestampFull,
-                style: TextStyle(
-                  color: const Color(0xFFFF69B4), // Hot pink
-                  fontSize: 12 * scale,
-                  fontWeight: FontWeight.w500,
                 ),
               ),
-            ),
-        ],
+            // Full timestamp - only visible when _showTimestamps is true
+            if (_showTimestamps)
+              Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 16 * scale,
+                  vertical: 6 * scale,
+                ),
+                child: Text(
+                  message.formattedTimestampFull,
+                  style: TextStyle(
+                    color: const Color(0xFFFF69B4), // Hot pink
+                    fontSize: 12 * scale,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
-    ),
     );
 
     // Wrap bubble with Column for reactions below (Column keeps pills in hit-test bounds)
