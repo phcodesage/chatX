@@ -1639,7 +1639,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     };
 
     final selectedSectionTitle = switch (_activeFilter) {
-      LobbyQuickFilter.all => 'ALL CHATS',
+      LobbyQuickFilter.all => 'CHATS',
       LobbyQuickFilter.online => 'ONLINE',
       LobbyQuickFilter.groups => 'GROUPS',
       LobbyQuickFilter.offline => 'OFFLINE',
@@ -1664,14 +1664,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         backgroundColor: const Color(0xFF1A1A2E),
         elevation: 0,
         centerTitle: true,
-        title: const Text(
-          'Chats',
-          style: TextStyle(
-            color: Color(0xFF00D9FF),
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
+        title: const AppVersionText(),
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.white70),
@@ -1772,7 +1765,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     ),
                   ),
           ),
-          const AppVersionText(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -1785,7 +1777,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           NavigationDestination(
             icon: Icon(Icons.dashboard_outlined),
             selectedIcon: Icon(Icons.dashboard, color: Color(0xFF00D9FF)),
-            label: 'All',
+            label: 'Chats',
           ),
           NavigationDestination(
             icon: Icon(Icons.circle_outlined),

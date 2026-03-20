@@ -51,6 +51,8 @@ class _ChatScreenState extends State<ChatScreen>
     with SingleTickerProviderStateMixin {
   final SocketService _socketService = SocketService();
   final TextEditingController _messageController = TextEditingController();
+  final TextSelectionControls _compactSelectionControls =
+      _CompactTextSelectionControls();
   final ScrollController _scrollController = ScrollController();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FocusNode _inputFocusNode = FocusNode();
@@ -3416,17 +3418,11 @@ class _ChatScreenState extends State<ChatScreen>
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
         elevation: 0,
       ),
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
     );
   }
 
@@ -3488,8 +3484,9 @@ class _ChatScreenState extends State<ChatScreen>
                 final topInset = media.padding.top + kToolbarHeight + 8;
                 // Use bar height (stable) + live keyboard inset so the modal
                 // stays flush against the top of the bar as keyboard animates.
-                final barBox = _bottomBarKey.currentContext
-                    ?.findRenderObject() as RenderBox?;
+                final barBox =
+                    _bottomBarKey.currentContext?.findRenderObject()
+                        as RenderBox?;
                 final barHeight = barBox?.size.height ?? 82.0;
                 final bottomInset =
                     media.padding.bottom + media.viewInsets.bottom + barHeight;
@@ -3497,81 +3494,89 @@ class _ChatScreenState extends State<ChatScreen>
                   150.0,
                   media.size.height - topInset - bottomInset,
                 );
-                final maxPanelHeight =
-                    math.min(availableHeight, media.size.height * 0.5);
+                final maxPanelHeight = math.min(
+                  availableHeight,
+                  media.size.height * 0.5,
+                );
 
-          final actionButtons = <Widget>[
-            _buildActionSheetButton(
-              label: 'Ring Doorbell',
-              backgroundColor: const Color(0xFF8B5CF6),
-              onPressed: () => _ringDoorbell(),
-            ),
-            _buildActionSheetButton(
-              label: 'Change Color',
-              backgroundColor: const Color(0xFFA855F7),
-              onPressed: () => _runActionSheetAction(dialogContext, () {
-                _changeColor();
-              }),
-            ),
-            if (_showResetButton)
-              _buildActionSheetButton(
-                label: 'Reset Color',
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black87,
-                onPressed: () => _runActionSheetAction(dialogContext, () {
-                  _resetColor();
-                }),
-              ),
-            _buildActionSheetButton(
-              label: 'Send File',
-              backgroundColor: const Color(0xFF10B981),
-              onPressed: () => _runActionSheetAction(dialogContext, _pickFile),
-            ),
-            _buildActionSheetButton(
-              label: 'Camera',
-              backgroundColor: const Color(0xFF3B82F6),
-              onPressed: () => _runActionSheetAction(dialogContext, _takePhoto),
-            ),
-            _buildActionSheetButton(
-              label: 'Voice Message',
-              backgroundColor: const Color(0xFFEF4444),
-              onPressed: () => _runActionSheetAction(
-                dialogContext,
-                _showVoiceRecordingModal,
-              ),
-            ),
-            _buildActionSheetButton(
-              label: _autoTranslate ? 'Translate On' : 'Translate Off',
-              backgroundColor: _autoTranslate
-                  ? const Color(0xFF059669)
-                  : const Color(0xFF0891B2),
-              onPressed: () =>
-                  _runActionSheetAction(dialogContext, _toggleAutoTranslate),
-            ),
-            _buildActionSheetButton(
-              label: _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
-              backgroundColor: _showTimestamps
-                  ? const Color(0xFF4F46E5)
-                  : const Color(0xFF8B5CF6),
-              onPressed: () =>
-                  _runActionSheetAction(dialogContext, _toggleTimestamps),
-            ),
-            _buildActionSheetButton(
-              label: 'Export Chat',
-              backgroundColor: const Color(0xFF6B7280),
-              onPressed: () =>
-                  _runActionSheetAction(dialogContext, _exportChat),
-            ),
-            if (_currentUserIsAdmin)
-              _buildActionSheetButton(
-                label: 'Delete All',
-                backgroundColor: const Color(0xFFDC2626),
-                onPressed: () => _runActionSheetAction(
-                  dialogContext,
-                  _adminDeleteAllMessages,
-                ),
-              ),
-          ];
+                final actionButtons = <Widget>[
+                  _buildActionSheetButton(
+                    label: 'Ring Doorbell',
+                    backgroundColor: const Color(0xFF8B5CF6),
+                    onPressed: () => _ringDoorbell(),
+                  ),
+                  _buildActionSheetButton(
+                    label: 'Change Color',
+                    backgroundColor: const Color(0xFFA855F7),
+                    onPressed: () => _runActionSheetAction(dialogContext, () {
+                      _changeColor();
+                    }),
+                  ),
+                  if (_showResetButton)
+                    _buildActionSheetButton(
+                      label: 'Reset Color',
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.black87,
+                      onPressed: () => _runActionSheetAction(dialogContext, () {
+                        _resetColor();
+                      }),
+                    ),
+                  _buildActionSheetButton(
+                    label: 'Send File',
+                    backgroundColor: const Color(0xFF10B981),
+                    onPressed: () =>
+                        _runActionSheetAction(dialogContext, _pickFile),
+                  ),
+                  _buildActionSheetButton(
+                    label: 'Camera',
+                    backgroundColor: const Color(0xFF3B82F6),
+                    onPressed: () =>
+                        _runActionSheetAction(dialogContext, _takePhoto),
+                  ),
+                  _buildActionSheetButton(
+                    label: 'Voice Message',
+                    backgroundColor: const Color(0xFFEF4444),
+                    onPressed: () => _runActionSheetAction(
+                      dialogContext,
+                      _showVoiceRecordingModal,
+                    ),
+                  ),
+                  _buildActionSheetButton(
+                    label: _autoTranslate ? 'Translate On' : 'Translate Off',
+                    backgroundColor: _autoTranslate
+                        ? const Color(0xFF059669)
+                        : const Color(0xFF0891B2),
+                    onPressed: () => _runActionSheetAction(
+                      dialogContext,
+                      _toggleAutoTranslate,
+                    ),
+                  ),
+                  _buildActionSheetButton(
+                    label: _showTimestamps
+                        ? 'Hide Timestamps'
+                        : 'Show Timestamps',
+                    backgroundColor: _showTimestamps
+                        ? const Color(0xFF4F46E5)
+                        : const Color(0xFF8B5CF6),
+                    onPressed: () =>
+                        _runActionSheetAction(dialogContext, _toggleTimestamps),
+                  ),
+                  _buildActionSheetButton(
+                    label: 'Export Chat',
+                    backgroundColor: const Color(0xFF6B7280),
+                    onPressed: () =>
+                        _runActionSheetAction(dialogContext, _exportChat),
+                  ),
+                  if (_currentUserIsAdmin)
+                    _buildActionSheetButton(
+                      label: 'Delete All',
+                      backgroundColor: const Color(0xFFDC2626),
+                      onPressed: () => _runActionSheetAction(
+                        dialogContext,
+                        _adminDeleteAllMessages,
+                      ),
+                    ),
+                ];
 
                 return Stack(
                   children: [
@@ -3584,8 +3589,12 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                     Positioned.fill(
                       child: Padding(
-                        padding:
-                            EdgeInsets.fromLTRB(10, topInset, 10, bottomInset),
+                        padding: EdgeInsets.fromLTRB(
+                          10,
+                          topInset,
+                          10,
+                          bottomInset,
+                        ),
                         child: Align(
                           alignment: Alignment.bottomCenter,
                           child: ConstrainedBox(
@@ -6418,176 +6427,218 @@ class _ChatScreenState extends State<ChatScreen>
                   key: _bottomBarKey,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                // Typing preview - pinned at bottom, always visible
-                Container(
-                  height: (_otherUserTyping && _typingPreview.isNotEmpty)
-                      ? null
-                      : 0,
-                  padding: (_otherUserTyping && _typingPreview.isNotEmpty)
-                      ? const EdgeInsets.symmetric(horizontal: 16, vertical: 8)
-                      : EdgeInsets.zero,
-                  decoration: BoxDecoration(
-                    color: _headerColor,
-                    border: const Border(
-                      top: BorderSide(color: Color(0xFF3D3D3D), width: 1),
+                    // Typing preview - pinned at bottom, always visible
+                    Container(
+                      height: (_otherUserTyping && _typingPreview.isNotEmpty)
+                          ? null
+                          : 0,
+                      padding: (_otherUserTyping && _typingPreview.isNotEmpty)
+                          ? const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            )
+                          : EdgeInsets.zero,
+                      decoration: BoxDecoration(
+                        color: _headerColor,
+                        border: const Border(
+                          top: BorderSide(color: Color(0xFF3D3D3D), width: 1),
+                        ),
+                      ),
+                      child: (_otherUserTyping && _typingPreview.isNotEmpty)
+                          ? RepaintBoundary(child: _buildTypingPreviewBubble())
+                          : const SizedBox.shrink(),
                     ),
-                  ),
-                  child: (_otherUserTyping && _typingPreview.isNotEmpty)
-                      ? RepaintBoundary(child: _buildTypingPreviewBubble())
-                      : const SizedBox.shrink(),
-                ),
-                // Message input — closing bracket of bottom bar Column added below
-                RepaintBoundary(
-                  child: Container(
-                    padding: EdgeInsets.only(
-                      left: 12 * scale,
-                      right: 12 * scale,
-                      top: 0,
-                      bottom: 4 + MediaQuery.of(context).viewInsets.bottom,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _headerColor,
-                      border: const Border(
-                        top: BorderSide(color: Color(0xFF3D3D3D), width: 1),
+                    // Message input — closing bracket of bottom bar Column added below
+                    RepaintBoundary(
+                      child: Container(
+                        padding: EdgeInsets.only(
+                          left: 12 * scale,
+                          right: 12 * scale,
+                          top: 0,
+                          bottom: 12 + MediaQuery.of(context).viewInsets.bottom,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _headerColor,
+                          border: const Border(
+                            top: BorderSide(color: Color(0xFF3D3D3D), width: 1),
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Reply preview (when replying to a message)
+                            _buildReplyPreview(),
+                            // Quick bulk-send button above the input; in-flow layout avoids covering chat bubbles.
+                            _buildSendToManyQuickAction(),
+                            // Text input field with embedded emoji button and send button
+                            ValueListenableBuilder<TextEditingValue>(
+                              valueListenable: _messageController,
+                              builder: (context, value, _) {
+                                final hasDraftText = value.text
+                                    .trim()
+                                    .isNotEmpty;
+                                const sendButtonColor = Color(0xFF6D28D9);
+
+                                return RepaintBoundary(
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      // Text input field with embedded controls
+                                      Expanded(
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF4D4D4D),
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              // Emoji picker button (inside input) - toggles between emoji/keyboard icon
+                                              IconButton(
+                                                onPressed: () =>
+                                                    _showEmojiPickerModal(
+                                                      context,
+                                                    ),
+                                                icon: Icon(
+                                                  _showEmojiPicker
+                                                      ? Icons.keyboard_outlined
+                                                      : Icons
+                                                            .sentiment_satisfied_alt_outlined,
+                                                  color: Colors.white70,
+                                                  size: 18 * scale,
+                                                ),
+                                                padding: EdgeInsets.all(
+                                                  4 * scale,
+                                                ),
+                                                constraints:
+                                                    const BoxConstraints(),
+                                                tooltip: _showEmojiPicker
+                                                    ? 'Keyboard'
+                                                    : 'Emoji',
+                                              ),
+                                              // Text input
+                                              Expanded(
+                                                child: Theme(
+                                                  data: Theme.of(context).copyWith(
+                                                    textSelectionTheme:
+                                                        const TextSelectionThemeData(
+                                                          cursorColor:
+                                                              sendButtonColor,
+                                                          selectionHandleColor:
+                                                              sendButtonColor,
+                                                          selectionColor: Color(
+                                                            0x596D28D9,
+                                                          ),
+                                                        ),
+                                                  ),
+                                                  child: TextField(
+                                                    key: const ValueKey(
+                                                      'message_input',
+                                                    ),
+                                                    controller:
+                                                        _messageController,
+                                                    focusNode: _inputFocusNode,
+                                                    selectionControls:
+                                                        _compactSelectionControls,
+                                                    cursorColor:
+                                                        sendButtonColor,
+                                                    scrollPadding:
+                                                        EdgeInsets.only(
+                                                          bottom: 140 * scale,
+                                                        ),
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 17 * scale,
+                                                    ),
+                                                    decoration: InputDecoration(
+                                                      hintText:
+                                                          'Type a message...',
+                                                      hintStyle: TextStyle(
+                                                        color: Colors.grey[600],
+                                                        fontSize: 15 * scale,
+                                                      ),
+                                                      border: InputBorder.none,
+                                                      filled: false,
+                                                      contentPadding:
+                                                          const EdgeInsets.only(
+                                                            left: 0,
+                                                            right: 4,
+                                                            top: 10,
+                                                            bottom: 10,
+                                                          ),
+                                                      isDense: true,
+                                                    ),
+                                                    onChanged: _onTextChanged,
+                                                    minLines: 1,
+                                                    maxLines: 5,
+                                                    textInputAction:
+                                                        TextInputAction.newline,
+                                                    keyboardType:
+                                                        TextInputType.multiline,
+                                                    textCapitalization:
+                                                        TextCapitalization
+                                                            .sentences,
+                                                    enableInteractiveSelection:
+                                                        true,
+                                                    autocorrect: true,
+                                                    enableSuggestions: true,
+                                                    stylusHandwritingEnabled:
+                                                        false,
+                                                  ),
+                                                ),
+                                              ),
+                                              if (!hasDraftText)
+                                                _buildActionsPlusButton(
+                                                  iconSize: 18 * scale,
+                                                  padding: EdgeInsets.all(
+                                                    4 * scale,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      // Send button â€” always visible, vertically centred
+                                      Container(
+                                        margin: const EdgeInsets.only(left: 6),
+                                        child: ElevatedButton(
+                                          onPressed: _sendMessage,
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: sendButtonColor,
+                                            foregroundColor: Colors.white,
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: 12 * scale,
+                                              vertical: 8 * scale,
+                                            ),
+                                            minimumSize: const Size(0, 0),
+                                            tapTargetSize: MaterialTapTargetSize
+                                                .shrinkWrap,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Send',
+                                            style: TextStyle(
+                                              fontSize: 12 * scale,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                            // Inline emoji picker (shown when active)
+                            if (_showEmojiPicker) _buildInlineEmojiPicker(),
+                          ],
+                        ),
                       ),
                     ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Reply preview (when replying to a message)
-                        _buildReplyPreview(),
-                        // Quick bulk-send button above the input; in-flow layout avoids covering chat bubbles.
-                        _buildSendToManyQuickAction(),
-                        // Text input field with embedded emoji button and send button
-                        ValueListenableBuilder<TextEditingValue>(
-                          valueListenable: _messageController,
-                          builder: (context, value, _) {
-                            final hasDraftText = value.text.trim().isNotEmpty;
-
-                            return RepaintBoundary(
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  // Text input field with embedded controls
-                                  Expanded(
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF4D4D4D),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          // Emoji picker button (inside input) - toggles between emoji/keyboard icon
-                                          IconButton(
-                                            onPressed: () =>
-                                                _showEmojiPickerModal(context),
-                                            icon: Icon(
-                                              _showEmojiPicker
-                                                  ? Icons.keyboard_outlined
-                                                  : Icons
-                                                        .sentiment_satisfied_alt_outlined,
-                                              color: Colors.white70,
-                                              size: 18 * scale,
-                                            ),
-                                            padding: EdgeInsets.all(4 * scale),
-                                            constraints: const BoxConstraints(),
-                                            tooltip: _showEmojiPicker
-                                                ? 'Keyboard'
-                                                : 'Emoji',
-                                          ),
-                                          // Text input
-                                          Expanded(
-                                            child: TextField(
-                                              key: const ValueKey(
-                                                'message_input',
-                                              ),
-                                              controller: _messageController,
-                                              focusNode: _inputFocusNode,
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 14 * scale,
-                                              ),
-                                              decoration: InputDecoration(
-                                                hintText: 'Type a message...',
-                                                hintStyle: TextStyle(
-                                                  color: Colors.grey[600],
-                                                  fontSize: 14 * scale,
-                                                ),
-                                                border: InputBorder.none,
-                                                filled: false,
-                                                contentPadding:
-                                                    const EdgeInsets.only(
-                                                      left: 0,
-                                                      right: 4,
-                                                      top: 10,
-                                                      bottom: 10,
-                                                    ),
-                                                isDense: true,
-                                              ),
-                                              onChanged: _onTextChanged,
-                                              minLines: 1,
-                                              maxLines: 5,
-                                              textInputAction:
-                                                  TextInputAction.newline,
-                                              keyboardType:
-                                                  TextInputType.multiline,
-                                              textCapitalization:
-                                                  TextCapitalization.sentences,
-                                              enableInteractiveSelection: true,
-                                              autocorrect: true,
-                                              enableSuggestions: true,
-                                              stylusHandwritingEnabled: false,
-                                            ),
-                                          ),
-                                          if (!hasDraftText)
-                                            _buildActionsPlusButton(
-                                              iconSize: 18 * scale,
-                                              padding: EdgeInsets.all(4 * scale),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                  // Send button â€” always visible, vertically centred
-                                  Container(
-                                    margin: const EdgeInsets.only(left: 6),
-                                    child: ElevatedButton(
-                                      onPressed: _sendMessage,
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(
-                                          0xFF6D28D9,
-                                        ),
-                                        foregroundColor: Colors.white,
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: 12 * scale,
-                                          vertical: 8 * scale,
-                                        ),
-                                        minimumSize: const Size(0, 0),
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        'Send',
-                                        style: TextStyle(fontSize: 12 * scale),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                        // Inline emoji picker (shown when active)
-                        if (_showEmojiPicker) _buildInlineEmojiPicker(),
-                      ],
-                    ),
-                  ),
-                ),
                   ], // end _bottomBarKey Column children
                 ), // end _bottomBarKey Column
               ],
@@ -9983,6 +10034,18 @@ class _ChatScreenState extends State<ChatScreen>
       debugPrint('Error parsing last seen: $e');
       return 'a while ago';
     }
+  }
+}
+
+class _CompactTextSelectionControls extends MaterialTextSelectionControls {
+  _CompactTextSelectionControls();
+
+  static const double _handleScale = 0.84;
+
+  @override
+  Size getHandleSize(double textLineHeight) {
+    final baseSize = super.getHandleSize(textLineHeight);
+    return Size(baseSize.width * _handleScale, baseSize.height * _handleScale);
   }
 }
 
