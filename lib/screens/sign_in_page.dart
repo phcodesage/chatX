@@ -9,7 +9,7 @@ import '../widgets/password_field.dart';
 import '../widgets/primary_button.dart';
 import 'register_page.dart';
 import 'forgot_password_page.dart';
-import 'home_page.dart';
+import 'lobby_screen.dart';
 
 /// Sign in screen
 class SignInPage extends StatefulWidget {
@@ -62,23 +62,23 @@ class _SignInPageState extends State<SignInPage> {
 
     try {
       await AuthService.login(username: username, password: password);
-      
+
       // Save or clear remembered username based on checkbox
       if (remember) {
         await StorageService.saveRememberedUsername(username);
       } else {
         await StorageService.clearRememberedCredentials();
       }
-      
+
       // Send FCM token to backend after successful login
       final fcmToken = FirebaseMessagingService.instance.fcmToken;
       if (fcmToken != null) {
         await FCMService.updateFCMToken(fcmToken);
       }
-      
+
       if (mounted) {
-        // Navigate to home screen
-        Navigator.pushReplacementNamed(context, HomePage.route);
+        // Navigate to lobby screen directly to avoid extra transition loader.
+        Navigator.pushReplacementNamed(context, LobbyScreen.route);
       }
     } catch (e) {
       if (mounted) {
@@ -111,8 +111,12 @@ class _SignInPageState extends State<SignInPage> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
-              onPressed: () => Navigator.pushNamed(context, ForgotPasswordPage.route),
-              child: const Text('Forgot password?', style: TextStyle(color: Color(0xFF00E5FF))),
+              onPressed: () =>
+                  Navigator.pushNamed(context, ForgotPasswordPage.route),
+              child: const Text(
+                'Forgot password?',
+                style: TextStyle(color: Color(0xFF00E5FF)),
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -142,13 +146,20 @@ class _SignInPageState extends State<SignInPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text("Don't have an account? ", style: TextStyle(color: Colors.white70)),
+              const Text(
+                "Don't have an account? ",
+                style: TextStyle(color: Colors.white70),
+              ),
               TextButton(
-                onPressed: () => Navigator.pushReplacementNamed(context, RegisterPage.route),
-                child: const Text('Create one', style: TextStyle(color: Color(0xFF00E5FF))),
+                onPressed: () =>
+                    Navigator.pushReplacementNamed(context, RegisterPage.route),
+                child: const Text(
+                  'Create one',
+                  style: TextStyle(color: Color(0xFF00E5FF)),
+                ),
               ),
             ],
-          )
+          ),
         ],
       ),
     );

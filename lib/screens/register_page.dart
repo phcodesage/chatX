@@ -7,7 +7,7 @@ import '../widgets/app_text_field.dart';
 import '../widgets/password_field.dart';
 import '../widgets/primary_button.dart';
 import 'sign_in_page.dart';
-import 'home_page.dart';
+import 'lobby_screen.dart';
 
 /// Registration screen
 class RegisterPage extends StatefulWidget {
@@ -47,7 +47,10 @@ class _RegisterPageState extends State<RegisterPage> {
     final confirm = _confirm.text.trim();
 
     // Validation
-    if (firstName.isEmpty || username.isEmpty || email.isEmpty || password.isEmpty) {
+    if (firstName.isEmpty ||
+        username.isEmpty ||
+        email.isEmpty ||
+        password.isEmpty) {
       _showError('Please fill in all required fields');
       return;
     }
@@ -72,16 +75,16 @@ class _RegisterPageState extends State<RegisterPage> {
         firstName: firstName,
         lastName: lastName.isNotEmpty ? lastName : null,
       );
-      
+
       // Send FCM token to backend after successful registration
       final fcmToken = FirebaseMessagingService.instance.fcmToken;
       if (fcmToken != null) {
         await FCMService.updateFCMToken(fcmToken);
       }
-      
+
       if (mounted) {
-        // Navigate to home screen
-        Navigator.pushReplacementNamed(context, HomePage.route);
+        // Navigate to lobby screen directly to avoid extra transition loader.
+        Navigator.pushReplacementNamed(context, LobbyScreen.route);
       }
     } catch (e) {
       if (mounted) {
@@ -112,7 +115,11 @@ class _RegisterPageState extends State<RegisterPage> {
           const SizedBox(height: 10),
           AppTextField(label: 'Username', controller: _username),
           const SizedBox(height: 10),
-          AppTextField(label: 'Email', controller: _email, keyboardType: TextInputType.emailAddress),
+          AppTextField(
+            label: 'Email',
+            controller: _email,
+            keyboardType: TextInputType.emailAddress,
+          ),
           const SizedBox(height: 10),
           PasswordField(label: 'Password', controller: _password),
           const SizedBox(height: 10),
@@ -131,13 +138,20 @@ class _RegisterPageState extends State<RegisterPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('Already have an account? ', style: TextStyle(color: Colors.white70)),
+              const Text(
+                'Already have an account? ',
+                style: TextStyle(color: Colors.white70),
+              ),
               TextButton(
-                onPressed: () => Navigator.pushReplacementNamed(context, SignInPage.route),
-                child: const Text('Sign in', style: TextStyle(color: Color(0xFF00E5FF))),
-              )
+                onPressed: () =>
+                    Navigator.pushReplacementNamed(context, SignInPage.route),
+                child: const Text(
+                  'Sign in',
+                  style: TextStyle(color: Color(0xFF00E5FF)),
+                ),
+              ),
             ],
-          )
+          ),
         ],
       ),
     );

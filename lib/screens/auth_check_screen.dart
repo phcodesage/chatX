@@ -1,11 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../services/storage_service.dart';
 import '../services/socket_service.dart';
 import '../services/presence_service.dart';
 import '../services/fcm_service.dart';
 import '../services/firebase_messaging_service.dart';
+import '../services/share_intent_service.dart';
 import 'sign_in_page.dart';
-import 'home_page.dart';
+import 'lobby_screen.dart';
+import 'share_target_screen.dart';
 
 /// Screen that checks authentication status on app start
 class AuthCheckScreen extends StatefulWidget {
@@ -23,9 +27,6 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
   }
 
   Future<void> _checkAuthStatus() async {
-    // Add a small delay for better UX
-    await Future.delayed(const Duration(milliseconds: 500));
-
     final isLoggedIn = await StorageService.isLoggedIn();
 
     if (!mounted) return;
@@ -42,41 +43,29 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         // Start heartbeat to maintain online status
         PresenceService().startHeartbeat();
 
-        // Set status to online
-        await PresenceService.updateStatus('online');
+        // Run these without blocking first navigation frame.
+        unawaited(PresenceService.updateStatus('online'));
+        unawaited(_restoreFcmTokenInBackground());
+        unawaited(_syncInitialNotificationInBackground());
 
-        // Send FCM token to backend for push notifications (on app restart)
-        final fcmToken = await FirebaseMessagingService.instance
-            .getSavedFCMToken();
-        if (fcmToken != null) {
-          await FCMService.updateFCMToken(fcmToken);
-        }
+        final sharedItems = await ShareIntentService.instance
+            .takePendingSharedItems();
+        if (!mounted) return;
 
-        // Re-check credentials before navigating (in case auth error cleared them)
-        final stillLoggedIn = await StorageService.isLoggedIn();
-        if (!stillLoggedIn) {
-          debugPrint(
-            '🔐 Credentials were cleared during startup, skipping HomePage navigation',
+        if (sharedItems.isNotEmpty) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => ShareTargetScreen(
+                sharedItems: sharedItems,
+                users: const [],
+                openLobbyOnExit: true,
+              ),
+            ),
           );
-          // Auth error handler already navigated to sign-in
-          if (mounted) {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const SignInPage()),
-            );
-          }
           return;
         }
 
-        // Check if app was opened from terminated state via notification BEFORE navigating
-        // This ensures the notification is stored as pending before LobbyScreen checks for it
-        await FirebaseMessagingService.instance.checkInitialMessage();
-
-        // Navigate to home page
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const HomePage()),
-          );
-        }
+        Navigator.of(context).pushReplacementNamed(LobbyScreen.route);
       } else {
         // Token or userId is missing, go to sign in
         if (mounted) {
@@ -92,6 +81,27 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
           MaterialPageRoute(builder: (_) => const SignInPage()),
         );
       }
+    }
+  }
+
+  Future<void> _restoreFcmTokenInBackground() async {
+    try {
+      final fcmToken = await FirebaseMessagingService.instance
+          .getSavedFCMToken();
+      if (fcmToken != null) {
+        await FCMService.updateFCMToken(fcmToken);
+      }
+    } catch (e) {
+      debugPrint('AuthCheck: FCM token restore skipped: $e');
+    }
+  }
+
+  Future<void> _syncInitialNotificationInBackground() async {
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await FirebaseMessagingService.instance.checkInitialMessage();
+    } catch (e) {
+      debugPrint('AuthCheck: initial notification sync skipped: $e');
     }
   }
 
@@ -123,10 +133,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
                   color: Colors.white,
                 ),
               ),
-              SizedBox(height: 40),
-              CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-              ),
+              SizedBox(height: 18),
             ],
           ),
         ),

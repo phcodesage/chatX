@@ -1,53 +1,108 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'firebase_options.dart';
-import 'screens/auth_check_screen.dart';
 import 'screens/sign_in_page.dart';
 import 'screens/register_page.dart';
 import 'screens/forgot_password_page.dart';
 import 'screens/reset_password_page.dart';
 import 'screens/home_page.dart';
 import 'screens/lobby_screen.dart';
+import 'screens/share_target_screen.dart';
 import 'services/firebase_messaging_service.dart';
+import 'services/fcm_service.dart';
 import 'services/auth_error_handler.dart';
 import 'services/chat_cache_service.dart';
 import 'services/storage_service.dart';
 import 'services/share_intent_service.dart';
+import 'services/socket_service.dart';
+import 'services/presence_service.dart';
 import 'utils/notification_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await ChatCacheService.init();
-  await StorageService.init();
-  await ShareIntentService.instance.initialize();
-
-  // Initialize Firebase
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
-  // Register FCM background message handler
-  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-
-  // Initialize Firebase Cloud Messaging
-  await FirebaseMessagingService.instance.initialize();
-
-  // Set up notification tap handler
-  FirebaseMessagingService.instance.onNotificationTapped = (data) {
-    NotificationHandler.handleNotificationTap(data);
-  };
-
-  // Set up auth error handler with navigator key
+  // Set auth error navigation immediately; this does not require async setup.
   AuthErrorHandler.navigatorKey = NotificationHandler.navigatorKey;
 
-  // Note: FCM token will be sent to backend after successful login
+  // Keep Android OS launch window visible until we know the first real screen.
+  await StorageService.init();
+  await ChatCacheService.init();
+  await ShareIntentService.instance.initialize();
 
-  runApp(const MessengerApp());
+  final initialHome = await _resolveInitialHome();
+
+  runApp(MessengerApp(initialHome: initialHome));
+
+  // Warm up non-critical services in background so startup stays snappy.
+  unawaited(_bootstrapAppServices());
+}
+
+Future<Widget> _resolveInitialHome() async {
+  final token = await StorageService.getToken();
+  final userId = await StorageService.getUserId();
+
+  if (token == null || token.isEmpty || userId == null) {
+    return const SignInPage();
+  }
+
+  // Restore realtime services for authenticated sessions.
+  SocketService().initialize(token, userId);
+  PresenceService().startHeartbeat();
+  unawaited(PresenceService.updateStatus('online'));
+
+  final sharedItems = await ShareIntentService.instance
+      .takePendingSharedItems();
+  if (sharedItems.isNotEmpty) {
+    return ShareTargetScreen(
+      sharedItems: sharedItems,
+      users: const [],
+      openLobbyOnExit: true,
+    );
+  }
+
+  return const LobbyScreen();
+}
+
+Future<void> _bootstrapAppServices() async {
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    // Register FCM background message handler
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+    // Initialize Firebase Cloud Messaging
+    await FirebaseMessagingService.instance.initialize();
+
+    // Set up notification tap handler
+    FirebaseMessagingService.instance.onNotificationTapped = (data) {
+      NotificationHandler.handleNotificationTap(data);
+    };
+
+    final isLoggedIn = await StorageService.isLoggedIn();
+    if (isLoggedIn) {
+      final fcmToken = await FirebaseMessagingService.instance
+          .getSavedFCMToken();
+      if (fcmToken != null) {
+        await FCMService.updateFCMToken(fcmToken);
+      }
+    }
+
+    unawaited(FirebaseMessagingService.instance.checkInitialMessage());
+  } catch (e) {
+    debugPrint('Firebase bootstrap failed: $e');
+  }
 }
 
 class MessengerApp extends StatelessWidget {
-  const MessengerApp({super.key});
+  final Widget initialHome;
+
+  const MessengerApp({super.key, required this.initialHome});
 
   static const Color blue900 = Color(0xFF1E3A8A); // rgb(30,58,138)
   static const Color card = Color(0xFF344256); // slate-ish dark card
@@ -98,7 +153,7 @@ class MessengerApp extends StatelessWidget {
         splashFactory: NoSplash.splashFactory,
         highlightColor: Colors.transparent,
       ),
-      home: const AuthCheckScreen(),
+      home: initialHome,
       routes: {
         SignInPage.route: (_) => const SignInPage(),
         RegisterPage.route: (_) => const RegisterPage(),

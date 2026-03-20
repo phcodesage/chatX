@@ -1,21 +1,27 @@
-import 'dart:io';
+ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import '../models/lobby_user.dart';
+import '../services/chat_cache_service.dart';
+import '../services/lobby_service.dart';
 import '../services/message_service.dart';
 import '../services/share_intent_service.dart';
+import '../services/storage_service.dart';
+import 'lobby_screen.dart';
 
 class ShareTargetScreen extends StatefulWidget {
   final List<SharedMediaItem> sharedItems;
   final List<LobbyUser> users;
+  final bool openLobbyOnExit;
 
   const ShareTargetScreen({
     super.key,
     required this.sharedItems,
     required this.users,
+    this.openLobbyOnExit = false,
   });
 
   @override
@@ -27,8 +33,10 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
   final TextEditingController _captionController = TextEditingController();
   final Set<int> _selectedUserIds = <int>{};
 
+  late List<LobbyUser> _allUsers;
   late List<LobbyUser> _filteredUsers;
   bool _isSending = false;
+  bool _isLoadingContacts = false;
 
   static const List<Color> _avatarColors = [
     Color(0xFFE91E63),
@@ -46,11 +54,11 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
   @override
   void initState() {
     super.initState();
-    _filteredUsers = List<LobbyUser>.from(widget.users)
-      ..sort(
-        (a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
-      );
+    _allUsers = _normalizeUsers(widget.users);
+    _filteredUsers = List<LobbyUser>.from(_allUsers);
+    _isLoadingContacts = _allUsers.isEmpty;
     _searchController.addListener(_applySearch);
+    _loadContacts();
   }
 
   @override
@@ -66,26 +74,78 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
 
     setState(() {
       if (query.isEmpty) {
-        _filteredUsers = List<LobbyUser>.from(widget.users)
-          ..sort(
-            (a, b) =>
-                a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
-          );
+        _filteredUsers = List<LobbyUser>.from(_allUsers);
         return;
       }
 
-      _filteredUsers =
-          widget.users
-              .where((user) {
-                return user.fullName.toLowerCase().contains(query) ||
-                    user.username.toLowerCase().contains(query);
-              })
-              .toList(growable: false)
-            ..sort(
-              (a, b) =>
-                  a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
-            );
+      _filteredUsers = _allUsers
+          .where((user) {
+            return user.fullName.toLowerCase().contains(query) ||
+                user.username.toLowerCase().contains(query);
+          })
+          .toList(growable: false);
     });
+  }
+
+  List<LobbyUser> _normalizeUsers(List<LobbyUser> users) {
+    final sortedUsers = List<LobbyUser>.from(users)
+      ..sort(
+        (a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
+      );
+    return sortedUsers;
+  }
+
+  void _applyUsers(List<LobbyUser> users) {
+    final normalized = _normalizeUsers(users);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _allUsers = normalized;
+
+      final existingIds = normalized.map((user) => user.id).toSet();
+      _selectedUserIds.removeWhere((id) => !existingIds.contains(id));
+
+      final query = _searchController.text.trim().toLowerCase();
+      if (query.isEmpty) {
+        _filteredUsers = List<LobbyUser>.from(normalized);
+      } else {
+        _filteredUsers = normalized
+            .where((user) {
+              return user.fullName.toLowerCase().contains(query) ||
+                  user.username.toLowerCase().contains(query);
+            })
+            .toList(growable: false);
+      }
+    });
+  }
+
+  Future<void> _loadContacts() async {
+    final currentUserId = await StorageService.getUserId();
+
+    if (_allUsers.isEmpty && currentUserId != null) {
+      final cachedUsers = await ChatCacheService.loadLobbyUsers(currentUserId);
+      if (cachedUsers.isNotEmpty) {
+        _applyUsers(cachedUsers);
+      }
+    }
+
+    try {
+      final freshUsers = await LobbyService.getLobbyUsers();
+      _applyUsers(freshUsers);
+
+      if (currentUserId != null) {
+        await ChatCacheService.saveLobbyUsers(currentUserId, freshUsers);
+      }
+    } catch (e) {
+      debugPrint('ShareTargetScreen: failed to refresh contacts: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingContacts = false);
+      }
+    }
   }
 
   Future<void> _sendSharedItems() async {
@@ -93,7 +153,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
       return;
     }
 
-    final selectedUsers = widget.users
+    final selectedUsers = _allUsers
         .where((user) => _selectedUserIds.contains(user.id))
         .toList(growable: false);
 
@@ -153,6 +213,11 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
     setState(() => _isSending = false);
 
     if (sentCount > 0) {
+      if (widget.openLobbyOnExit) {
+        _goToLobby();
+        return;
+      }
+
       Navigator.pop(context, {
         'sentCount': sentCount,
         'failedCount': failedRecipients.length,
@@ -178,6 +243,13 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
 
   Color _avatarColorForUser(LobbyUser user) {
     return _avatarColors[user.avatarColorIndex % _avatarColors.length];
+  }
+
+  void _goToLobby() {
+    if (!mounted) {
+      return;
+    }
+    Navigator.pushReplacementNamed(context, LobbyScreen.route);
   }
 
   Widget _buildPreviewCard() {
@@ -362,122 +434,153 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1A1A2E),
-      appBar: AppBar(
+    return PopScope(
+      canPop: !widget.openLobbyOnExit,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || !widget.openLobbyOnExit) {
+          return;
+        }
+        _goToLobby();
+      },
+      child: Scaffold(
         backgroundColor: const Color(0xFF1A1A2E),
-        elevation: 0,
-        title: const Text(
-          'Send to',
-          style: TextStyle(
-            color: Color(0xFF00D9FF),
-            fontWeight: FontWeight.bold,
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF1A1A2E),
+          elevation: 0,
+          leading: widget.openLobbyOnExit
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: _goToLobby,
+                )
+              : null,
+          title: const Text(
+            'Send to',
+            style: TextStyle(
+              color: Color(0xFF00D9FF),
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
-      ),
-      body: Column(
-        children: [
-          _buildPreviewCard(),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: TextField(
-              controller: _searchController,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Search contacts',
-                hintStyle: TextStyle(color: Colors.grey[500]),
-                prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
-                filled: true,
-                fillColor: const Color(0xFF252542),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 12,
+        body: Column(
+          children: [
+            _buildPreviewCard(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: TextField(
+                controller: _searchController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Search contacts',
+                  hintStyle: TextStyle(color: Colors.grey[500]),
+                  prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
+                  filled: true,
+                  fillColor: const Color(0xFF252542),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
                 ),
               ),
             ),
-          ),
-          Expanded(
-            child: _filteredUsers.isEmpty
-                ? Center(
-                    child: Text(
-                      'No contacts found',
-                      style: TextStyle(color: Colors.grey[500], fontSize: 15),
+            Expanded(
+              child: _isLoadingContacts && _filteredUsers.isEmpty
+                  ? const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(strokeWidth: 2),
+                          SizedBox(height: 10),
+                          Text(
+                            'Loading contacts...',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    )
+                  : _filteredUsers.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No contacts found',
+                        style: TextStyle(color: Colors.grey[500], fontSize: 15),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _filteredUsers.length,
+                      itemBuilder: (context, index) {
+                        final user = _filteredUsers[index];
+                        return _buildUserTile(user);
+                      },
                     ),
-                  )
-                : ListView.builder(
-                    itemCount: _filteredUsers.length,
-                    itemBuilder: (context, index) {
-                      final user = _filteredUsers[index];
-                      return _buildUserTile(user);
-                    },
-                  ),
-          ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _captionController,
-                      enabled: !_isSending,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        hintText: 'Add a caption (optional)',
-                        hintStyle: TextStyle(color: Colors.grey[500]),
-                        filled: true,
-                        fillColor: const Color(0xFF252542),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
+            ),
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _captionController,
+                        enabled: !_isSending,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          hintText: 'Add a caption (optional)',
+                          hintStyle: TextStyle(color: Colors.grey[500]),
+                          filled: true,
+                          fillColor: const Color(0xFF252542),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    height: 48,
-                    child: ElevatedButton(
-                      onPressed: (_selectedUserIds.isEmpty || _isSending)
-                          ? null
-                          : _sendSharedItems,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00D9FF),
-                        foregroundColor: const Color(0xFF10212E),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: (_selectedUserIds.isEmpty || _isSending)
+                            ? null
+                            : _sendSharedItems,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF00D9FF),
+                          foregroundColor: const Color(0xFF10212E),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
                         ),
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                      ),
-                      child: _isSending
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Text(
-                              _selectedUserIds.isEmpty
-                                  ? 'Send'
-                                  : 'Send (${_selectedUserIds.length})',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
+                        child: _isSending
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text(
+                                _selectedUserIds.isEmpty
+                                    ? 'Send'
+                                    : 'Send (${_selectedUserIds.length})',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

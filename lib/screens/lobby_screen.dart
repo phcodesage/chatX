@@ -525,7 +525,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Future<void> _openSharePickerIfNeeded() async {
-    if (!mounted || _isSharePickerOpen || _isLoading || _lobbyUsers.isEmpty) {
+    if (!mounted || _isSharePickerOpen) {
       return;
     }
 
