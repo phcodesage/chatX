@@ -67,6 +67,7 @@ class _ChatScreenState extends State<ChatScreen>
   bool _isKeyboardVisible = false;
   bool _restoreInputFocusOnResume = false;
   bool _isRestoringInputFocus = false;
+  TextSelection? _savedInputSelection;
   bool _isSwitchingInputMode = false;
   double _lockedInputPanelHeight = 0;
   Timer? _inputModeSwitchTimer;
@@ -115,6 +116,8 @@ class _ChatScreenState extends State<ChatScreen>
   bool _showEmojiPicker = false;
 
   bool _isActionsPanelOpen = false;
+  bool _actionsPanelFromKeyboard = false;
+  double _actionsPanelInset = 0;
 
   // Backend restart notification banner
   bool _showBackendRestartBanner = false;
@@ -145,6 +148,8 @@ class _ChatScreenState extends State<ChatScreen>
   final Map<int, String?> _pendingLiveTaskCreatedAtByMessageId = {};
   final Map<int, String?> _pendingLiveTaskCompletedAtByMessageId = {};
   int? _selectedTaskActionMessageId;
+  Message? _taskActionModalMessage;
+  int? _bubbleFlashId; // transient flash highlight, auto-clears after short delay
 
   // Message IDs loaded from local cache/server history.
   // For these historical records, UI should always display status as "sent".
@@ -389,11 +394,48 @@ class _ChatScreenState extends State<ChatScreen>
     if (_isKeyboardVisible != isVisible) {
       setState(() {
         _isKeyboardVisible = isVisible;
-        // Auto-close emoji picker when keyboard opens (user tapped text field)
-        if (isVisible && _showEmojiPicker) {
-          _showEmojiPicker = false;
-        }
       });
+    }
+
+    if (isVisible) {
+      _restoreSavedInputSelection();
+    }
+  }
+
+  Future<void> _hideSystemKeyboardPreservingFocus() async {
+    if (!mounted) return;
+
+    _inputFocusNode.requestFocus();
+    _restoreSavedInputSelection();
+
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    if (!mounted) return;
+
+    try {
+      await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    } catch (_) {
+      // Ignore transient platform timing issues while hiding the IME.
+    }
+  }
+
+  void _saveCurrentInputSelection() {
+    final selection = _messageController.selection;
+    if (!selection.isValid) return;
+    _savedInputSelection = selection;
+  }
+
+  void _restoreSavedInputSelection() {
+    final selection = _savedInputSelection;
+    if (selection == null) return;
+
+    final textLength = _messageController.text.length;
+    final restoredSelection = TextSelection(
+      baseOffset: selection.baseOffset.clamp(0, textLength).toInt(),
+      extentOffset: selection.extentOffset.clamp(0, textLength).toInt(),
+    );
+
+    if (_messageController.selection != restoredSelection) {
+      _messageController.selection = restoredSelection;
     }
   }
 
@@ -3415,6 +3457,76 @@ class _ChatScreenState extends State<ChatScreen>
     return (width / 411.0).clamp(0.78, 1.0);
   }
 
+  PreferredSizeWidget _buildBubbleSelectionAppBar(double scale) {
+    final message = _taskActionModalMessage!;
+    return AppBar(
+      backgroundColor: const Color(0xFF1A1A2E),
+      elevation: 0,
+      leading: IconButton(
+        icon: const Icon(Icons.close, color: Colors.white),
+        onPressed: () => setState(() { _taskActionModalMessage = null; }),
+      ),
+      titleSpacing: 8,
+      title: Text(
+        '1 selected',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 16 * scale,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      actions: [
+        if (_canQuickToggleExcalidrawPin(message))
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: OutlinedButton(
+              onPressed: () {
+                _toggleExcalidrawPin(message);
+                setState(() { _taskActionModalMessage = null; });
+              },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: BorderSide(color: const Color(0xFFB794F6).withValues(alpha: 0.8)),
+                backgroundColor: const Color(0xFFB794F6).withValues(alpha: 0.14),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                minimumSize: const Size(0, 34),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+              child: Text(message.excalidrawPinnedAt != null ? 'Unpin Excalidraw' : 'Pin Excalidraw'),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: OutlinedButton(
+            onPressed: () {
+              if (message.isTask) {
+                _unmarkMessageTask(message);
+              } else {
+                _addMessageToTask(message);
+              }
+              setState(() { _taskActionModalMessage = null; });
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: const Color(0xFFF59E0B).withValues(alpha: 0.8)),
+              backgroundColor: const Color(0xFFF59E0B).withValues(alpha: 0.16),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              minimumSize: const Size(0, 34),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            child: Text(message.isTask ? 'Unmark task' : 'Mark as task'),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildHeaderStatusPill() {
     final statusColor = _getHeaderStatusColor();
     final scale = _uiScale(context);
@@ -3458,11 +3570,8 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Future<void> _runActionSheetAction(
-    BuildContext sheetContext,
-    FutureOr<void> Function() action,
-  ) async {
-    _closeActionsPanel(sheetContext);
+  Future<void> _runActionSheetAction(FutureOr<void> Function() action) async {
+    await _dismissActionsPanel();
     await Future<void>.delayed(const Duration(milliseconds: 120));
 
     if (!mounted) {
@@ -3480,20 +3589,38 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _closeActionsPanel(BuildContext panelContext) {
-    _keepInputUnfocused();
-
-    final navigator = Navigator.of(panelContext);
-    if (navigator.canPop()) {
-      navigator.pop();
+  Future<void> _dismissActionsPanel({bool restoreKeyboard = false}) async {
+    if (!_isActionsPanelOpen) {
+      if (restoreKeyboard) {
+        await _restoreKeyboardAfterActionsPanelClose();
+      } else {
+        _keepInputUnfocused();
+      }
+      return;
     }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
+    final keyboardRestoreInset = _actionsPanelInset;
+    if (restoreKeyboard && keyboardRestoreInset > 0) {
+      _startInputModeLock(keyboardRestoreInset);
+    }
+
+    if (mounted) {
+      setState(() {
+        _isActionsPanelOpen = false;
+        _actionsPanelFromKeyboard = false;
+        _actionsPanelInset = 0;
+      });
+    }
+
+    if (restoreKeyboard) {
+      await _restoreKeyboardAfterActionsPanelClose();
+    } else {
       _keepInputUnfocused();
-    });
+    }
+  }
+
+  void _closeActionsPanel() {
+    unawaited(_dismissActionsPanel());
   }
 
   Widget _buildActionSheetButton({
@@ -3507,10 +3634,10 @@ class _ChatScreenState extends State<ChatScreen>
       style: ElevatedButton.styleFrom(
         backgroundColor: backgroundColor,
         foregroundColor: foregroundColor,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        minimumSize: Size.zero,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        minimumSize: const Size(0, 40),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
         textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
         elevation: 0,
       ),
@@ -3518,220 +3645,252 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  Future<void> _restoreKeyboardAfterActionsPanelClose() async {
+    if (!mounted) return;
+
+    for (final delay in const [20, 90, 180]) {
+      await Future<void>.delayed(Duration(milliseconds: delay));
+      if (!mounted) return;
+
+      _inputFocusNode.requestFocus();
+      try {
+        await SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+      } catch (_) {
+        // Ignore transient platform timing issues while restoring the IME.
+      }
+    }
+  }
+
+  Future<void> _toggleActionsSheet() async {
+    if (_isActionsPanelOpen) {
+      await _dismissActionsPanel(restoreKeyboard: _actionsPanelFromKeyboard);
+      return;
+    }
+
+    _showActionsSheet();
+  }
+
+  Widget _buildComposerIconButton({
+    required VoidCallback onPressed,
+    required IconData icon,
+    required double iconSize,
+    required EdgeInsetsGeometry padding,
+    required String tooltip,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkResponse(
+          onTap: onPressed,
+          containedInkWell: true,
+          highlightShape: BoxShape.circle,
+          radius: iconSize * 0.9,
+          splashColor: Colors.white.withValues(alpha: 0.22),
+          highlightColor: Colors.white.withValues(alpha: 0.14),
+          child: Padding(
+            padding: padding,
+            child: Icon(
+              icon,
+              color: Colors.white70,
+              size: iconSize,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildActionsPlusButton({
     required double iconSize,
     required EdgeInsetsGeometry padding,
   }) {
-    return IconButton(
-      onPressed: _showActionsSheet,
-      icon: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 150),
-        transitionBuilder: (child, animation) => FadeTransition(
-          opacity: animation,
-          child: ScaleTransition(scale: animation, child: child),
-        ),
-        child: Icon(
-          _isActionsPanelOpen ? Icons.close : Icons.add,
-          key: ValueKey<bool>(_isActionsPanelOpen),
-          color: Colors.white70,
-          size: iconSize,
-        ),
-      ),
+    return _buildComposerIconButton(
+      onPressed: _toggleActionsSheet,
+      icon: Icons.attach_file_rounded,
+      iconSize: iconSize,
       padding: padding,
-      constraints: const BoxConstraints(),
       tooltip: 'Actions',
     );
   }
 
-  Future<void> _showActionsSheet() async {
+  void _showActionsSheet() {
     if (_isActionsPanelOpen || !mounted) {
       return;
     }
 
+    final currentKeyboardInset = _effectiveKeyboardInset(context);
+    final openedFromKeyboard = currentKeyboardInset > 0;
+    final keyboardPanelHeight = openedFromKeyboard
+        ? currentKeyboardInset
+        : _emojiPanelHeight(currentKeyboardInset);
+
+    if (openedFromKeyboard) {
+      _startInputModeLock(keyboardPanelHeight);
+    }
+
     setState(() {
       _isActionsPanelOpen = true;
+      _actionsPanelFromKeyboard = openedFromKeyboard;
+      _actionsPanelInset = openedFromKeyboard ? keyboardPanelHeight : 0;
     });
+
     _keepInputUnfocused();
     if (_showEmojiPicker) {
       setState(() {
         _showEmojiPicker = false;
       });
     }
+  }
 
-    try {
-      await showGeneralDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        barrierLabel: 'Chat actions',
-        barrierColor: Colors.transparent,
-        transitionDuration: Duration.zero,
-        pageBuilder: (dialogContext, animation, secondaryAnimation) {
-          return Material(
-            color: Colors.transparent,
-            child: Builder(
-              builder: (builderContext) {
-                // Re-evaluated on every MediaQuery change (keyboard show/hide),
-                // so the modal follows the bar in real time.
-                final media = MediaQuery.of(builderContext);
-                final topInset = media.padding.top + kToolbarHeight + 8;
-                // Use bar height (stable) + live keyboard inset so the modal
-                // stays flush against the top of the bar as keyboard animates.
-                final barBox =
-                    _bottomBarKey.currentContext?.findRenderObject()
-                        as RenderBox?;
-                final barHeight = barBox?.size.height ?? 82.0;
-                final bottomInset =
-                    media.padding.bottom + media.viewInsets.bottom + barHeight;
-                final availableHeight = math.max(
-                  150.0,
-                  media.size.height - topInset - bottomInset,
-                );
-                final maxPanelHeight = math.min(
-                  availableHeight,
-                  media.size.height * 0.5,
-                );
+  double _currentBottomBarHeight() {
+    final barBox = _bottomBarKey.currentContext?.findRenderObject() as RenderBox?;
+    return barBox?.size.height ?? 82.0;
+  }
 
-                final actionButtons = <Widget>[
-                  _buildActionSheetButton(
-                    label: 'Ring Doorbell',
-                    backgroundColor: const Color(0xFF8B5CF6),
-                    onPressed: () => _ringDoorbell(),
-                  ),
-                  _buildActionSheetButton(
-                    label: 'Change Color',
-                    backgroundColor: const Color(0xFFA855F7),
-                    onPressed: () => _runActionSheetAction(dialogContext, () {
-                      _changeColor();
-                    }),
-                  ),
-                  if (_showResetButton)
-                    _buildActionSheetButton(
-                      label: 'Reset Color',
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.black87,
-                      onPressed: () => _runActionSheetAction(dialogContext, () {
-                        _resetColor();
-                      }),
-                    ),
-                  _buildActionSheetButton(
-                    label: 'Send File',
-                    backgroundColor: const Color(0xFF10B981),
-                    onPressed: () =>
-                        _runActionSheetAction(dialogContext, _pickFile),
-                  ),
-                  _buildActionSheetButton(
-                    label: 'Camera',
-                    backgroundColor: const Color(0xFF3B82F6),
-                    onPressed: () =>
-                        _runActionSheetAction(dialogContext, _takePhoto),
-                  ),
-                  _buildActionSheetButton(
-                    label: 'Voice Message',
-                    backgroundColor: const Color(0xFFEF4444),
-                    onPressed: () => _runActionSheetAction(
-                      dialogContext,
-                      _showVoiceRecordingModal,
-                    ),
-                  ),
-                  _buildActionSheetButton(
-                    label: _autoTranslate ? 'Translate On' : 'Translate Off',
-                    backgroundColor: _autoTranslate
-                        ? const Color(0xFF059669)
-                        : const Color(0xFF0891B2),
-                    onPressed: () => _runActionSheetAction(
-                      dialogContext,
-                      _toggleAutoTranslate,
-                    ),
-                  ),
-                  _buildActionSheetButton(
-                    label: _showTimestamps
-                        ? 'Hide Timestamps'
-                        : 'Show Timestamps',
-                    backgroundColor: _showTimestamps
-                        ? const Color(0xFF4F46E5)
-                        : const Color(0xFF8B5CF6),
-                    onPressed: () =>
-                        _runActionSheetAction(dialogContext, _toggleTimestamps),
-                  ),
-                  _buildActionSheetButton(
-                    label: 'Export Chat',
-                    backgroundColor: const Color(0xFF6B7280),
-                    onPressed: () =>
-                        _runActionSheetAction(dialogContext, _exportChat),
-                  ),
-                  if (_currentUserIsAdmin)
-                    _buildActionSheetButton(
-                      label: 'Delete All',
-                      backgroundColor: const Color(0xFFDC2626),
-                      onPressed: () => _runActionSheetAction(
-                        dialogContext,
-                        _adminDeleteAllMessages,
-                      ),
-                    ),
-                ];
+  Widget _buildActionsPanelOverlay(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final topInset = media.padding.top + kToolbarHeight + 8;
+    final bottomBarHeight = _currentBottomBarHeight();
+    final bottomInset = _actionsPanelFromKeyboard ? 0.0 : bottomBarHeight;
+    final maxPanelHeight = _actionsPanelFromKeyboard
+        ? _actionsPanelInset
+        : math.min(
+            math.max(
+              150.0,
+              media.size.height -
+                  topInset -
+                  (media.padding.bottom + bottomBarHeight),
+            ),
+            media.size.height * 0.56,
+          );
 
-                return Stack(
-                  children: [
-                    Positioned.fill(
-                      child: GestureDetector(
-                        onTap: () => _closeActionsPanel(dialogContext),
-                        behavior: HitTestBehavior.opaque,
-                        child: const SizedBox.expand(),
-                      ),
-                    ),
-                    Positioned.fill(
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          10,
-                          topInset,
-                          10,
-                          bottomInset,
-                        ),
-                        child: Align(
-                          alignment: Alignment.bottomCenter,
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: 520,
-                              maxHeight: maxPanelHeight,
-                            ),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF1E1F23),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.1),
-                                ),
-                              ),
-                              child: SingleChildScrollView(
-                                padding: const EdgeInsets.all(12),
-                                child: Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: actionButtons,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
+    final actionButtons = <Widget>[
+      _buildActionSheetButton(
+        label: 'Ring Doorbell',
+        backgroundColor: const Color(0xFF8B5CF6),
+        onPressed: _ringDoorbell,
+      ),
+      _buildActionSheetButton(
+        label: 'Change Color',
+        backgroundColor: const Color(0xFFA855F7),
+        onPressed: () => _runActionSheetAction(() {
+          _changeColor();
+        }),
+      ),
+      if (_showResetButton)
+        _buildActionSheetButton(
+          label: 'Reset Color',
+          backgroundColor: const Color(0xFF6B7280),
+          onPressed: () => _runActionSheetAction(_resetColor),
+        ),
+      _buildActionSheetButton(
+        label: 'Send File',
+        backgroundColor: const Color(0xFF10B981),
+        onPressed: () => _runActionSheetAction(_pickFile),
+      ),
+      _buildActionSheetButton(
+        label: 'Camera',
+        backgroundColor: const Color(0xFF3B82F6),
+        onPressed: () => _runActionSheetAction(_takePhoto),
+      ),
+      _buildActionSheetButton(
+        label: 'Voice Message',
+        backgroundColor: const Color(0xFFEF4444),
+        onPressed: () => _runActionSheetAction(_showVoiceRecordingModal),
+      ),
+      _buildActionSheetButton(
+        label: _autoTranslate ? 'Translate On' : 'Translate Off',
+        backgroundColor: _autoTranslate
+            ? const Color(0xFF059669)
+            : const Color(0xFF0891B2),
+        onPressed: () => _runActionSheetAction(_toggleAutoTranslate),
+      ),
+      _buildActionSheetButton(
+        label: _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
+        backgroundColor: _showTimestamps
+            ? const Color(0xFF4F46E5)
+            : const Color(0xFF8B5CF6),
+        onPressed: () {
+          _toggleTimestamps();
+        },
+      ),
+      _buildActionSheetButton(
+        label: 'Export Chat',
+        backgroundColor: const Color(0xFF475569),
+        onPressed: () => _runActionSheetAction(_exportChat),
+      ),
+      if (_currentUserIsAdmin)
+        _buildActionSheetButton(
+          label: 'Delete All',
+          backgroundColor: const Color(0xFFDC2626),
+          onPressed: () => _runActionSheetAction(_adminDeleteAllMessages),
+        ),
+    ];
+
+    final panel = Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF2B2F36),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.10),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.45),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const spacing = 10.0;
+          const horizontalPadding = 20.0;
+          final itemWidth = math.max(
+            88.0,
+            (constraints.maxWidth - horizontalPadding - (spacing * 2)) / 3,
+          );
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
+            child: Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              children: actionButtons
+                  .map(
+                    (button) => SizedBox(width: itemWidth, child: button),
+                  )
+                  .toList(),
             ),
           );
         },
-        transitionBuilder:
-            (dialogContext, animation, secondaryAnimation, child) => child,
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isActionsPanelOpen = false;
-        });
-        _keepInputUnfocused();
-      }
-    }
+      ),
+    );
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          bottom: bottomBarHeight,
+          child: GestureDetector(
+            onTap: _closeActionsPanel,
+            behavior: HitTestBehavior.opaque,
+            child: const SizedBox.expand(),
+          ),
+        ),
+        Positioned(
+          left: 8,
+          right: 8,
+          bottom: bottomInset,
+          child: _actionsPanelFromKeyboard
+              ? SizedBox(height: maxPanelHeight, child: panel)
+              : ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: maxPanelHeight),
+                  child: panel,
+                ),
+        ),
+      ],
+    );
   }
 
   /// Show user profile bottom sheet (Skype-style)
@@ -3761,194 +3920,192 @@ class _ChatScreenState extends State<ChatScreen>
       builder: (context) {
         final scale = _uiScale(context);
         return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF1E1E2E),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1F1F1F),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            border: Border.all(color: Colors.grey[800]!, width: 1),
           ),
-          padding: EdgeInsets.symmetric(
-            horizontal: 24 * scale,
-            vertical: 16 * scale,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Drag handle
-              Container(
-                width: 40 * scale,
-                height: 4,
-                margin: EdgeInsets.only(bottom: 20 * scale),
-                decoration: BoxDecoration(
-                  color: Colors.grey[600],
-                  borderRadius: BorderRadius.circular(2),
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              20 * scale,
+              20 * scale,
+              20 * scale,
+              20 * scale,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40 * scale,
+                  height: 4 * scale,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[600],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-              ),
-              // Profile picture
-              CircleAvatar(
-                radius: 48 * scale,
-                backgroundColor: avatarColor,
-                child: user.avatarUrl != null
-                    ? ClipOval(
-                        child: Image.network(
-                          user.avatarUrl!,
-                          width: 96 * scale,
-                          height: 96 * scale,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => Text(
-                            user.initials,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 36 * scale,
-                              fontWeight: FontWeight.bold,
+                SizedBox(height: 20 * scale),
+                CircleAvatar(
+                  radius: 48 * scale,
+                  backgroundColor: avatarColor,
+                  child: user.avatarUrl != null
+                      ? ClipOval(
+                          child: Image.network(
+                            user.avatarUrl!,
+                            width: 96 * scale,
+                            height: 96 * scale,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) => Text(
+                              user.initials,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 36 * scale,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
+                        )
+                      : Text(
+                          user.initials,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 36 * scale,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      )
-                    : Text(
-                        user.initials,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 36 * scale,
-                          fontWeight: FontWeight.bold,
+                ),
+                SizedBox(height: 16 * scale),
+                Text(
+                  user.fullName,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22 * scale,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 4 * scale),
+                Text(
+                  '@${user.username}',
+                  style: TextStyle(color: Colors.grey[400], fontSize: 14 * scale),
+                ),
+                SizedBox(height: 8 * scale),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 12 * scale,
+                    vertical: 4 * scale,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8 * scale,
+                        height: 8 * scale,
+                        decoration: BoxDecoration(
+                          color: statusColor,
+                          shape: BoxShape.circle,
                         ),
                       ),
-              ),
-              SizedBox(height: 16 * scale),
-              // Full name
-              Text(
-                user.fullName,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22 * scale,
-                  fontWeight: FontWeight.bold,
+                      SizedBox(width: 6 * scale),
+                      Text(
+                        statusText,
+                        style: TextStyle(
+                          color: statusColor,
+                          fontSize: 13 * scale,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              SizedBox(height: 4 * scale),
-              // Username
-              Text(
-                '@${user.username}',
-                style: TextStyle(color: Colors.grey[400], fontSize: 14 * scale),
-              ),
-              SizedBox(height: 8 * scale),
-              // Status badge
-              Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: 12 * scale,
-                  vertical: 4 * scale,
+                SizedBox(height: 20 * scale),
+                _buildProfileInfoRow(
+                  Icons.email_outlined,
+                  'Email',
+                  user.email,
+                  scale,
                 ),
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
+                if (user.bio != null && user.bio!.isNotEmpty)
+                  _buildProfileInfoRow(
+                    Icons.info_outline,
+                    'Bio',
+                    user.bio!,
+                    scale,
+                  ),
+                _buildProfileInfoRow(
+                  Icons.access_time,
+                  'Timezone',
+                  user.timezone,
+                  scale,
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                if (_partnerLastSeen != null &&
+                    _getEffectivePartnerStatus() != 'online')
+                  _buildProfileInfoRow(
+                    Icons.visibility_outlined,
+                    'Last seen',
+                    _formatLastSeen(_partnerLastSeen!),
+                    scale,
+                  ),
+                if (user.isAdmin || user.isAdminUser)
+                  _buildProfileInfoRow(
+                    Icons.shield_outlined,
+                    'Role',
+                    'Admin',
+                    scale,
+                  ),
+                SizedBox(height: 16 * scale),
+                Row(
                   children: [
-                    Container(
-                      width: 8 * scale,
-                      height: 8 * scale,
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _showCallSetupModal(CallType.audio);
+                        },
+                        icon: Icon(Icons.call, size: 18 * scale),
+                        label: Text(
+                          'Call',
+                          style: TextStyle(fontSize: 14 * scale),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF4CAF50),
+                          side: const BorderSide(color: Color(0xFF4CAF50)),
+                          padding: EdgeInsets.symmetric(vertical: 12 * scale),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
                       ),
                     ),
-                    SizedBox(width: 6 * scale),
-                    Text(
-                      statusText,
-                      style: TextStyle(
-                        color: statusColor,
-                        fontSize: 13 * scale,
-                        fontWeight: FontWeight.w500,
+                    SizedBox(width: 12 * scale),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _showCallSetupModal(CallType.video);
+                        },
+                        icon: Icon(Icons.videocam, size: 18 * scale),
+                        label: Text(
+                          'Video',
+                          style: TextStyle(fontSize: 14 * scale),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF3B82F6),
+                          side: const BorderSide(color: Color(0xFF3B82F6)),
+                          padding: EdgeInsets.symmetric(vertical: 12 * scale),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
                       ),
                     ),
                   ],
                 ),
-              ),
-              SizedBox(height: 20 * scale),
-              // Info rows
-              _buildProfileInfoRow(
-                Icons.email_outlined,
-                'Email',
-                user.email,
-                scale,
-              ),
-              if (user.bio != null && user.bio!.isNotEmpty)
-                _buildProfileInfoRow(
-                  Icons.info_outline,
-                  'Bio',
-                  user.bio!,
-                  scale,
-                ),
-              _buildProfileInfoRow(
-                Icons.access_time,
-                'Timezone',
-                user.timezone,
-                scale,
-              ),
-              if (_partnerLastSeen != null &&
-                  _getEffectivePartnerStatus() != 'online')
-                _buildProfileInfoRow(
-                  Icons.visibility_outlined,
-                  'Last seen',
-                  _formatLastSeen(_partnerLastSeen!),
-                  scale,
-                ),
-              if (user.isAdmin || user.isAdminUser)
-                _buildProfileInfoRow(
-                  Icons.shield_outlined,
-                  'Role',
-                  'Admin',
-                  scale,
-                ),
-              SizedBox(height: 16 * scale),
-              // Action buttons
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _showCallSetupModal(CallType.audio);
-                      },
-                      icon: Icon(Icons.call, size: 18 * scale),
-                      label: Text(
-                        'Call',
-                        style: TextStyle(fontSize: 14 * scale),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF4CAF50),
-                        side: const BorderSide(color: Color(0xFF4CAF50)),
-                        padding: EdgeInsets.symmetric(vertical: 12 * scale),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 12 * scale),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _showCallSetupModal(CallType.video);
-                      },
-                      icon: Icon(Icons.videocam, size: 18 * scale),
-                      label: Text(
-                        'Video',
-                        style: TextStyle(fontSize: 14 * scale),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF3B82F6),
-                        side: const BorderSide(color: Color(0xFF3B82F6)),
-                        padding: EdgeInsets.symmetric(vertical: 12 * scale),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: MediaQuery.of(context).viewPadding.bottom + 8),
-            ],
+                SizedBox(height: MediaQuery.of(context).viewPadding.bottom + 8),
+              ],
+            ),
           ),
         );
       },
@@ -4769,6 +4926,7 @@ class _ChatScreenState extends State<ChatScreen>
   void _showEmojiPickerModal(BuildContext context) {
     final currentKeyboardInset = _effectiveKeyboardInset(context);
     final stablePanelHeight = _emojiPanelHeight(currentKeyboardInset);
+    _saveCurrentInputSelection();
 
     if (_showEmojiPicker) {
       // Closing emoji picker â†’ bring keyboard back
@@ -4777,13 +4935,17 @@ class _ChatScreenState extends State<ChatScreen>
         _showEmojiPicker = false;
       });
       _inputFocusNode.requestFocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _restoreSavedInputSelection();
+      });
     } else {
-      // Opening emoji picker â†’ dismiss keyboard first
+      // Opening emoji picker â†’ hide keyboard but keep input focus/caret
       _startInputModeLock(stablePanelHeight);
-      _inputFocusNode.unfocus();
       setState(() {
         _showEmojiPicker = true;
       });
+      unawaited(_hideSystemKeyboardPreservingFocus());
     }
   }
 
@@ -5801,8 +5963,11 @@ class _ChatScreenState extends State<ChatScreen>
                   onTap: () {
                     // Insert emoji at cursor position
                     final text = _messageController.text;
-                    final selection = _messageController.selection;
-                    final cursorPos = selection.baseOffset >= 0
+                    final selection = _messageController.selection.isValid
+                        ? _messageController.selection
+                        : _savedInputSelection;
+                    final cursorPos =
+                        selection != null && selection.baseOffset >= 0
                         ? selection.baseOffset
                         : text.length;
 
@@ -5812,9 +5977,11 @@ class _ChatScreenState extends State<ChatScreen>
                         text.substring(cursorPos);
 
                     _messageController.text = newText;
-                    _messageController.selection = TextSelection.collapsed(
+                    final newSelection = TextSelection.collapsed(
                       offset: cursorPos + emojis[index].length,
                     );
+                    _messageController.selection = newSelection;
+                    _savedInputSelection = newSelection;
 
                     // Trigger text changed and rebuild UI
                     _onTextChanged(newText);
@@ -6148,11 +6315,18 @@ class _ChatScreenState extends State<ChatScreen>
         _isSwitchingInputMode && _lockedInputPanelHeight > 0
         ? _lockedInputPanelHeight
         : (_showEmojiPicker ? emojiPanelHeight : keyboardInset);
-    final composerInset = _showEmojiPicker ? 0.0 : stablePanelHeight;
+    final actionPanelInset = (_isActionsPanelOpen && _actionsPanelFromKeyboard)
+      ? _actionsPanelInset
+      : 0.0;
+    final composerInset = _showEmojiPicker
+      ? 0.0
+      : math.max(stablePanelHeight, actionPanelInset);
     return Scaffold(
       resizeToAvoidBottomInset: false,
       backgroundColor: const Color(0xFF2C2C2C),
-      appBar: AppBar(
+      appBar: _taskActionModalMessage != null
+          ? _buildBubbleSelectionAppBar(scale)
+          : AppBar(
         backgroundColor: _headerColor,
         elevation: 0,
         leading: IconButton(
@@ -6319,10 +6493,8 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       body: GestureDetector(
         onTap: () {
-          if (_selectedTaskActionMessageId != null) {
-            setState(() {
-              _selectedTaskActionMessageId = null;
-            });
+          if (_taskActionModalMessage != null) {
+            setState(() { _taskActionModalMessage = null; });
           }
         },
         behavior: HitTestBehavior.translucent,
@@ -6558,8 +6730,8 @@ class _ChatScreenState extends State<ChatScreen>
                         padding: EdgeInsets.only(
                           left: 12 * scale,
                           right: 12 * scale,
-                          top: 0,
-                          bottom: 12 + composerInset,
+                          top: 8,
+                          bottom: 8 + composerInset,
                         ),
                         decoration: BoxDecoration(
                           color: _headerColor,
@@ -6585,33 +6757,46 @@ class _ChatScreenState extends State<ChatScreen>
                                   fontFamily: 'Roboto',
                                   height: 1.12,
                                 );
-
-                                final estimatedTextMaxWidth = math.max(
-                                  120.0,
-                                  (MediaQuery.of(context).size.width * 0.66) -
-                                      (84 * scale),
-                                );
-
-                                final isComposerExpanded = _isComposerMultiline(
-                                  value.text,
-                                  messageTextStyle,
-                                  estimatedTextMaxWidth,
-                                );
+                                final hasDraftText =
+                                    value.text.trim().isNotEmpty;
 
                                 return RepaintBoundary(
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        isComposerExpanded
-                                        ? CrossAxisAlignment.end
-                                        : CrossAxisAlignment.center,
-                                    children: [
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final trailingIconCount =
+                                          hasDraftText ? 1 : 2;
+                                      final iconSlotWidth = 40.0 * scale;
+                                      final sendButtonReserve = 88.0 * scale;
+                                      final estimatedTextMaxWidth = math.max(
+                                        120.0,
+                                        constraints.maxWidth -
+                                            sendButtonReserve -
+                                            iconSlotWidth -
+                                            (trailingIconCount *
+                                                iconSlotWidth) -
+                                            (28.0 * scale),
+                                      );
+
+                                      final isComposerExpanded =
+                                          _isComposerMultiline(
+                                            value.text,
+                                            messageTextStyle,
+                                            estimatedTextMaxWidth,
+                                          );
+
+                                      return Row(
+                                        crossAxisAlignment:
+                                            isComposerExpanded
+                                            ? CrossAxisAlignment.end
+                                            : CrossAxisAlignment.center,
+                                        children: [
                                       // Text input field with embedded controls
                                       Expanded(
                                         child: Container(
                                           decoration: BoxDecoration(
                                             color: const Color(0xFF4D4D4D),
                                             borderRadius: BorderRadius.circular(
-                                              12,
+                                              24,
                                             ),
                                           ),
                                           child: Row(
@@ -6626,24 +6811,19 @@ class _ChatScreenState extends State<ChatScreen>
                                                   bottom:
                                                       isComposerExpanded ? 10 : 0,
                                                 ),
-                                                child: IconButton(
+                                                child: _buildComposerIconButton(
                                                   onPressed: () =>
                                                       _showEmojiPickerModal(
                                                         context,
                                                       ),
-                                                  icon: Icon(
-                                                    _showEmojiPicker
-                                                        ? Icons.keyboard_outlined
-                                                        : Icons
-                                                              .sentiment_satisfied_alt_outlined,
-                                                    color: Colors.white70,
-                                                    size: 24 * scale,
-                                                  ),
+                                                  icon: _showEmojiPicker
+                                                      ? Icons.keyboard_outlined
+                                                      : Icons
+                                                            .sentiment_satisfied_alt_outlined,
+                                                  iconSize: 24 * scale,
                                                   padding: EdgeInsets.all(
                                                     6 * scale,
                                                   ),
-                                                  constraints:
-                                                      const BoxConstraints(),
                                                   tooltip: _showEmojiPicker
                                                       ? 'Keyboard'
                                                       : 'Emoji',
@@ -6687,9 +6867,11 @@ class _ChatScreenState extends State<ChatScreen>
                                                           _compactSelectionControls,
                                                       cursorColor:
                                                           sendButtonColor,
+                                                        cursorHeight: 26 * scale,
+                                                        cursorWidth: 2.6,
                                                       scrollPadding:
                                                           EdgeInsets.only(
-                                                            bottom: 140 * scale,
+                                                              bottom: 220 * scale,
                                                           ),
                                                       style: TextStyle(
                                                         color:
@@ -6725,7 +6907,7 @@ class _ChatScreenState extends State<ChatScreen>
                                                         isDense: true,
                                                       ),
                                                       onChanged: _onTextChanged,
-                                                      textAlign: TextAlign.justify,
+                                                      textAlign: TextAlign.start,
                                                       minLines: 1,
                                                       maxLines: 6,
                                                       textInputAction:
@@ -6757,6 +6939,25 @@ class _ChatScreenState extends State<ChatScreen>
                                                   ),
                                                 ),
                                               ),
+                                              if (!hasDraftText)
+                                                Padding(
+                                                  padding: EdgeInsets.only(
+                                                    bottom:
+                                                        isComposerExpanded
+                                                            ? 10
+                                                            : 0,
+                                                  ),
+                                                  child: _buildComposerIconButton(
+                                                    onPressed: _takePhoto,
+                                                    icon:
+                                                        Icons.camera_alt_outlined,
+                                                    iconSize: 24 * scale,
+                                                    padding: EdgeInsets.all(
+                                                      6 * scale,
+                                                    ),
+                                                    tooltip: 'Camera',
+                                                  ),
+                                                ),
                                             ],
                                           ),
                                         ),
@@ -6772,6 +6973,8 @@ class _ChatScreenState extends State<ChatScreen>
                                           style: ElevatedButton.styleFrom(
                                             backgroundColor: sendButtonColor,
                                             foregroundColor: Colors.white,
+                                            overlayColor: Colors.white
+                                                .withValues(alpha: 0.22),
                                             padding: EdgeInsets.symmetric(
                                               horizontal: 14 * scale,
                                               vertical: 10 * scale,
@@ -6781,7 +6984,7 @@ class _ChatScreenState extends State<ChatScreen>
                                                 .shrinkWrap,
                                             shape: RoundedRectangleBorder(
                                               borderRadius:
-                                                  BorderRadius.circular(8),
+                                                  BorderRadius.circular(20),
                                             ),
                                           ),
                                           child: Text(
@@ -6794,6 +6997,8 @@ class _ChatScreenState extends State<ChatScreen>
                                         ),
                                       ),
                                     ],
+                                      );
+                                    },
                                   ),
                                 );
                               },
@@ -6809,6 +7014,7 @@ class _ChatScreenState extends State<ChatScreen>
                 ), // end _bottomBarKey Column
               ],
             ),
+            if (_isActionsPanelOpen) _buildActionsPanelOverlay(context),
           ],
         ),
       ),
@@ -6871,19 +7077,27 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _toggleTaskActionForMessage(Message message) {
     if (!_canQuickToggleTaskAction(message)) {
-      if (_selectedTaskActionMessageId != null) {
-        setState(() {
-          _selectedTaskActionMessageId = null;
-        });
+      if (_taskActionModalMessage != null) {
+        setState(() { _taskActionModalMessage = null; });
       }
       return;
     }
 
     setState(() {
-      _selectedTaskActionMessageId = _selectedTaskActionMessageId == message.id
-          ? null
-          : message.id;
+      _taskActionModalMessage =
+          _taskActionModalMessage?.id == message.id ? null : message;
+      // Trigger a brief row flash only when selecting (not deselecting)
+      if (_taskActionModalMessage?.id == message.id) {
+        _bubbleFlashId = message.id;
+      }
     });
+
+    // Auto-clear the flash after 350 ms
+    if (_taskActionModalMessage?.id == message.id) {
+      Future.delayed(const Duration(milliseconds: 350), () {
+        if (mounted) setState(() { _bubbleFlashId = null; });
+      });
+    }
   }
 
   Widget _buildSwipeableMessage(
@@ -7099,7 +7313,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Optimistically update the message locally
     setState(() {
-      _selectedTaskActionMessageId = null;
+      _taskActionModalMessage = null;
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index != -1) {
         _messages[index] = _copyMessageWithTaskState(
@@ -7127,7 +7341,7 @@ class _ChatScreenState extends State<ChatScreen>
     _socketService.unmarkTask(message.id);
 
     setState(() {
-      _selectedTaskActionMessageId = null;
+      _taskActionModalMessage = null;
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index != -1) {
         final currentMessage = _messages[index];
@@ -7166,7 +7380,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Optimistically update before the API response arrives.
     setState(() {
-      _selectedTaskActionMessageId = null;
+      _taskActionModalMessage = null;
       _messages[initialIndex] = _copyMessageWithExcalidrawState(
         originalMessage,
         isExcalidrawLink: hasExcalidrawUrl,
@@ -9546,6 +9760,8 @@ class _ChatScreenState extends State<ChatScreen>
         ? taskAccentColor
         : (isPinnedExcalidraw ? excalidrawAccentColor : null);
 
+    final isSelected = _bubbleFlashId == message.id;
+
     // Build the main bubble widget (wrapped with tap handlers)
     final bubbleWidget = GestureDetector(
       onTap: () => _toggleTaskActionForMessage(message),
@@ -9583,91 +9799,7 @@ class _ChatScreenState extends State<ChatScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_selectedTaskActionMessageId == message.id &&
-                _canQuickToggleTaskAction(message))
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                  12 * scale,
-                  10 * scale,
-                  12 * scale,
-                  2,
-                ),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () {
-                        if (message.isTask) {
-                          _unmarkMessageTask(message);
-                        } else {
-                          _addMessageToTask(message);
-                        }
-                      },
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: BorderSide(
-                          color: const Color(0xFFF59E0B).withValues(alpha: 0.8),
-                        ),
-                        backgroundColor: const Color(
-                          0xFFF59E0B,
-                        ).withValues(alpha: 0.16),
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 12 * scale,
-                          vertical: 7 * scale,
-                        ),
-                        minimumSize: const Size(0, 32),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        visualDensity: VisualDensity.compact,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        textStyle: TextStyle(
-                          fontSize: 13 * scale,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      child: Text(
-                        message.isTask ? 'Unmark task' : 'Mark as task',
-                      ),
-                    ),
-                    if (_canQuickToggleExcalidrawPin(message))
-                      OutlinedButton(
-                        onPressed: () => _toggleExcalidrawPin(message),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          side: BorderSide(
-                            color: const Color(
-                              0xFFB794F6,
-                            ).withValues(alpha: 0.8),
-                          ),
-                          backgroundColor: const Color(
-                            0xFFB794F6,
-                          ).withValues(alpha: 0.14),
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 12 * scale,
-                            vertical: 7 * scale,
-                          ),
-                          minimumSize: const Size(0, 32),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          visualDensity: VisualDensity.compact,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          textStyle: TextStyle(
-                            fontSize: 13 * scale,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        child: Text(
-                          message.excalidrawPinnedAt != null
-                              ? 'Unpin Excalidraw'
-                              : 'Pin Excalidraw',
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+
 
             if (isPinnedExcalidraw)
               Padding(
@@ -9991,7 +10123,13 @@ class _ChatScreenState extends State<ChatScreen>
     );
 
     // Wrap bubble with Column for reactions below (Column keeps pills in hit-test bounds)
-    return Align(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      curve: Curves.easeOut,
+      color: isSelected
+          ? Colors.white.withValues(alpha: 0.07)
+          : Colors.transparent,
+      child: Align(
       alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Column(
         crossAxisAlignment: isSentByMe
@@ -10054,6 +10192,7 @@ class _ChatScreenState extends State<ChatScreen>
               child: _buildReactionPills(message.id),
             ),
         ],
+      ),
       ),
     );
   }
@@ -10207,6 +10346,23 @@ class _CompactTextSelectionControls extends MaterialTextSelectionControls {
   _CompactTextSelectionControls();
 
   static const double _handleScale = 0.84;
+
+  @override
+  Widget buildHandle(
+    BuildContext context,
+    TextSelectionHandleType type,
+    double textLineHeight, [
+    VoidCallback? onTap,
+  ]) {
+    final handle = super.buildHandle(context, type, textLineHeight, onTap);
+    return ColorFiltered(
+      colorFilter: const ColorFilter.mode(
+        Color(0xFF6D28D9),
+        BlendMode.srcIn,
+      ),
+      child: handle,
+    );
+  }
 
   @override
   Size getHandleSize(double textLineHeight) {
