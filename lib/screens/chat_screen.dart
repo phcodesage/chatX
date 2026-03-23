@@ -48,12 +48,13 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final SocketService _socketService = SocketService();
   final TextEditingController _messageController = TextEditingController();
   final TextSelectionControls _compactSelectionControls =
       _CompactTextSelectionControls();
   final ScrollController _scrollController = ScrollController();
+  final ScrollController _inputScrollController = ScrollController();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FocusNode _inputFocusNode = FocusNode();
   final GlobalKey _bottomBarKey = GlobalKey();
@@ -64,6 +65,12 @@ class _ChatScreenState extends State<ChatScreen>
   bool _isLoadingMessages = false; // Guard against concurrent message loads
   bool _isTyping = false;
   bool _isKeyboardVisible = false;
+  bool _restoreInputFocusOnResume = false;
+  bool _isRestoringInputFocus = false;
+  bool _isSwitchingInputMode = false;
+  double _lockedInputPanelHeight = 0;
+  Timer? _inputModeSwitchTimer;
+  double _lastKnownKeyboardInset = 0;
   bool _otherUserTyping = false;
   String _typingPreview = '';
   int? _currentUserId;
@@ -163,6 +170,7 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _taskBadgeAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
@@ -193,6 +201,77 @@ class _ChatScreenState extends State<ChatScreen>
     // Periodically refresh "last seen" relative label in header (like the web app does)
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted && _getEffectivePartnerStatus() != 'online') setState(() {});
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _restoreInputFocusOnResume =
+          _inputFocusNode.hasFocus || _isKeyboardVisible;
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed && _restoreInputFocusOnResume) {
+      unawaited(_restoreInputFocusAfterResume());
+    }
+  }
+
+  Future<void> _restoreInputFocusAfterResume() async {
+    if (!mounted || !_restoreInputFocusOnResume) return;
+    _isRestoringInputFocus = true;
+
+    // Android can drop IME during app-switch; retry briefly after resume.
+    for (final delay in const [0, 90, 200]) {
+      if (delay > 0) {
+        await Future<void>.delayed(Duration(milliseconds: delay));
+      }
+      if (!mounted || !_restoreInputFocusOnResume) return;
+      _inputFocusNode.requestFocus();
+      try {
+        await SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+      } catch (_) {
+        // Ignore platform channel timing issues during lifecycle transitions.
+      }
+    }
+
+    _restoreInputFocusOnResume = false;
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    _isRestoringInputFocus = false;
+  }
+
+  double _effectiveKeyboardInset(BuildContext context) {
+    final currentInset = MediaQuery.of(context).viewInsets.bottom;
+    if (currentInset > 0) {
+      _lastKnownKeyboardInset = currentInset;
+      return currentInset;
+    }
+    if ((_restoreInputFocusOnResume || _isRestoringInputFocus) &&
+        _lastKnownKeyboardInset > 0) {
+      return _lastKnownKeyboardInset;
+    }
+    return currentInset;
+  }
+
+  double _emojiPanelHeight(double keyboardInset) {
+    final target = keyboardInset > 0 ? keyboardInset : _lastKnownKeyboardInset;
+    return target <= 0 ? 300 : target.clamp(260, 420).toDouble();
+  }
+
+  void _startInputModeLock(double panelHeight) {
+    _inputModeSwitchTimer?.cancel();
+    setState(() {
+      _isSwitchingInputMode = true;
+      _lockedInputPanelHeight = panelHeight;
+    });
+    _inputModeSwitchTimer = Timer(const Duration(milliseconds: 260), () {
+      if (!mounted) return;
+      setState(() {
+        _isSwitchingInputMode = false;
+        _lockedInputPanelHeight = 0;
+      });
     });
   }
 
@@ -3011,10 +3090,6 @@ class _ChatScreenState extends State<ChatScreen>
                   child: sendToManyButton,
                 ),
               ),
-              _buildActionsPlusButton(
-                iconSize: 18,
-                padding: const EdgeInsets.all(4),
-              ),
               Expanded(
                 child: Align(
                   alignment: Alignment.centerRight,
@@ -3057,6 +3132,23 @@ class _ChatScreenState extends State<ChatScreen>
         _stopTyping();
       }
     });
+  }
+
+  bool _isComposerMultiline(
+    String text,
+    TextStyle style,
+    double maxWidth,
+  ) {
+    if (text.trim().isEmpty) return false;
+
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      maxLines: 6,
+    );
+
+    painter.layout(maxWidth: math.max(1, maxWidth));
+    return painter.computeLineMetrics().length > 1;
   }
 
   void _sendTypingUpdate(String text) {
@@ -3610,14 +3702,12 @@ class _ChatScreenState extends State<ChatScreen>
                                   color: Colors.white.withValues(alpha: 0.1),
                                 ),
                               ),
-                              child: Flexible(
-                                child: SingleChildScrollView(
-                                  padding: const EdgeInsets.all(12),
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: actionButtons,
-                                  ),
+                              child: SingleChildScrollView(
+                                padding: const EdgeInsets.all(12),
+                                child: Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: actionButtons,
                                 ),
                               ),
                             ),
@@ -4677,14 +4767,19 @@ class _ChatScreenState extends State<ChatScreen>
   /// Toggle emoji picker visibility (inline below input)
   /// Behaves like FB Messenger: emoji picker replaces the keyboard.
   void _showEmojiPickerModal(BuildContext context) {
+    final currentKeyboardInset = _effectiveKeyboardInset(context);
+    final stablePanelHeight = _emojiPanelHeight(currentKeyboardInset);
+
     if (_showEmojiPicker) {
       // Closing emoji picker â†’ bring keyboard back
+      _startInputModeLock(stablePanelHeight);
       setState(() {
         _showEmojiPicker = false;
       });
       _inputFocusNode.requestFocus();
     } else {
       // Opening emoji picker â†’ dismiss keyboard first
+      _startInputModeLock(stablePanelHeight);
       _inputFocusNode.unfocus();
       setState(() {
         _showEmojiPicker = true;
@@ -5641,13 +5736,13 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Build inline emoji picker widget with category tabs
-  Widget _buildInlineEmojiPicker() {
+  Widget _buildInlineEmojiPicker(double panelHeight) {
     final category = _emojiCategories[_emojiCategoryIndex];
     final emojis = _normalizedEmojiList(category['emojis'] as List<String>);
 
     return Container(
-      height: 260,
-      margin: const EdgeInsets.only(top: 8),
+      height: panelHeight,
+      margin: EdgeInsets.zero,
       decoration: BoxDecoration(
         color: const Color(0xFF3D3D3D),
         borderRadius: BorderRadius.circular(12),
@@ -6011,10 +6106,13 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _inputModeSwitchTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _taskBadgeAnimController.dispose();
     _taskModalVersion.dispose();
     _messageController.dispose();
     _scrollController.dispose();
+    _inputScrollController.dispose();
     _audioPlayer.dispose();
     for (final p in _activeDoorbellPlayers) {
       p.dispose();
@@ -6044,6 +6142,13 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   Widget build(BuildContext context) {
     final scale = _uiScale(context);
+    final keyboardInset = _effectiveKeyboardInset(context);
+    final emojiPanelHeight = _emojiPanelHeight(keyboardInset);
+    final stablePanelHeight =
+        _isSwitchingInputMode && _lockedInputPanelHeight > 0
+        ? _lockedInputPanelHeight
+        : (_showEmojiPicker ? emojiPanelHeight : keyboardInset);
+    final composerInset = _showEmojiPicker ? 0.0 : stablePanelHeight;
     return Scaffold(
       resizeToAvoidBottomInset: false,
       backgroundColor: const Color(0xFF2C2C2C),
@@ -6214,7 +6319,6 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       body: GestureDetector(
         onTap: () {
-          FocusScope.of(context).unfocus();
           if (_selectedTaskActionMessageId != null) {
             setState(() {
               _selectedTaskActionMessageId = null;
@@ -6455,7 +6559,7 @@ class _ChatScreenState extends State<ChatScreen>
                           left: 12 * scale,
                           right: 12 * scale,
                           top: 0,
-                          bottom: 12 + MediaQuery.of(context).viewInsets.bottom,
+                          bottom: 12 + composerInset,
                         ),
                         decoration: BoxDecoration(
                           color: _headerColor,
@@ -6474,15 +6578,32 @@ class _ChatScreenState extends State<ChatScreen>
                             ValueListenableBuilder<TextEditingValue>(
                               valueListenable: _messageController,
                               builder: (context, value, _) {
-                                final hasDraftText = value.text
-                                    .trim()
-                                    .isNotEmpty;
                                 const sendButtonColor = Color(0xFF6D28D9);
+                                final messageTextStyle = TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18 * scale,
+                                  fontFamily: 'Roboto',
+                                  height: 1.12,
+                                );
+
+                                final estimatedTextMaxWidth = math.max(
+                                  120.0,
+                                  (MediaQuery.of(context).size.width * 0.66) -
+                                      (84 * scale),
+                                );
+
+                                final isComposerExpanded = _isComposerMultiline(
+                                  value.text,
+                                  messageTextStyle,
+                                  estimatedTextMaxWidth,
+                                );
 
                                 return RepaintBoundary(
                                   child: Row(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment.center,
+                                        isComposerExpanded
+                                        ? CrossAxisAlignment.end
+                                        : CrossAxisAlignment.center,
                                     children: [
                                       // Text input field with embedded controls
                                       Expanded(
@@ -6494,29 +6615,39 @@ class _ChatScreenState extends State<ChatScreen>
                                             ),
                                           ),
                                           child: Row(
+                                            crossAxisAlignment:
+                                                isComposerExpanded
+                                                ? CrossAxisAlignment.end
+                                                : CrossAxisAlignment.center,
                                             children: [
                                               // Emoji picker button (inside input) - toggles between emoji/keyboard icon
-                                              IconButton(
-                                                onPressed: () =>
-                                                    _showEmojiPickerModal(
-                                                      context,
-                                                    ),
-                                                icon: Icon(
-                                                  _showEmojiPicker
-                                                      ? Icons.keyboard_outlined
-                                                      : Icons
-                                                            .sentiment_satisfied_alt_outlined,
-                                                  color: Colors.white70,
-                                                  size: 18 * scale,
+                                              Padding(
+                                                padding: EdgeInsets.only(
+                                                  bottom:
+                                                      isComposerExpanded ? 10 : 0,
                                                 ),
-                                                padding: EdgeInsets.all(
-                                                  4 * scale,
+                                                child: IconButton(
+                                                  onPressed: () =>
+                                                      _showEmojiPickerModal(
+                                                        context,
+                                                      ),
+                                                  icon: Icon(
+                                                    _showEmojiPicker
+                                                        ? Icons.keyboard_outlined
+                                                        : Icons
+                                                              .sentiment_satisfied_alt_outlined,
+                                                    color: Colors.white70,
+                                                    size: 24 * scale,
+                                                  ),
+                                                  padding: EdgeInsets.all(
+                                                    6 * scale,
+                                                  ),
+                                                  constraints:
+                                                      const BoxConstraints(),
+                                                  tooltip: _showEmojiPicker
+                                                      ? 'Keyboard'
+                                                      : 'Emoji',
                                                 ),
-                                                constraints:
-                                                    const BoxConstraints(),
-                                                tooltip: _showEmojiPicker
-                                                    ? 'Keyboard'
-                                                    : 'Emoji',
                                               ),
                                               // Text input
                                               Expanded(
@@ -6533,84 +6664,117 @@ class _ChatScreenState extends State<ChatScreen>
                                                           ),
                                                         ),
                                                   ),
-                                                  child: TextField(
-                                                    key: const ValueKey(
-                                                      'message_input',
-                                                    ),
-                                                    controller:
-                                                        _messageController,
-                                                    focusNode: _inputFocusNode,
-                                                    selectionControls:
-                                                        _compactSelectionControls,
-                                                    cursorColor:
-                                                        sendButtonColor,
-                                                    scrollPadding:
-                                                        EdgeInsets.only(
-                                                          bottom: 140 * scale,
-                                                        ),
-                                                    style: TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 17 * scale,
-                                                    ),
-                                                    decoration: InputDecoration(
-                                                      hintText:
-                                                          'Type a message...',
-                                                      hintStyle: TextStyle(
-                                                        color: Colors.grey[600],
-                                                        fontSize: 15 * scale,
+                                                  child: Scrollbar(
+                                                    controller: _inputScrollController,
+                                                    thumbVisibility: false,
+                                                    thickness: 3,
+                                                    radius: const Radius.circular(2),
+                                                    child: TextField(
+                                                      key: const ValueKey(
+                                                        'message_input',
                                                       ),
-                                                      border: InputBorder.none,
-                                                      filled: false,
-                                                      contentPadding:
-                                                          const EdgeInsets.only(
-                                                            left: 0,
-                                                            right: 4,
-                                                            top: 10,
-                                                            bottom: 10,
+                                                      controller:
+                                                          _messageController,
+                                                      focusNode: _inputFocusNode,
+                                                      scrollController:
+                                                          _inputScrollController,
+                                                      onTapOutside: (_) {
+                                                        // Keep input focused while scrolling (WhatsApp-like).
+                                                        // Intentional unfocus still happens via _keepInputUnfocused()
+                                                        // called from action sheets, emoji picker, voice recording, etc.
+                                                      },
+                                                      selectionControls:
+                                                          _compactSelectionControls,
+                                                      cursorColor:
+                                                          sendButtonColor,
+                                                      scrollPadding:
+                                                          EdgeInsets.only(
+                                                            bottom: 140 * scale,
                                                           ),
-                                                      isDense: true,
+                                                      style: TextStyle(
+                                                        color:
+                                                          messageTextStyle.color,
+                                                        fontSize:
+                                                          messageTextStyle
+                                                            .fontSize,
+                                                        fontFamily:
+                                                          messageTextStyle
+                                                            .fontFamily,
+                                                        height:
+                                                          messageTextStyle
+                                                            .height,
+                                                      ),
+                                                      decoration: InputDecoration(
+                                                        hintText:
+                                                            'Type a message...',
+                                                        hintStyle: TextStyle(
+                                                          color: Colors.grey[600],
+                                                          fontSize: 17 * scale,
+                                                          fontFamily: 'Roboto',
+                                                          height: 1.12,
+                                                        ),
+                                                        border: InputBorder.none,
+                                                        filled: false,
+                                                        contentPadding:
+                                                            const EdgeInsets.only(
+                                                              left: 0,
+                                                              right: 4,
+                                                              top: 10,
+                                                              bottom: 10,
+                                                            ),
+                                                        isDense: true,
+                                                      ),
+                                                      onChanged: _onTextChanged,
+                                                      textAlign: TextAlign.justify,
+                                                      minLines: 1,
+                                                      maxLines: 6,
+                                                      textInputAction:
+                                                          TextInputAction.newline,
+                                                      keyboardType:
+                                                          TextInputType.multiline,
+                                                      textCapitalization:
+                                                          TextCapitalization
+                                                              .sentences,
+                                                      enableInteractiveSelection:
+                                                          true,
+                                                      autocorrect: true,
+                                                      enableSuggestions: true,
+                                                      stylusHandwritingEnabled:
+                                                          false,
                                                     ),
-                                                    onChanged: _onTextChanged,
-                                                    minLines: 1,
-                                                    maxLines: 5,
-                                                    textInputAction:
-                                                        TextInputAction.newline,
-                                                    keyboardType:
-                                                        TextInputType.multiline,
-                                                    textCapitalization:
-                                                        TextCapitalization
-                                                            .sentences,
-                                                    enableInteractiveSelection:
-                                                        true,
-                                                    autocorrect: true,
-                                                    enableSuggestions: true,
-                                                    stylusHandwritingEnabled:
-                                                        false,
                                                   ),
                                                 ),
                                               ),
-                                              if (!hasDraftText)
-                                                _buildActionsPlusButton(
-                                                  iconSize: 18 * scale,
+                                              Padding(
+                                                padding: EdgeInsets.only(
+                                                  bottom:
+                                                      isComposerExpanded ? 10 : 0,
+                                                ),
+                                                child: _buildActionsPlusButton(
+                                                  iconSize: 24 * scale,
                                                   padding: EdgeInsets.all(
-                                                    4 * scale,
+                                                    6 * scale,
                                                   ),
                                                 ),
+                                              ),
                                             ],
                                           ),
                                         ),
                                       ),
                                       // Send button â€” always visible, vertically centred
                                       Container(
-                                        margin: const EdgeInsets.only(left: 6),
+                                        margin: EdgeInsets.only(
+                                          left: 6,
+                                          bottom: isComposerExpanded ? 10 : 0,
+                                        ),
                                         child: ElevatedButton(
                                           onPressed: _sendMessage,
                                           style: ElevatedButton.styleFrom(
                                             backgroundColor: sendButtonColor,
                                             foregroundColor: Colors.white,
                                             padding: EdgeInsets.symmetric(
-                                              horizontal: 12 * scale,
-                                              vertical: 8 * scale,
+                                              horizontal: 14 * scale,
+                                              vertical: 10 * scale,
                                             ),
                                             minimumSize: const Size(0, 0),
                                             tapTargetSize: MaterialTapTargetSize
@@ -6623,7 +6787,8 @@ class _ChatScreenState extends State<ChatScreen>
                                           child: Text(
                                             'Send',
                                             style: TextStyle(
-                                              fontSize: 12 * scale,
+                                              fontSize: 13.5 * scale,
+                                              fontWeight: FontWeight.w600,
                                             ),
                                           ),
                                         ),
@@ -6634,7 +6799,8 @@ class _ChatScreenState extends State<ChatScreen>
                               },
                             ),
                             // Inline emoji picker (shown when active)
-                            if (_showEmojiPicker) _buildInlineEmojiPicker(),
+                            if (_showEmojiPicker)
+                              _buildInlineEmojiPicker(stablePanelHeight),
                           ],
                         ),
                       ),

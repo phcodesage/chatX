@@ -171,6 +171,8 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
               children: [
                 TextField(
                   controller: _groupNameController,
+                  cursorColor: Colors.white,
+                  showCursor: true,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     hintText: 'Group name',
@@ -190,6 +192,8 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _descriptionController,
+                  cursorColor: Colors.white,
+                  showCursor: true,
                   style: const TextStyle(color: Colors.white),
                   maxLines: 2,
                   decoration: InputDecoration(
@@ -231,6 +235,8 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
             padding: const EdgeInsets.all(16),
             child: TextField(
               controller: _searchController,
+              cursorColor: Colors.white,
+              showCursor: true,
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
                 hintText: 'Search users...',
