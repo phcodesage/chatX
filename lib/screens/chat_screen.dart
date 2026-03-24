@@ -151,6 +151,9 @@ class _ChatScreenState extends State<ChatScreen>
   Message? _taskActionModalMessage;
   int? _bubbleFlashId; // transient flash highlight, auto-clears after short delay
 
+  // Task filter: 'pending' or 'completed'
+  String _taskFilter = 'pending';
+
   // Message IDs loaded from local cache/server history.
   // For these historical records, UI should always display status as "sent".
   final Set<int> _databaseLoadedMessageIds = {};
@@ -8357,16 +8360,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _showTasksModal() {
-    final mediaQuery = MediaQuery.of(context);
-    final isSmallScreen = mediaQuery.size.width < 600;
-
-    if (isSmallScreen) {
-      // Mobile: Bottom sheet
-      _showTasksBottomSheet();
-    } else {
-      // Tablet/Web: Centered modal (existing behavior)
-      _showTasksCenteredModal();
-    }
+    _showTasksCenteredModal();
   }
 
   void _showTasksBottomSheet() {
@@ -8374,8 +8368,12 @@ class _ChatScreenState extends State<ChatScreen>
       context: context,
       isScrollControlled: true,
       backgroundColor: const Color(0xFF1C1C1E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        side: BorderSide(
+          color: const Color(0xFFFBBF24).withValues(alpha: 0.65),
+          width: 1.2,
+        ),
       ),
       builder: (context) {
         return ValueListenableBuilder<int>(
@@ -8496,132 +8494,147 @@ class _ChatScreenState extends State<ChatScreen>
                               ),
                             ),
                           )
-                        : ListView(
-                            padding: const EdgeInsets.all(12),
-                            children: [
-                              // Pending Tasks Section
-                              if (pendingTasks.isNotEmpty) ...[
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(4, 8, 4, 12),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.circle_outlined,
-                                        color: Colors.grey[600],
-                                        size: 16,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'Pending',
-                                        style: TextStyle(
-                                          color: Colors.grey[300],
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          letterSpacing: 0.2,
+                        : StatefulBuilder(
+                            builder: (context, setState) {
+                              final displayTasks = _taskFilter == 'pending'
+                                  ? pendingTasks
+                                  : completedTasks;
+                              final otherText =
+                                  _taskFilter == 'pending' ? 'Completed' : 'Pending';
+
+                              return ListView(
+                                padding: const EdgeInsets.all(12),
+                                children: [
+                                  // Filter Header
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.fromLTRB(4, 8, 4, 12),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          _taskFilter == 'pending'
+                                              ? Icons.circle_outlined
+                                              : Icons.check_circle,
+                                          color: _taskFilter == 'pending'
+                                              ? Colors.grey[600]
+                                              : const Color(0xFF22C55E),
+                                          size: 16,
                                         ),
-                                      ),
-                                      const Spacer(),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.grey.withValues(alpha: 0.15),
-                                          borderRadius: BorderRadius.circular(999),
-                                        ),
-                                        child: Text(
-                                          '${pendingTasks.length}',
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          _taskFilter == 'pending'
+                                              ? 'Pending'
+                                              : 'Completed',
                                           style: TextStyle(
-                                            color: Colors.grey[400],
-                                            fontSize: 11,
+                                            color: Colors.grey[300],
+                                            fontSize: 13,
                                             fontWeight: FontWeight.w600,
+                                            letterSpacing: 0.2,
                                           ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                GridView.builder(
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  padding: const EdgeInsets.only(bottom: 16),
-                                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: _getCrossAxisCount(
-                                      MediaQuery.of(context).size.width,
-                                    ),
-                                    crossAxisSpacing: 10,
-                                    mainAxisSpacing: 10,
-                                    childAspectRatio: 1.3,
-                                  ),
-                                  itemCount: pendingTasks.length,
-                                  itemBuilder: (context, index) {
-                                    return _buildTaskCard(pendingTasks[index], false);
-                                  },
-                                ),
-                              ],
-                              // Completed Tasks Section
-                              if (completedTasks.isNotEmpty) ...[
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(4, 8, 4, 12),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.check_circle,
-                                        color: const Color(0xFF22C55E),
-                                        size: 16,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'Completed',
-                                        style: TextStyle(
-                                          color: Colors.grey[300],
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          letterSpacing: 0.2,
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF22C55E).withValues(alpha: 0.15),
-                                          borderRadius: BorderRadius.circular(999),
-                                        ),
-                                        child: Text(
-                                          '${completedTasks.length}',
-                                          style: const TextStyle(
-                                            color: Color(0xFF22C55E),
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
+                                        const Spacer(),
+                                        InkWell(
+                                          onTap: () {
+                                            setState(() {
+                                              _taskFilter =
+                                                  _taskFilter == 'pending'
+                                                      ? 'completed'
+                                                      : 'pending';
+                                            });
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white
+                                                  .withValues(alpha: 0.08),
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              border: Border.all(
+                                                color: Colors.white
+                                                    .withValues(alpha: 0.15),
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  _taskFilter == 'pending'
+                                                      ? Icons.check_circle
+                                                      : Icons.circle_outlined,
+                                                  color: _taskFilter == 'pending'
+                                                      ? const Color(0xFF22C55E)
+                                                      : Colors.grey[600],
+                                                  size: 14,
+                                                ),
+                                                const SizedBox(width: 6),
+                                                Text(
+                                                  otherText,
+                                                  style: TextStyle(
+                                                    color: Colors.grey[300],
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                GridView.builder(
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  padding: EdgeInsets.zero,
-                                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: _getCrossAxisCount(
-                                      MediaQuery.of(context).size.width,
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey
+                                                .withValues(alpha: 0.15),
+                                            borderRadius:
+                                                BorderRadius.circular(999),
+                                          ),
+                                          child: Text(
+                                            '${displayTasks.length}',
+                                            style: TextStyle(
+                                              color: Colors.grey[400],
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    crossAxisSpacing: 10,
-                                    mainAxisSpacing: 10,
-                                    childAspectRatio: 1.3,
                                   ),
-                                  itemCount: completedTasks.length,
-                                  itemBuilder: (context, index) {
-                                    return _buildTaskCard(completedTasks[index], true);
-                                  },
-                                ),
-                              ],
-                            ],
+                                  // Tasks Grid
+                                  GridView.builder(
+                                    shrinkWrap: true,
+                                    physics:
+                                        const NeverScrollableScrollPhysics(),
+                                    padding: EdgeInsets.zero,
+                                    gridDelegate:
+                                        SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount:
+                                              _getCrossAxisCount(
+                                            MediaQuery.of(context)
+                                                .size
+                                                .width,
+                                          ),
+                                          crossAxisSpacing: 10,
+                                          mainAxisSpacing: 10,
+                                          childAspectRatio: 1.3,
+                                        ),
+                                    itemCount: displayTasks.length,
+                                    itemBuilder: (context, index) {
+                                      final isCompleted =
+                                          _taskFilter == 'completed';
+                                      return _buildTaskCard(
+                                          displayTasks[index], isCompleted);
+                                    },
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                   ),
                 ],
@@ -8635,7 +8648,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _showTasksCenteredModal() {
     final mediaQuery = MediaQuery.of(context);
-    final topOffset = mediaQuery.padding.top + kToolbarHeight + 6;
+    final topOffset = mediaQuery.padding.top + kToolbarHeight + 4;
     final bottomOffset = 80.0;
     final availableHeight = mediaQuery.size.height - topOffset - bottomOffset;
     final maxDialogHeight = availableHeight > 200 ? availableHeight : 200.0;
@@ -8682,7 +8695,8 @@ class _ChatScreenState extends State<ChatScreen>
                       color: const Color(0xFF1A1A2B),
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.08),
+                        color: const Color(0xFFFBBF24).withValues(alpha: 0.65),
+                        width: 1.2,
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -8829,132 +8843,161 @@ class _ChatScreenState extends State<ChatScreen>
                                     ),
                                   ),
                                 )
-                              : ListView(
-                                  padding: const EdgeInsets.all(8),
-                                  children: [
-                                    // Pending Tasks Section
-                                    if (pendingTasks.isNotEmpty) ...[
-                                      Padding(
-                                        padding: const EdgeInsets.fromLTRB(4, 8, 4, 12),
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              Icons.circle_outlined,
-                                              color: Colors.grey[600],
-                                              size: 14,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              'Pending',
-                                              style: TextStyle(
-                                                color: Colors.grey[300],
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                                letterSpacing: 0.2,
+                              : StatefulBuilder(
+                                  builder: (context, setState) {
+                                    final displayTasks = _taskFilter == 'pending'
+                                        ? pendingTasks
+                                        : completedTasks;
+                                    final otherText = _taskFilter == 'pending'
+                                        ? 'Completed'
+                                        : 'Pending';
+
+                                    return ListView(
+                                      padding: const EdgeInsets.all(8),
+                                      children: [
+                                        // Filter Header
+                                        Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                              4, 8, 4, 12),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                _taskFilter == 'pending'
+                                                    ? Icons.circle_outlined
+                                                    : Icons.check_circle,
+                                                color: _taskFilter == 'pending'
+                                                    ? Colors.grey[600]
+                                                    : const Color(0xFF22C55E),
+                                                size: 14,
                                               ),
-                                            ),
-                                            const Spacer(),
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                horizontal: 7,
-                                                vertical: 2,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.grey.withValues(alpha: 0.15),
-                                                borderRadius: BorderRadius.circular(999),
-                                              ),
-                                              child: Text(
-                                                '${pendingTasks.length}',
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                _taskFilter == 'pending'
+                                                    ? 'Pending'
+                                                    : 'Completed',
                                                 style: TextStyle(
-                                                  color: Colors.grey[400],
-                                                  fontSize: 10,
+                                                  color: Colors.grey[300],
+                                                  fontSize: 12,
                                                   fontWeight: FontWeight.w600,
+                                                  letterSpacing: 0.2,
                                                 ),
                                               ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      GridView.builder(
-                                        shrinkWrap: true,
-                                        physics: const NeverScrollableScrollPhysics(),
-                                        padding: const EdgeInsets.only(bottom: 12),
-                                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                          crossAxisCount: _getCrossAxisCount(
-                                            MediaQuery.of(context).size.width,
-                                          ),
-                                          crossAxisSpacing: 8,
-                                          mainAxisSpacing: 8,
-                                          childAspectRatio: 1.3,
-                                        ),
-                                        itemCount: pendingTasks.length,
-                                        itemBuilder: (context, index) {
-                                          return _buildTaskCard(pendingTasks[index], false);
-                                        },
-                                      ),
-                                    ],
-                                    // Completed Tasks Section
-                                    if (completedTasks.isNotEmpty) ...[
-                                      Padding(
-                                        padding: const EdgeInsets.fromLTRB(4, 8, 4, 12),
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              Icons.check_circle,
-                                              color: const Color(0xFF22C55E),
-                                              size: 14,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              'Completed',
-                                              style: TextStyle(
-                                                color: Colors.grey[300],
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                                letterSpacing: 0.2,
-                                              ),
-                                            ),
-                                            const Spacer(),
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                horizontal: 7,
-                                                vertical: 2,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: const Color(0xFF22C55E).withValues(alpha: 0.15),
-                                                borderRadius: BorderRadius.circular(999),
-                                              ),
-                                              child: Text(
-                                                '${completedTasks.length}',
-                                                style: const TextStyle(
-                                                  color: Color(0xFF22C55E),
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.w600,
+                                              const Spacer(),
+                                              InkWell(
+                                                onTap: () {
+                                                  setState(() {
+                                                    _taskFilter =
+                                                        _taskFilter == 'pending'
+                                                            ? 'completed'
+                                                            : 'pending';
+                                                  });
+                                                },
+                                                child: Container(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                    horizontal: 10,
+                                                    vertical: 5,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.white
+                                                        .withValues(
+                                                            alpha: 0.08),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            999),
+                                                    border: Border.all(
+                                                      color: Colors.white
+                                                          .withValues(
+                                                              alpha: 0.15),
+                                                    ),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      Icon(
+                                                        _taskFilter == 'pending'
+                                                            ? Icons.check_circle
+                                                            : Icons
+                                                                .circle_outlined,
+                                                        color: _taskFilter ==
+                                                                'pending'
+                                                            ? const Color(
+                                                                0xFF22C55E)
+                                                            : Colors.grey[600],
+                                                        size: 12,
+                                                      ),
+                                                      const SizedBox(width: 5),
+                                                      Text(
+                                                        otherText,
+                                                        style: TextStyle(
+                                                          color: Colors.grey[300],
+                                                          fontSize: 10,
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
                                                 ),
                                               ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      GridView.builder(
-                                        shrinkWrap: true,
-                                        physics: const NeverScrollableScrollPhysics(),
-                                        padding: EdgeInsets.zero,
-                                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                          crossAxisCount: _getCrossAxisCount(
-                                            MediaQuery.of(context).size.width,
+                                              const SizedBox(width: 6),
+                                              Container(
+                                                padding: const EdgeInsets
+                                                    .symmetric(
+                                                  horizontal: 7,
+                                                  vertical: 2,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.grey
+                                                      .withValues(alpha: 0.15),
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          999),
+                                                ),
+                                                child: Text(
+                                                  '${displayTasks.length}',
+                                                  style: TextStyle(
+                                                    color: Colors.grey[400],
+                                                    fontSize: 10,
+                                                    fontWeight:
+                                                        FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
-                                          crossAxisSpacing: 8,
-                                          mainAxisSpacing: 8,
-                                          childAspectRatio: 1.3,
                                         ),
-                                        itemCount: completedTasks.length,
-                                        itemBuilder: (context, index) {
-                                          return _buildTaskCard(completedTasks[index], true);
-                                        },
-                                      ),
-                                    ],
-                                  ],
+                                        // Tasks Grid
+                                        GridView.builder(
+                                          shrinkWrap: true,
+                                          physics:
+                                              const NeverScrollableScrollPhysics(),
+                                          padding: EdgeInsets.zero,
+                                          gridDelegate:
+                                              SliverGridDelegateWithFixedCrossAxisCount(
+                                                crossAxisCount:
+                                                    _getCrossAxisCount(
+                                                  MediaQuery.of(context)
+                                                      .size
+                                                      .width,
+                                                ),
+                                                crossAxisSpacing: 8,
+                                                mainAxisSpacing: 8,
+                                                childAspectRatio: 1.3,
+                                              ),
+                                          itemCount: displayTasks.length,
+                                          itemBuilder: (context, index) {
+                                            final isCompleted =
+                                                _taskFilter == 'completed';
+                                            return _buildTaskCard(
+                                                displayTasks[index],
+                                                isCompleted);
+                                          },
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                         ),
                       ],
@@ -9008,17 +9051,44 @@ class _ChatScreenState extends State<ChatScreen>
                           }
                           _refreshMessages();
                         },
-                        child: Icon(
-                          isCompleted
-                              ? Icons.check_circle
-                              : Icons.circle_outlined,
-                          color: isCompleted
-                              ? const Color(0xFF22C55E)
-                              : Colors.grey[600],
-                          size: 18,
+                        borderRadius: BorderRadius.circular(999),
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: Center(
+                            child: Icon(
+                              isCompleted
+                                  ? Icons.check_circle
+                                  : Icons.circle_outlined,
+                              color: isCompleted
+                                  ? const Color(0xFF22C55E)
+                                  : Colors.grey[600],
+                              size: 23,
+                            ),
+                          ),
                         ),
                       ),
                       const Spacer(),
+                      InkWell(
+                        onTap: () {
+                          Clipboard.setData(
+                            ClipboardData(text: task.content),
+                          );
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Copied to clipboard'),
+                              duration: Duration(milliseconds: 1200),
+                              backgroundColor: Color(0xFF22C55E),
+                            ),
+                          );
+                        },
+                        child: Icon(
+                          Icons.copy,
+                          color: Colors.grey[600],
+                          size: 16,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
                       InkWell(
                         onTap: () => _removeTask(task),
                         child: Icon(
@@ -9090,7 +9160,7 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  /// Remove task from message
+  
   void _removeTask(Message message) {
     _unmarkMessageTask(message);
   }
