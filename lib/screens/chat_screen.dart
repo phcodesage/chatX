@@ -3457,76 +3457,6 @@ class _ChatScreenState extends State<ChatScreen>
     return (width / 411.0).clamp(0.78, 1.0);
   }
 
-  PreferredSizeWidget _buildBubbleSelectionAppBar(double scale) {
-    final message = _taskActionModalMessage!;
-    return AppBar(
-      backgroundColor: const Color(0xFF1A1A2E),
-      elevation: 0,
-      leading: IconButton(
-        icon: const Icon(Icons.close, color: Colors.white),
-        onPressed: () => setState(() { _taskActionModalMessage = null; }),
-      ),
-      titleSpacing: 8,
-      title: Text(
-        '1 selected',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 16 * scale,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      actions: [
-        if (_canQuickToggleExcalidrawPin(message))
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: OutlinedButton(
-              onPressed: () {
-                _toggleExcalidrawPin(message);
-                setState(() { _taskActionModalMessage = null; });
-              },
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
-                side: BorderSide(color: const Color(0xFFB794F6).withValues(alpha: 0.8)),
-                backgroundColor: const Color(0xFFB794F6).withValues(alpha: 0.14),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                minimumSize: const Size(0, 34),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-              ),
-              child: Text(message.excalidrawPinnedAt != null ? 'Unpin Excalidraw' : 'Pin Excalidraw'),
-            ),
-          ),
-        Padding(
-          padding: const EdgeInsets.only(right: 12),
-          child: OutlinedButton(
-            onPressed: () {
-              if (message.isTask) {
-                _unmarkMessageTask(message);
-              } else {
-                _addMessageToTask(message);
-              }
-              setState(() { _taskActionModalMessage = null; });
-            },
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.white,
-              side: BorderSide(color: const Color(0xFFF59E0B).withValues(alpha: 0.8)),
-              backgroundColor: const Color(0xFFF59E0B).withValues(alpha: 0.16),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              minimumSize: const Size(0, 34),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              visualDensity: VisualDensity.compact,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-            child: Text(message.isTask ? 'Unmark task' : 'Mark as task'),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildHeaderStatusPill() {
     final statusColor = _getHeaderStatusColor();
     final scale = _uiScale(context);
@@ -6324,9 +6254,7 @@ class _ChatScreenState extends State<ChatScreen>
     return Scaffold(
       resizeToAvoidBottomInset: false,
       backgroundColor: const Color(0xFF2C2C2C),
-      appBar: _taskActionModalMessage != null
-          ? _buildBubbleSelectionAppBar(scale)
-          : AppBar(
+      appBar: AppBar(
         backgroundColor: _headerColor,
         elevation: 0,
         leading: IconButton(
@@ -6492,11 +6420,7 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
       body: GestureDetector(
-        onTap: () {
-          if (_taskActionModalMessage != null) {
-            setState(() { _taskActionModalMessage = null; });
-          }
-        },
+        // Tap outside the modal to dismiss it
         behavior: HitTestBehavior.translucent,
         child: Stack(
           children: [
@@ -7075,29 +6999,78 @@ class _ChatScreenState extends State<ChatScreen>
     return _isExcalidrawMessage(message);
   }
 
-  void _toggleTaskActionForMessage(Message message) {
+  void _toggleTaskActionForMessage(Message message, Offset tapPosition) {
     if (!_canQuickToggleTaskAction(message)) {
-      if (_taskActionModalMessage != null) {
-        setState(() { _taskActionModalMessage = null; });
-      }
       return;
     }
 
-    setState(() {
-      _taskActionModalMessage =
-          _taskActionModalMessage?.id == message.id ? null : message;
-      // Trigger a brief row flash only when selecting (not deselecting)
-      if (_taskActionModalMessage?.id == message.id) {
-        _bubbleFlashId = message.id;
-      }
-    });
+    _showTaskActionModal(message, tapPosition);
+  }
 
-    // Auto-clear the flash after 350 ms
-    if (_taskActionModalMessage?.id == message.id) {
-      Future.delayed(const Duration(milliseconds: 350), () {
-        if (mounted) setState(() { _bubbleFlashId = null; });
-      });
+  void _showTaskActionModal(Message message, Offset tapPosition) {
+    showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        tapPosition.dx,
+        tapPosition.dy,
+        tapPosition.dx + 1,
+        tapPosition.dy + 1,
+      ),
+      items: _buildTaskActionMenuItems(message),
+      elevation: 8,
+    );
+  }
+
+  List<PopupMenuEntry<void>> _buildTaskActionMenuItems(Message message) {
+    final items = <PopupMenuEntry<void>>[];
+
+    if (_canQuickToggleExcalidrawPin(message)) {
+      items.add(
+        PopupMenuItem<void>(
+          onTap: () => _toggleExcalidrawPin(message),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.bookmark, color: Color(0xFFB794F6), size: 18),
+              const SizedBox(width: 8),
+              Text(
+                message.excalidrawPinnedAt != null ? 'Unpin Excalidraw' : 'Pin Excalidraw',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+        ),
+      );
     }
+
+    items.add(
+      PopupMenuItem<void>(
+        onTap: () {
+          if (message.isTask) {
+            _unmarkMessageTask(message);
+          } else {
+            _addMessageToTask(message);
+          }
+        },
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              message.isTask ? Icons.check_circle : Icons.radio_button_unchecked,
+              color: const Color(0xFFF59E0B),
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              message.isTask ? 'Unmark task' : 'Mark as task',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return items;
   }
 
   Widget _buildSwipeableMessage(
@@ -7313,7 +7286,6 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Optimistically update the message locally
     setState(() {
-      _taskActionModalMessage = null;
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index != -1) {
         _messages[index] = _copyMessageWithTaskState(
@@ -7341,7 +7313,6 @@ class _ChatScreenState extends State<ChatScreen>
     _socketService.unmarkTask(message.id);
 
     setState(() {
-      _taskActionModalMessage = null;
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index != -1) {
         final currentMessage = _messages[index];
@@ -7380,7 +7351,6 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Optimistically update before the API response arrives.
     setState(() {
-      _taskActionModalMessage = null;
       _messages[initialIndex] = _copyMessageWithExcalidrawState(
         originalMessage,
         isExcalidrawLink: hasExcalidrawUrl,
@@ -9764,7 +9734,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Build the main bubble widget (wrapped with tap handlers)
     final bubbleWidget = GestureDetector(
-      onTap: () => _toggleTaskActionForMessage(message),
+      onTapDown: (details) => _toggleTaskActionForMessage(message, details.globalPosition),
       onLongPress: () => _showMessageContextMenu(message, isSentByMe),
       child: Container(
         margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
