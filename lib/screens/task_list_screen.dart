@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../services/message_service.dart';
 import '../services/socket_service.dart';
-import 'chat_screen.dart';
+import 'chat_screen.dart' show ChatScreen;
 import '../models/lobby_user.dart';
 import '../services/lobby_service.dart';
 

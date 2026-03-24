@@ -4,7 +4,14 @@ import 'package:flutter/material.dart';
 class PasswordField extends StatefulWidget {
   final String label;
   final TextEditingController controller;
-  const PasswordField({super.key, required this.label, required this.controller});
+  final Iterable<String>? autofillHints;
+
+  const PasswordField({
+    super.key,
+    required this.label,
+    required this.controller,
+    this.autofillHints,
+  });
 
   @override
   State<PasswordField> createState() => _PasswordFieldState();
@@ -23,6 +30,9 @@ class _PasswordFieldState extends State<PasswordField> {
         TextField(
           controller: widget.controller,
           obscureText: _obscure,
+          autofillHints: widget.autofillHints,
+          enableSuggestions: false,
+          autocorrect: false,
           style: const TextStyle(color: Colors.black),
           decoration: InputDecoration(
             suffixIcon: IconButton(

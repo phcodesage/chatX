@@ -10,7 +10,7 @@ import '../services/lobby_service.dart';
 import '../services/message_service.dart';
 import '../services/share_intent_service.dart';
 import '../services/storage_service.dart';
-import 'chat_screen.dart';
+import 'chat_screen.dart' show ChatScreen;
 import 'lobby_screen.dart';
 
 class ShareTargetScreen extends StatefulWidget {

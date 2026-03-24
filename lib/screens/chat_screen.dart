@@ -168,6 +168,7 @@ class _ChatScreenState extends State<ChatScreen>
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
   // Presence state for the chat partner
+  bool _partnerIsOnline = false;
   String _partnerStatus = 'offline';
   String? _partnerLastSeen;
 
@@ -447,6 +448,7 @@ class _ChatScreenState extends State<ChatScreen>
     _currentUserIsAdmin = await StorageService.getIsAdmin();
 
     // Initialize presence state from widget
+    _partnerIsOnline = widget.otherUser.isOnline;
     _partnerStatus = widget.otherUser.status;
     _partnerLastSeen = widget.otherUser.lastSeen;
 
@@ -1249,12 +1251,14 @@ class _ChatScreenState extends State<ChatScreen>
       debugPrint('ðŸ‘¤ Presence update in chat: $data');
       final userId = data['user_id'] as int?;
       final status = data['status'] as String?;
+      final isOnline = data['is_online'] as bool?;
       final timestamp = data['timestamp'] as String?;
 
       // Only update if this is for our chat partner
       if (userId == widget.otherUser.id && status != null) {
         setState(() {
-          _partnerStatus = status;
+          _partnerIsOnline = isOnline ?? (status == 'online');
+          _partnerStatus = _partnerIsOnline ? 'online' : status;
           if (timestamp != null) {
             _partnerLastSeen = timestamp;
           }
@@ -3398,6 +3402,10 @@ class _ChatScreenState extends State<ChatScreen>
   /// checking the lastSeen timestamp, so the chat header stays in sync with
   /// what the contact list shows.
   String _getEffectivePartnerStatus() {
+    if (_partnerIsOnline) {
+      return 'online';
+    }
+
     if (_partnerStatus == 'online') {
       if (_partnerLastSeen != null) {
         try {
@@ -3411,6 +3419,21 @@ class _ChatScreenState extends State<ChatScreen>
       }
       return 'online';
     }
+
+    if (_partnerStatus == 'away') {
+      return 'away';
+    }
+
+    if (_partnerLastSeen != null) {
+      try {
+        final lastSeenTime = _parseUtcTimestamp(_partnerLastSeen!);
+        final age = DateTime.now().difference(lastSeenTime);
+        if (age.inHours < 24) {
+          return 'away';
+        }
+      } catch (_) {}
+    }
+
     return _partnerStatus;
   }
 
@@ -3450,7 +3473,7 @@ class _ChatScreenState extends State<ChatScreen>
       return const Color(0xFFEF4444);
     }
 
-    return const Color(0xFF9CA3AF);
+    return const Color(0xFFFACC15);
   }
 
   /// Returns a UI scale factor (0.80–1.0) so elements shrink gracefully on

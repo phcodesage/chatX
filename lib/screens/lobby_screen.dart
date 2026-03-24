@@ -13,7 +13,7 @@ import '../services/socket_service.dart';
 import '../widgets/app_version_text.dart';
 import '../services/call_service.dart';
 import '../widgets/incoming_call_setup_modal.dart';
-import 'chat_screen.dart';
+import 'chat_screen.dart' show ChatScreen;
 import 'connected_call_screen.dart';
 import 'group_chat_screen.dart';
 import 'create_group_screen.dart';

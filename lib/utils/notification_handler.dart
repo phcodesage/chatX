@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../screens/chat_screen.dart';
+import '../screens/chat_screen.dart' show ChatScreen;
 import '../screens/connected_call_screen.dart';
 import '../screens/group_chat_screen.dart';
 import '../widgets/incoming_call_setup_modal.dart';

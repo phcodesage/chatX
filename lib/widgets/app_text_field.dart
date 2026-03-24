@@ -5,7 +5,15 @@ class AppTextField extends StatelessWidget {
   final String label;
   final TextEditingController controller;
   final TextInputType? keyboardType;
-  const AppTextField({super.key, required this.label, required this.controller, this.keyboardType});
+  final Iterable<String>? autofillHints;
+
+  const AppTextField({
+    super.key,
+    required this.label,
+    required this.controller,
+    this.keyboardType,
+    this.autofillHints,
+  });
   
   @override
   Widget build(BuildContext context) {
@@ -17,6 +25,7 @@ class AppTextField extends StatelessWidget {
         TextField(
           controller: controller,
           keyboardType: keyboardType,
+          autofillHints: autofillHints,
           style: const TextStyle(color: Colors.black),
           decoration: const InputDecoration(),
         ),

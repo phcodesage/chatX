@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/auth_service.dart';
 import '../services/storage_service.dart';
 import '../services/firebase_messaging_service.dart';
@@ -29,14 +30,16 @@ class _SignInPageState extends State<SignInPage> {
   @override
   void initState() {
     super.initState();
-    _loadRememberedUsername();
+    _loadRememberedCredentials();
   }
 
-  Future<void> _loadRememberedUsername() async {
-    final rememberedUsername = await StorageService.getRememberedUsername();
-    if (rememberedUsername != null && mounted) {
+  Future<void> _loadRememberedCredentials() async {
+    final rememberedCredentials =
+        await StorageService.getRememberedCredentials();
+    if (rememberedCredentials != null && mounted) {
       setState(() {
-        _username.text = rememberedUsername;
+        _username.text = rememberedCredentials.username;
+        _password.text = rememberedCredentials.password;
         remember = true;
       });
     }
@@ -51,7 +54,7 @@ class _SignInPageState extends State<SignInPage> {
 
   Future<void> _handleSignIn() async {
     final username = _username.text.trim();
-    final password = _password.text.trim();
+    final password = _password.text;
 
     if (username.isEmpty || password.isEmpty) {
       _showError('Please enter username and password');
@@ -63,12 +66,17 @@ class _SignInPageState extends State<SignInPage> {
     try {
       await AuthService.login(username: username, password: password);
 
-      // Save or clear remembered username based on checkbox
+      // Save or clear remembered credentials based on checkbox.
       if (remember) {
-        await StorageService.saveRememberedUsername(username);
+        await StorageService.saveRememberedCredentials(
+          username: username,
+          password: password,
+        );
       } else {
         await StorageService.clearRememberedCredentials();
       }
+
+      TextInput.finishAutofillContext();
 
       // Send FCM token to backend after successful login
       final fcmToken = FirebaseMessagingService.instance.fcmToken;
@@ -101,69 +109,84 @@ class _SignInPageState extends State<SignInPage> {
   Widget build(BuildContext context) {
     return AuthScaffold(
       title: 'Sign in',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AppTextField(label: 'Username', controller: _username),
-          const SizedBox(height: 18),
-          PasswordField(label: 'Password', controller: _password),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () =>
-                  Navigator.pushNamed(context, ForgotPasswordPage.route),
-              child: const Text(
-                'Forgot password?',
-                style: TextStyle(color: Color(0xFF00E5FF)),
-              ),
+      child: AutofillGroup(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AppTextField(
+              label: 'Username',
+              controller: _username,
+              autofillHints: const [AutofillHints.username],
             ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 4,
-            children: [
-              Checkbox(
-                value: remember,
-                onChanged: (v) => setState(() => remember = v ?? false),
-                checkColor: Colors.white,
-                activeColor: const Color(0xFF00E5FF),
-                side: const BorderSide(color: Colors.white70),
-              ),
-              const Text('Remember Me', style: TextStyle(color: Colors.white)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          PrimaryButton(
-            text: 'Sign In',
-            onPressed: _isLoading ? null : _handleSignIn,
-          ),
-          if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.only(top: 12),
-              child: Center(child: CircularProgressIndicator()),
+            const SizedBox(height: 18),
+            PasswordField(
+              label: 'Password',
+              controller: _password,
+              autofillHints: const [AutofillHints.password],
             ),
-          const SizedBox(height: 18),
-          Wrap(
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              const Text(
-                "Don't have an account? ",
-                style: TextStyle(color: Colors.white70),
-              ),
-              TextButton(
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
                 onPressed: () =>
-                    Navigator.pushReplacementNamed(context, RegisterPage.route),
+                    Navigator.pushNamed(context, ForgotPasswordPage.route),
                 child: const Text(
-                  'Create one',
+                  'Forgot password?',
                   style: TextStyle(color: Color(0xFF00E5FF)),
                 ),
               ),
-            ],
-          ),
-        ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 4,
+              children: [
+                Checkbox(
+                  value: remember,
+                  onChanged: (v) => setState(() => remember = v ?? false),
+                  checkColor: Colors.white,
+                  activeColor: const Color(0xFF00E5FF),
+                  side: const BorderSide(color: Colors.white70),
+                ),
+                const Text(
+                  'Remember Me',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            PrimaryButton(
+              text: 'Sign In',
+              onPressed: _isLoading ? null : _handleSignIn,
+            ),
+            if (_isLoading)
+              const Padding(
+                padding: EdgeInsets.only(top: 12),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            const SizedBox(height: 18),
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                const Text(
+                  "Don't have an account? ",
+                  style: TextStyle(color: Colors.white70),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pushReplacementNamed(
+                    context,
+                    RegisterPage.route,
+                  ),
+                  child: const Text(
+                    'Create one',
+                    style: TextStyle(color: Color(0xFF00E5FF)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

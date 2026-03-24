@@ -12,6 +12,7 @@ class StorageService {
   static const String _isAdminKey = 'is_admin';
   static const String _rememberMeKey = 'remember_me';
   static const String _rememberedUsernameKey = 'remembered_username';
+  static const String _rememberedPasswordKey = 'remembered_password';
 
   static SharedPreferences? _prefs;
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
@@ -142,32 +143,67 @@ class StorageService {
     }
   }
 
-  /// Save remembered username (no password is ever persisted)
-  static Future<void> saveRememberedUsername(String username) async {
+  /// Save remembered credentials for future sign-ins.
+  static Future<void> saveRememberedCredentials({
+    required String username,
+    required String password,
+  }) async {
     try {
       final prefs = await _getPrefs();
       final rememberMe = prefs.getBool(_rememberMeKey) ?? false;
       final storedUsername = prefs.getString(_rememberedUsernameKey);
-      if (rememberMe && storedUsername == username) return;
+      final storedPassword = await _secureStorage.read(
+        key: _rememberedPasswordKey,
+      );
+      if (
+        rememberMe &&
+        storedUsername == username &&
+        storedPassword == password
+      ) {
+        return;
+      }
 
       await prefs.setBool(_rememberMeKey, true);
       await prefs.setString(_rememberedUsernameKey, username);
+      await _secureStorage.write(key: _rememberedPasswordKey, value: password);
     } catch (e) {
-      debugPrint('Error saving remembered username: $e');
+      debugPrint('Error saving remembered credentials: $e');
+    }
+  }
+
+  /// Save only the remembered username for legacy callers.
+  static Future<void> saveRememberedUsername(String username) async {
+    await saveRememberedCredentials(username: username, password: '');
+  }
+
+  /// Get remembered credentials (returns null if not set)
+  static Future<RememberedCredentials?> getRememberedCredentials() async {
+    try {
+      final prefs = await _getPrefs();
+      final rememberMe = prefs.getBool(_rememberMeKey) ?? false;
+      if (!rememberMe) return null;
+
+      final username = prefs.getString(_rememberedUsernameKey);
+      final password = await _secureStorage.read(key: _rememberedPasswordKey);
+
+      if (username == null || username.isEmpty) {
+        return null;
+      }
+
+      return RememberedCredentials(
+        username: username,
+        password: password ?? '',
+      );
+    } catch (e) {
+      debugPrint('Error getting remembered credentials: $e');
+      return null;
     }
   }
 
   /// Get remembered username (returns null if not set)
   static Future<String?> getRememberedUsername() async {
-    try {
-      final prefs = await _getPrefs();
-      final rememberMe = prefs.getBool(_rememberMeKey) ?? false;
-      if (!rememberMe) return null;
-      return prefs.getString(_rememberedUsernameKey);
-    } catch (e) {
-      debugPrint('Error getting remembered username: $e');
-      return null;
-    }
+    final credentials = await getRememberedCredentials();
+    return credentials?.username;
   }
 
   /// Clear remembered credentials
@@ -176,6 +212,7 @@ class StorageService {
       final prefs = await _getPrefs();
       await prefs.remove(_rememberMeKey);
       await prefs.remove(_rememberedUsernameKey);
+      await _secureStorage.delete(key: _rememberedPasswordKey);
     } catch (e) {
       debugPrint('Error clearing remembered credentials: $e');
     }
@@ -247,5 +284,15 @@ class StoredSession {
     required this.userId,
     this.username,
     this.isAdmin = false,
+  });
+}
+
+class RememberedCredentials {
+  final String username;
+  final String password;
+
+  const RememberedCredentials({
+    required this.username,
+    required this.password,
   });
 }
