@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/widgets.dart' show visibleForTesting;
 
 import 'chat_cache_service.dart';
 
@@ -18,6 +19,12 @@ class StorageService {
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
+
+  /// Reset cached state — for use in unit tests only.
+  @visibleForTesting
+  static void resetForTesting() {
+    _prefs = null;
+  }
 
   /// Warm up the SharedPreferences instance so the first write doesn't
   /// block a frame later during app usage.
@@ -41,38 +48,62 @@ class StorageService {
 
   /// Save authentication token
   static Future<void> saveToken(String token) async {
+    // Always write to SharedPreferences first so a secure-storage failure
+    // (e.g. Android Keystore invalidation after an APK update) cannot prevent
+    // the token from being persisted.
     try {
       final prefs = await _getPrefs();
-      final secureToken = await _secureStorage.read(key: _tokenKey);
-      if (secureToken == token && prefs.getString(_tokenKey) == token) return;
-      await _secureStorage.write(key: _tokenKey, value: token);
-      await prefs.setString(_tokenKey, token);
+      if (prefs.getString(_tokenKey) != token) {
+        await prefs.setString(_tokenKey, token);
+      }
     } catch (e) {
-      debugPrint('Error saving token: $e');
+      debugPrint('Error saving token to prefs: $e');
+    }
+    try {
+      await _secureStorage.write(key: _tokenKey, value: token);
+    } catch (e) {
+      debugPrint('Error saving token to secure storage: $e');
     }
   }
 
   /// Get authentication token
   static Future<String?> getToken() async {
+    // Isolate the secure-storage read so that a keystore failure (which can
+    // occur after an APK update on some Android versions) does not swallow the
+    // SharedPreferences fallback and incorrectly log the user out.
+    String? secureToken;
     try {
-      final secureToken = await _secureStorage.read(key: _tokenKey);
-      if (secureToken != null && secureToken.isNotEmpty) {
+      secureToken = await _secureStorage.read(key: _tokenKey);
+    } catch (e) {
+      debugPrint('Secure storage read failed, falling back to SharedPreferences: $e');
+    }
+
+    if (secureToken != null && secureToken.isNotEmpty) {
+      try {
         final prefs = await _getPrefs();
-        // Keep legacy storage in sync for existing code paths outside StorageService.
+        // Keep SharedPreferences in sync for code paths outside StorageService.
         if (prefs.getString(_tokenKey) != secureToken) {
           await prefs.setString(_tokenKey, secureToken);
         }
-        return secureToken;
-      }
+      } catch (_) {}
+      return secureToken;
+    }
 
+    // Fallback: read from SharedPreferences (also serves as recovery after a
+    // keystore invalidation — re-migrates the token back to secure storage).
+    try {
       final prefs = await _getPrefs();
       final legacyToken = prefs.getString(_tokenKey);
       if (legacyToken != null && legacyToken.isNotEmpty) {
-        await _secureStorage.write(key: _tokenKey, value: legacyToken);
+        try {
+          await _secureStorage.write(key: _tokenKey, value: legacyToken);
+        } catch (e) {
+          debugPrint('Could not re-write token to secure storage: $e');
+        }
       }
       return legacyToken;
     } catch (e) {
-      debugPrint('Error getting token: $e');
+      debugPrint('Error getting token from SharedPreferences: $e');
       return null;
     }
   }
