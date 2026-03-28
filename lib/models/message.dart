@@ -289,6 +289,24 @@ class Message {
       };
     }
 
+    if (_looksLikeFileHtml(htmlContent)) {
+      final fileName =
+          _extractTaggedTextFromHtml(htmlContent, 'file-name') ??
+          _extractAttributeFromHtml(htmlContent, 'data-filename') ??
+          _extractAttributeFromHtml(htmlContent, 'download') ??
+          _extractAttributeFromHtml(htmlContent, 'title') ??
+          'file';
+      final fileSize = _extractFileSizeFromHtml(htmlContent);
+
+      return {
+        'messageType': 'file',
+        'fileUrl': _extractOptionalHrefFromHtml(htmlContent),
+        'fileName': fileName,
+        'fileType': 'application/octet-stream',
+        'fileSize': fileSize,
+      };
+    }
+
     return null;
   }
 
@@ -297,6 +315,49 @@ class Message {
     final regex = RegExp('$attribute="([^"]*)"', caseSensitive: false);
     final match = regex.firstMatch(html);
     return match?.group(1);
+  }
+
+  static bool _looksLikeFileHtml(String html) {
+    final normalized = html.toLowerCase();
+    return normalized.contains('file-message') ||
+        normalized.contains('file-info') ||
+        normalized.contains('file-name') ||
+        normalized.contains('file-size') ||
+        normalized.contains('download-link') ||
+        normalized.contains(' download=');
+  }
+
+  static String? _extractTaggedTextFromHtml(String html, String className) {
+    final regex = RegExp(
+      'class="[^"]*${RegExp.escape(className)}[^"]*"[^>]*>([^<]*)<',
+      caseSensitive: false,
+    );
+    final match = regex.firstMatch(html);
+    final value = match?.group(1)?.trim();
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return value;
+  }
+
+  static int? _extractFileSizeFromHtml(String html) {
+    final rawSize =
+        _extractAttributeFromHtml(html, 'data-filesize') ??
+        _extractTaggedTextFromHtml(html, 'file-size');
+    if (rawSize == null || rawSize.isEmpty) {
+      return null;
+    }
+
+    final bytesMatch = RegExp(r'(\d+)').firstMatch(rawSize);
+    return int.tryParse(bytesMatch?.group(1) ?? '');
+  }
+
+  static String? _extractOptionalHrefFromHtml(String html) {
+    final href = _extractAttributeFromHtml(html, 'href');
+    if (href == null || href.trim().isEmpty) {
+      return null;
+    }
+    return href;
   }
 
   Map<String, dynamic> toJson() {

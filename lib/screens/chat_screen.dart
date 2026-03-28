@@ -7034,13 +7034,25 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _showTaskActionModal(Message message, Offset tapPosition) {
+    final overlayBox =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final overlaySize = overlayBox.size;
+    const verticalOffset = 44.0;
+    final menuTop = (tapPosition.dy - verticalOffset).clamp(8.0, overlaySize.height - 8.0);
+
     showMenu(
       context: context,
+      // Keep current keyboard/focus state unchanged while showing task actions.
+      // This prevents keyboard pop-in on outside taps and avoids menu position
+      // drifting when the IME was already visible.
+      requestFocus: false,
+      color: const Color(0xFF4C356A),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       position: RelativeRect.fromLTRB(
         tapPosition.dx,
-        tapPosition.dy,
-        tapPosition.dx + 1,
-        tapPosition.dy + 1,
+        menuTop,
+        overlaySize.width - tapPosition.dx,
+        overlaySize.height - tapPosition.dy,
       ),
       items: _buildTaskActionMenuItems(message),
       elevation: 8,
@@ -7061,7 +7073,11 @@ class _ChatScreenState extends State<ChatScreen>
               const SizedBox(width: 8),
               Text(
                 message.excalidrawPinnedAt != null ? 'Unpin Excalidraw' : 'Pin Excalidraw',
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ],
           ),
@@ -7089,7 +7105,11 @@ class _ChatScreenState extends State<ChatScreen>
             const SizedBox(width: 8),
             Text(
               message.isTask ? 'Unmark task' : 'Mark as task',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ],
         ),
@@ -7324,14 +7344,6 @@ class _ChatScreenState extends State<ChatScreen>
     });
     _taskBadgeAnimController.forward(from: 0);
     _notifyTaskModalChanged();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Added to tasks'),
-        duration: Duration(seconds: 2),
-        backgroundColor: Color(0xFF4CAF50),
-      ),
-    );
   }
 
   /// Unmark message as task
@@ -7355,14 +7367,6 @@ class _ChatScreenState extends State<ChatScreen>
     });
     _taskBadgeAnimController.forward(from: 0);
     _notifyTaskModalChanged();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Removed from tasks'),
-        duration: Duration(seconds: 2),
-        backgroundColor: Color(0xFF4CAF50),
-      ),
-    );
   }
 
   /// Toggle excalidraw pin status
@@ -10193,6 +10197,10 @@ class _ChatScreenState extends State<ChatScreen>
         message.messageType == 'audio' ||
         (message.fileType?.startsWith('audio/') ?? false);
     final bool isMedia = isImage || isVideo;
+    final bool isGenericFile =
+      (message.messageType == 'file' || message.messageType == 'document') &&
+      !isMedia &&
+      !isAudio;
 
     // Check if this message has reactions to adjust bottom margin
     final hasReactions =
@@ -10458,11 +10466,63 @@ class _ChatScreenState extends State<ChatScreen>
                 fileSize: message.fileSize,
               ),
             ],
+            if (isGenericFile) ...[
+              Container(
+                padding: EdgeInsets.all(16 * scale),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.attach_file,
+                      color: Colors.white70,
+                      size: 24,
+                    ),
+                    SizedBox(width: 12 * scale),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            message.fileName ?? 'File',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15 * scale,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          SizedBox(height: 4 * scale),
+                          Text(
+                            message.fileUrl != null
+                                ? (message.fileSize != null
+                                      ? _formatFileSize(message.fileSize!)
+                                      : 'Tap to open')
+                                : 'File not available',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.7),
+                              fontSize: 12 * scale,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (message.fileUrl != null)
+                      IconButton(
+                        onPressed: () => _openMessageUrl(message.fileUrl!),
+                        icon: const Icon(
+                          Icons.download,
+                          color: Colors.white70,
+                          size: 20,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
             // Text content (if not just filename and not audio)
-            if ((!isMedia && !isAudio) ||
+            if ((!isMedia && !isAudio && !isGenericFile) ||
                 (message.content.isNotEmpty &&
                     !_isOnlyFilename(message.content) &&
-                    !isAudio))
+                    !isAudio &&
+                    !isGenericFile))
               Padding(
                 padding: EdgeInsets.symmetric(
                   horizontal: 16 * scale,

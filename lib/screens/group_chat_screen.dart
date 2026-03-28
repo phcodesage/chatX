@@ -1823,49 +1823,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 ],
               ),
             ),
-          ] else if ((message.messageType == 'file' ||
-                  message.messageType == 'document') &&
-              message.fileUrl != null) ...[
-            // Generic file display
-            Container(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.attach_file,
-                    color: Colors.white70,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          message.fileName ?? 'File',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        if (message.fileSize != null) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            _formatFileSize(message.fileSize!),
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const Icon(Icons.download, color: Colors.white70, size: 20),
-                ],
-              ),
-            ),
           ],
           // Audio/Voice message content
           if (isAudio && message.fileUrl != null) ...[
@@ -1906,7 +1863,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           ],
           // Generic file message (not image, video, or audio)
-          if (message.messageType == 'file' && !isMedia && !isAudio) ...[
+          if ((message.messageType == 'file' ||
+                  message.messageType == 'document') &&
+              !isMedia &&
+              !isAudio) ...[
             Container(
               padding: const EdgeInsets.all(16),
               child: Row(
@@ -1929,16 +1889,18 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        if (message.fileSize != null) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            _formatFileSize(message.fileSize!),
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 12,
-                            ),
+                        const SizedBox(height: 4),
+                        Text(
+                          message.fileUrl != null
+                              ? (message.fileSize != null
+                                    ? _formatFileSize(message.fileSize!)
+                                    : 'Tap to open')
+                              : 'File not available',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 12,
                           ),
-                        ],
+                        ),
                       ],
                     ),
                   ),
@@ -1956,10 +1918,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           ],
           // Text content (if not just filename and not audio)
-          if ((!isMedia && !isAudio) ||
+          if ((!isMedia &&
+                  !isAudio &&
+                  message.messageType != 'file' &&
+                  message.messageType != 'document') ||
               (message.content.isNotEmpty &&
                   !_isOnlyFilename(message.content) &&
-                  !isAudio))
+                  !isAudio &&
+                  message.messageType != 'file' &&
+                  message.messageType != 'document'))
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Column(
