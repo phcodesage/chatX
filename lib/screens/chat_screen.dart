@@ -27,6 +27,7 @@ import '../services/storage_service.dart';
 import '../services/chat_cache_service.dart';
 import '../services/translation_service.dart';
 import '../widgets/color_picker_modal.dart';
+import '../widgets/chat_composer_shell.dart';
 import '../services/active_chat_service.dart';
 import '../widgets/call_setup_modal.dart';
 import '../widgets/outgoing_call_modal.dart';
@@ -118,6 +119,9 @@ class _ChatScreenState extends State<ChatScreen>
   bool _isActionsPanelOpen = false;
   bool _actionsPanelFromKeyboard = false;
   double _actionsPanelInset = 0;
+  double _lastMetricsViewInsetBottom = 0;
+  double _lastMetricsViewPaddingBottom = 0;
+  Timer? _metricsRefreshTimer;
 
   // Backend restart notification banner
   bool _showBackendRestartBanner = false;
@@ -226,6 +230,38 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.resumed && _restoreInputFocusOnResume) {
       unawaited(_restoreInputFocusAfterResume());
     }
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    final view = WidgetsBinding.instance.platformDispatcher.views.firstOrNull;
+    if (view == null) return;
+
+    final devicePixelRatio = view.devicePixelRatio;
+    final viewInsetBottom = view.viewInsets.bottom / devicePixelRatio;
+    final viewPaddingBottom = view.viewPadding.bottom / devicePixelRatio;
+    final metricsChanged =
+        (viewInsetBottom - _lastMetricsViewInsetBottom).abs() > 0.5 ||
+        (viewPaddingBottom - _lastMetricsViewPaddingBottom).abs() > 0.5;
+
+    _lastMetricsViewInsetBottom = viewInsetBottom;
+    _lastMetricsViewPaddingBottom = viewPaddingBottom;
+
+    if (!metricsChanged || !mounted) return;
+
+    _metricsRefreshTimer?.cancel();
+    _metricsRefreshTimer = Timer(const Duration(milliseconds: 32), () {
+      if (!mounted) return;
+      if (_inputFocusNode.hasFocus ||
+          _showEmojiPicker ||
+          _isActionsPanelOpen ||
+          _isKeyboardVisible ||
+          viewInsetBottom > 0 ||
+          viewPaddingBottom > 0) {
+        setState(() {});
+      }
+    });
   }
 
   Future<void> _restoreInputFocusAfterResume() async {
@@ -6370,6 +6406,7 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   void dispose() {
     _inputModeSwitchTimer?.cancel();
+    _metricsRefreshTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _taskBadgeAnimController.dispose();
     _taskModalVersion.dispose();
@@ -6816,18 +6853,14 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                     // Message input — closing bracket of bottom bar Column added below
                     RepaintBoundary(
-                      child: Container(
+                      child: ChatComposerShell(
+                        composerInset: composerInset,
+                        backgroundColor: _headerColor,
                         padding: EdgeInsets.only(
                           left: 8 * scale,
                           right: 12 * scale,
                           top: 6,
-                          bottom: 8 + composerInset,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _headerColor,
-                          border: const Border(
-                            top: BorderSide(color: Color(0xFF3D3D3D), width: 1),
-                          ),
+                          bottom: 8,
                         ),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
