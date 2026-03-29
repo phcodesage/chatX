@@ -3152,6 +3152,41 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  Widget _buildRingDoorbellQuickAction() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: _ringDoorbell,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A1F45),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: const Color(0xFF7C3AED).withValues(alpha: 0.8),
+                  width: 1,
+                ),
+              ),
+              child: const Text(
+                'ring doorbell',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _onTextChanged(String text) {
     final normalizedText = _normalizeTextForEmojiCompatibility(text);
     if (normalizedText != text) {
@@ -3722,11 +3757,6 @@ class _ChatScreenState extends State<ChatScreen>
           );
 
     final actionButtons = <Widget>[
-      _buildActionSheetButton(
-        label: 'Ring Doorbell',
-        backgroundColor: const Color(0xFF8B5CF6),
-        onPressed: _ringDoorbell,
-      ),
       _buildActionSheetButton(
         label: 'Change Color',
         backgroundColor: const Color(0xFFA855F7),
@@ -6696,6 +6726,8 @@ class _ChatScreenState extends State<ChatScreen>
                             _buildReplyPreview(),
                             // Quick bulk-send button above the input; in-flow layout avoids covering chat bubbles.
                             _buildSendToManyQuickAction(),
+                            // Quick ring action below quick actions and above the composer input.
+                            _buildRingDoorbellQuickAction(),
                             // Text input field with embedded emoji button and send button
                             ValueListenableBuilder<TextEditingValue>(
                               valueListenable: _messageController,
