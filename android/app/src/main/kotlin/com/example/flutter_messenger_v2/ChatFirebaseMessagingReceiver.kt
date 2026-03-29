@@ -1,6 +1,7 @@
 package com.example.flutter_messenger_v2
 
 import android.app.ActivityManager
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -136,6 +137,7 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
             .setContentText(body)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setStyle(style)
             .setOnlyAlertOnce(false)
@@ -162,6 +164,7 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
             enableVibration(true)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
         manager.createNotificationChannel(channel)
     }

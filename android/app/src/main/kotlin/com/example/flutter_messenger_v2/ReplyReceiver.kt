@@ -66,7 +66,9 @@ class ReplyReceiver : BroadcastReceiver() {
             return
         }
 
-        showSendingNotification(context, notificationManager, notificationId, channelId)
+        // Clear the source notification immediately before sending so there is
+        // no transient "Sending reply" entry that can get stuck on some devices.
+        cancelReplyNotifications(notificationManager, intent, notificationId)
 
         val isGroup = conversationType == "group" ||
             !groupId.isNullOrEmpty() ||
@@ -83,15 +85,59 @@ class ReplyReceiver : BroadcastReceiver() {
         }
 
         val statusCode = postJson(url, authToken, payload.toString())
-        // Always remove the temporary "Sending reply" notification so it
-        // does not get stuck if Android reuses/updates notification IDs.
-        notificationManager.cancel(notificationId)
 
         if (statusCode in 200..299) {
             Log.d(TAG, "Quick reply sent successfully")
         } else {
             Log.e(TAG, "Quick reply failed with status $statusCode")
             showFailureNotification(context, notificationManager, notificationId, channelId, "Failed to send")
+        }
+    }
+
+    private fun cancelReplyNotifications(
+        notificationManager: NotificationManagerCompat,
+        intent: Intent,
+        resolvedNotificationId: Int,
+    ) {
+        val candidateIds = linkedSetOf<Int>()
+
+        if (resolvedNotificationId > 0) {
+            candidateIds.add(resolvedNotificationId)
+        }
+
+        intent.getIntExtra("notification_id", 0).takeIf { it > 0 }?.let {
+            candidateIds.add(it)
+        }
+        intent.getIntExtra("notif_id", 0).takeIf { it > 0 }?.let {
+            candidateIds.add(it)
+        }
+
+        val payloadJson = intent.getStringExtra("payload_json")
+        if (!payloadJson.isNullOrBlank()) {
+            try {
+                val json = JSONObject(payloadJson)
+                json.optString("room_id", "")
+                    .takeIf { it.isNotBlank() }
+                    ?.let { candidateIds.add(it.hashCode() and 0x7FFFFFFF) }
+
+                json.optString("group_id", "")
+                    .takeIf { it.isNotBlank() }
+                    ?.let { candidateIds.add("group:$it".hashCode() and 0x7FFFFFFF) }
+
+                json.optString("sender_id", "")
+                    .takeIf { it.isNotBlank() }
+                    ?.let { candidateIds.add("direct:$it".hashCode() and 0x7FFFFFFF) }
+
+                json.optString("message_id", "")
+                    .takeIf { it.isNotBlank() }
+                    ?.let { candidateIds.add("msg:$it".hashCode() and 0x7FFFFFFF) }
+            } catch (e: Exception) {
+                Log.w(TAG, "Unable to parse payload_json while clearing notifications", e)
+            }
+        }
+
+        candidateIds.forEach { id ->
+            notificationManager.cancel(id)
         }
     }
 
@@ -187,25 +233,6 @@ class ReplyReceiver : BroadcastReceiver() {
         } finally {
             connection?.disconnect()
         }
-    }
-
-    private fun showSendingNotification(
-        context: Context,
-        notificationManager: NotificationManagerCompat,
-        notificationId: Int,
-        channelId: String,
-    ) {
-        val notification = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(android.R.drawable.ic_menu_send)
-            .setContentTitle("Sending reply")
-            .setContentText("Please wait...")
-            .setProgress(0, 0, true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setTimeoutAfter(30000)
-            .build()
-
-        notificationManager.notify(notificationId, notification)
     }
 
     private fun showFailureNotification(
