@@ -13,6 +13,7 @@ import 'package:mime/mime.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:flutter_sound/flutter_sound.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart' hide Message;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -57,6 +58,8 @@ class _ChatScreenState extends State<ChatScreen>
   final ScrollController _scrollController = ScrollController();
   final ScrollController _inputScrollController = ScrollController();
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final FlutterLocalNotificationsPlugin _localNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
   final FocusNode _inputFocusNode = FocusNode();
   final GlobalKey _bottomBarKey = GlobalKey();
 
@@ -120,6 +123,7 @@ class _ChatScreenState extends State<ChatScreen>
   bool _isActionsPanelOpen = false;
   bool _actionsPanelFromKeyboard = false;
   double _actionsPanelInset = 0;
+  bool _localNotificationsReady = false;
   double _lastMetricsViewInsetBottom = 0;
   double _lastMetricsViewPaddingBottom = 0;
   Timer? _metricsRefreshTimer;
@@ -2172,23 +2176,8 @@ class _ChatScreenState extends State<ChatScreen>
   /// Export chat to a text file
   Future<void> _exportChat() async {
     try {
-      // Request storage permission first
-      final storageStatus = await Permission.storage.request();
-      if (!storageStatus.isGranted) {
-        // Try manage external storage for Android 11+
-        final manageStatus = await Permission.manageExternalStorage.request();
-        if (!manageStatus.isGranted) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Storage permission required to save file'),
-                backgroundColor: Colors.orange,
-              ),
-            );
-          }
-          return;
-        }
-      }
+      final hasStorageAccess = await _requestStorageAccessForFileOps();
+      if (!hasStorageAccess) return;
 
       // Show loading indicator
       if (mounted) {
@@ -2254,22 +2243,14 @@ class _ChatScreenState extends State<ChatScreen>
       buffer.writeln('=' * 50);
       buffer.writeln('End of export - ${sortedMessages.length} messages');
 
-      // Generate default filename and convert content to bytes
+      // Choose folder first, then filename (user-requested export flow).
       final defaultFileName =
           'chat_${widget.otherUser.fullName.replaceAll(' ', '_')}_${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}.txt';
-      final contentBytes = buffer.toString().codeUnits;
-
-      // Let user choose where to save the file (pass bytes for Android/iOS)
-      final savePath = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save Chat Export',
-        fileName: defaultFileName,
-        type: FileType.custom,
-        allowedExtensions: ['txt'],
-        bytes: Uint8List.fromList(contentBytes),
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Select folder for chat export',
       );
 
-      if (savePath == null) {
-        // User cancelled the picker
+      if (selectedDirectory == null || selectedDirectory.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -2281,13 +2262,54 @@ class _ChatScreenState extends State<ChatScreen>
         return;
       }
 
-      // On Android, the file is already saved when bytes are provided
-      // On other platforms, we may need to write the file
+      final normalizedFileName = _normalizeTextFileName(defaultFileName);
+      final savePath =
+          '$selectedDirectory${Platform.pathSeparator}$normalizedFileName';
+
+      final exportContent = buffer.toString();
+      String savedFileName = normalizedFileName;
+
+      try {
+        final exportFile = File(savePath);
+        await exportFile.writeAsString(exportContent, flush: true);
+      } on FileSystemException catch (e) {
+        debugPrint('Direct export write failed, using save dialog fallback: $e');
+
+        final fallbackPath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save Chat Export',
+          fileName: normalizedFileName,
+          type: FileType.custom,
+          allowedExtensions: ['txt'],
+          bytes: Uint8List.fromList(exportContent.codeUnits),
+        );
+
+        if (fallbackPath == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Export cancelled'),
+                duration: Duration(seconds: 1),
+              ),
+            );
+          }
+          return;
+        }
+
+        final fallbackName = fallbackPath.split(Platform.pathSeparator).last;
+        if (fallbackName.isNotEmpty) {
+          savedFileName = fallbackName;
+        }
+      }
+
+      await _showLocalFileOperationNotification(
+        title: 'Chat Export Saved',
+        body: savedFileName,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Chat saved to: ${savePath.split('/').last}'),
+            content: Text('Chat saved to: $savedFileName'),
             duration: const Duration(seconds: 3),
             backgroundColor: Colors.green,
           ),
@@ -2299,6 +2321,164 @@ class _ChatScreenState extends State<ChatScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to export chat: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  String _normalizeTextFileName(String value) {
+    final sanitized = value
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final fallback = sanitized.isEmpty ? 'chat_export' : sanitized;
+    return fallback.toLowerCase().endsWith('.txt') ? fallback : '$fallback.txt';
+  }
+
+  Future<bool> _requestStorageAccessForFileOps() async {
+    final storageStatus = await Permission.storage.request();
+    if (storageStatus.isGranted) return true;
+
+    final manageStatus = await Permission.manageExternalStorage.request();
+    if (manageStatus.isGranted) return true;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Storage permission required to save files'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+    return false;
+  }
+
+  Future<void> _ensureLocalNotificationsReady() async {
+    if (_localNotificationsReady) return;
+
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosSettings = DarwinInitializationSettings();
+    const settings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+
+    await _localNotificationsPlugin.initialize(settings);
+    _localNotificationsReady = true;
+  }
+
+  Future<void> _showLocalFileOperationNotification({
+    required String title,
+    required String body,
+  }) async {
+    try {
+      await _ensureLocalNotificationsReady();
+      const androidDetails = AndroidNotificationDetails(
+        'chat_file_ops',
+        'Chat File Operations',
+        channelDescription: 'Notifications for exports and downloads',
+        importance: Importance.high,
+        priority: Priority.high,
+      );
+      const iosDetails = DarwinNotificationDetails();
+      const details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      await _localNotificationsPlugin.show(
+        DateTime.now().millisecondsSinceEpoch % 100000,
+        title,
+        body,
+        details,
+      );
+    } catch (e) {
+      debugPrint('Error showing local file-operation notification: $e');
+    }
+  }
+
+  Future<Directory> _resolveDownloadDirectory() async {
+    if (Platform.isAndroid) {
+      final publicDownloads = Directory('/storage/emulated/0/Download');
+      if (await publicDownloads.exists()) {
+        return publicDownloads;
+      }
+    }
+
+    final systemDownloads = await getDownloadsDirectory();
+    if (systemDownloads != null) {
+      return systemDownloads;
+    }
+
+    final external = await getExternalStorageDirectory();
+    if (external != null) {
+      return external;
+    }
+
+    return getApplicationDocumentsDirectory();
+  }
+
+  Future<void> _downloadIncomingFile(Message message) async {
+    final fileUrl = message.fileUrl;
+    if (fileUrl == null || fileUrl.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File URL not available')),
+      );
+      return;
+    }
+
+    final hasStorageAccess = await _requestStorageAccessForFileOps();
+    if (!hasStorageAccess) return;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Downloading file...')),
+      );
+    }
+
+    try {
+      final uri = Uri.parse(fileUrl);
+      final response = await http.get(uri).timeout(const Duration(seconds: 30));
+      if (response.statusCode < 200 || response.statusCode > 299) {
+        throw Exception('Download failed with status ${response.statusCode}');
+      }
+
+      final mimeType = message.fileType ?? lookupMimeType(uri.path) ?? 'application/octet-stream';
+      final inferredName = message.fileName ?? uri.pathSegments.last;
+      final outputName = _resolveOutgoingFileName(
+        originalName: inferredName,
+        mimeType: mimeType,
+        isFromCamera: false,
+      );
+
+      final downloadDir = await _resolveDownloadDirectory();
+      final saveFile = File(
+        '${downloadDir.path}${Platform.pathSeparator}$outputName',
+      );
+      await saveFile.writeAsBytes(response.bodyBytes, flush: true);
+
+      await _showLocalFileOperationNotification(
+        title: 'File Downloaded',
+        body: outputName,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloaded: $outputName'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error downloading incoming file: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to download file: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -10793,7 +10973,13 @@ class _ChatScreenState extends State<ChatScreen>
                     ),
                     if (message.fileUrl != null)
                       IconButton(
-                        onPressed: () => _openMessageUrl(message.fileUrl!),
+                        onPressed: () {
+                          if (isSentByMe) {
+                            _openMessageUrl(message.fileUrl!);
+                          } else {
+                            _downloadIncomingFile(message);
+                          }
+                        },
                         icon: const Icon(
                           Icons.download,
                           color: Colors.white70,
