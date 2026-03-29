@@ -4729,185 +4729,231 @@ class _ChatScreenState extends State<ChatScreen>
     final isImage = mimeType.startsWith('image/');
     final isVideo = mimeType.startsWith('video/');
     final fileSize = file.lengthSync();
+    final uploadFileName = _resolveOutgoingFileName(
+      originalName: fileName,
+      mimeType: mimeType,
+      isFromCamera: isFromCamera,
+    );
+    final displayFileName = _truncateMiddle(uploadFileName, maxChars: 44);
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.8,
-        decoration: const BoxDecoration(
-          color: Color(0xFF1A1A2E),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          boxShadow: [
-            BoxShadow(color: Colors.black45, blurRadius: 12, spreadRadius: 2),
-          ],
-        ),
-        child: Column(
-          children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.only(top: 14, bottom: 8),
-              width: 48,
-              height: 5,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(3),
-              ),
-            ),
+      builder: (modalContext) {
+        final media = MediaQuery.of(modalContext);
+        final bottomInset = media.viewInsets.bottom;
 
-            // Title with close button
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 12, 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Send File',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                        ),
+        return Container(
+          height: media.size.height * 0.86,
+          decoration: const BoxDecoration(
+            color: Color(0xFF121733),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            boxShadow: [
+              BoxShadow(color: Colors.black54, blurRadius: 14, spreadRadius: 2),
+            ],
+          ),
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 10, bottom: 6),
+                width: 52,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.28),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 6, 10, 14),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF7C3AED).withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Preview before sending',
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.6),
-                          fontSize: 12,
+                      child: Icon(
+                        isImage
+                            ? Icons.image_outlined
+                            : isVideo
+                            ? Icons.videocam_outlined
+                            : _getFileIcon(mimeType),
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Send File',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 27,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Text(
+                            'Preview before sending',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.62),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                      onPressed: () => Navigator.pop(modalContext),
+                      splashRadius: 22,
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(color: Colors.white10, height: 1, thickness: 1),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        constraints: BoxConstraints(
+                          minHeight: 220,
+                          maxHeight: media.size.height * 0.46,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F1326),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.08),
+                            width: 1,
+                          ),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(15),
+                          child: isImage
+                              ? InteractiveViewer(
+                                  maxScale: 4,
+                                  minScale: 1,
+                                  child: Center(
+                                    child: Image.file(file, fit: BoxFit.contain),
+                                  ),
+                                )
+                              : isVideo
+                              ? const Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.videocam,
+                                        color: Colors.white,
+                                        size: 70,
+                                      ),
+                                      SizedBox(height: 10),
+                                      Text(
+                                        'Video preview unavailable',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        _getFileIcon(mimeType),
+                                        color: Colors.white,
+                                        size: 68,
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        displayFileName,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ],
+                                  ),
+                                ),
                         ),
                       ),
                     ],
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white70),
-                    onPressed: () => Navigator.pop(context),
-                    splashRadius: 24,
-                  ),
-                ],
+                ),
               ),
-            ),
-
-            const Divider(color: Colors.white10, height: 1, thickness: 1),
-            // Preview area
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.02),
+                  border: Border(
+                    top: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+                  ),
+                ),
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomInset),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Image/Video/File preview
-                    if (isImage)
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.file(file, fit: BoxFit.contain),
-                        ),
-                      )
-                    else if (isVideo)
-                      Expanded(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.videocam,
-                                  color: Colors.white,
-                                  size: 64,
-                                ),
-                                SizedBox(height: 8),
-                                Text(
-                                  'Video File',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      Expanded(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.grey[800],
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _getFileIcon(mimeType),
-                                  color: Colors.white,
-                                  size: 64,
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  fileName,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  _formatFileSize(fileSize),
-                                  style: TextStyle(
-                                    color: Colors.grey[400],
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 12),
-                    // File info
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.grey[800],
-                        borderRadius: BorderRadius.circular(8),
+                        color: const Color(0xFF373B43),
+                        borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            _getFileIcon(mimeType),
-                            color: Colors.white70,
-                            size: 24,
+                          Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              _getFileIcon(mimeType),
+                              color: Colors.white,
+                              size: 20,
+                            ),
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 10),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  fileName,
+                                  displayFileName,
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 14,
+                                    fontWeight: FontWeight.w600,
                                   ),
+                                  maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
+                                const SizedBox(height: 2),
                                 Text(
-                                  '${_formatFileSize(fileSize)} â€¢ $mimeType',
+                                  '${_formatFileSize(fileSize)} | $mimeType',
                                   style: TextStyle(
-                                    color: Colors.grey[400],
+                                    color: Colors.grey[300],
                                     fontSize: 12,
                                   ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ],
                             ),
@@ -4915,99 +4961,131 @@ class _ChatScreenState extends State<ChatScreen>
                         ],
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 54,
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(modalContext);
+                                if (isFromCamera) {
+                                  unawaited(_retakePhotoFromPreview());
+                                } else {
+                                  _pickFile();
+                                }
+                              },
+                              icon: Icon(
+                                isFromCamera
+                                    ? Icons.camera_alt_outlined
+                                    : Icons.refresh,
+                              ),
+                              label: Text(
+                                isFromCamera ? 'Take Another' : 'Replace',
+                                style: const TextStyle(fontSize: 15),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.white,
+                                side: BorderSide(
+                                  color: Colors.white.withValues(alpha: 0.24),
+                                  width: 1.4,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: SizedBox(
+                            height: 54,
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(modalContext);
+                                _uploadAndSendFile(file, uploadFileName, mimeType);
+                              },
+                              icon: const Icon(Icons.send_rounded),
+                              label: const Text(
+                                'Send',
+                                style: TextStyle(fontSize: 15),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF7C3AED),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                elevation: 0,
+                                padding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-            ),
-            // Action buttons
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.02),
-                border: Border(
-                  top: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
-                ),
-              ),
-              padding: EdgeInsets.fromLTRB(
-                20,
-                16,
-                20,
-                16 + MediaQuery.of(context).viewInsets.bottom,
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      // Replace/Take Another Button
-                      Expanded(
-                        child: SizedBox(
-                          height: 52,
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              if (isFromCamera) {
-                                unawaited(_retakePhotoFromPreview());
-                              } else {
-                                _pickFile();
-                              }
-                            },
-                            icon: Icon(
-                              isFromCamera
-                                  ? Icons.camera_alt_outlined
-                                  : Icons.refresh,
-                            ),
-                            label: Text(
-                              isFromCamera ? 'Take Another' : 'Replace',
-                              style: const TextStyle(fontSize: 15),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              side: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.2),
-                                width: 1.5,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      // Send button
-                      Expanded(
-                        child: SizedBox(
-                          height: 52,
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              _uploadAndSendFile(file, fileName, mimeType);
-                            },
-                            icon: const Icon(Icons.send_rounded),
-                            label: const Text(
-                              'Send',
-                              style: TextStyle(fontSize: 15),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF7C3AED),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              elevation: 0,
-                              padding: EdgeInsets.zero,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+            ],
+          ),
+        );
+      },
     );
+  }
+
+  String _resolveOutgoingFileName({
+    required String originalName,
+    required String mimeType,
+    required bool isFromCamera,
+  }) {
+    final raw = originalName.split(RegExp(r'[\\/]')).last.trim();
+    final ext = _fileExtension(raw, mimeType);
+    final looksTemporary = RegExp(
+      r'^(scaled_)?[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}',
+      caseSensitive: false,
+    ).hasMatch(raw);
+
+    if (isFromCamera || looksTemporary || raw.isEmpty) {
+      return 'Photo_${_fileTimestamp(DateTime.now())}.$ext';
+    }
+
+    return raw;
+  }
+
+  String _fileExtension(String fileName, String mimeType) {
+    final dot = fileName.lastIndexOf('.');
+    if (dot > -1 && dot < fileName.length - 1) {
+      return fileName.substring(dot + 1).toLowerCase();
+    }
+    return _extensionFromMime(mimeType);
+  }
+
+  String _extensionFromMime(String mimeType) {
+    if (mimeType.startsWith('image/')) return mimeType.split('/').last;
+    if (mimeType.startsWith('video/')) return mimeType.split('/').last;
+    if (mimeType == 'application/pdf') return 'pdf';
+    return 'bin';
+  }
+
+  String _fileTimestamp(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    final ss = dt.second.toString().padLeft(2, '0');
+    return '${y}${m}${d}_${hh}${mm}${ss}';
+  }
+
+  String _truncateMiddle(String value, {int maxChars = 44}) {
+    if (value.length <= maxChars) return value;
+    final keep = (maxChars - 3) ~/ 2;
+    final start = value.substring(0, keep);
+    final end = value.substring(value.length - keep);
+    return '$start...$end';
   }
 
   IconData _getFileIcon(String mimeType) {
