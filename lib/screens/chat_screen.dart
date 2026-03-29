@@ -4632,6 +4632,14 @@ class _ChatScreenState extends State<ChatScreen>
   /// Pick a file from device storage
   Future<void> _pickFile() async {
     try {
+      _restoreInputFocusOnResume = false;
+      _keepInputUnfocused();
+      try {
+        await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+      } catch (_) {
+        // Ignore transient platform timing issues while hiding the IME.
+      }
+
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.any,
         allowMultiple: false,
@@ -4640,7 +4648,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
         if (file.path != null) {
-          _showFilePreviewModal(
+          await _showFilePreviewModal(
             File(file.path!),
             file.name,
             isFromCamera: false,
@@ -4702,7 +4710,11 @@ class _ChatScreenState extends State<ChatScreen>
       );
 
       if (photo != null) {
-        _showFilePreviewModal(File(photo.path), photo.name, isFromCamera: true);
+        await _showFilePreviewModal(
+          File(photo.path),
+          photo.name,
+          isFromCamera: true,
+        );
       }
     } catch (e) {
       debugPrint('Error taking photo: $e');
@@ -4720,11 +4732,19 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Show file preview modal before sending
-  void _showFilePreviewModal(
+  Future<void> _showFilePreviewModal(
     File file,
     String fileName, {
     bool isFromCamera = false,
-  }) {
+  }) async {
+    _restoreInputFocusOnResume = false;
+    _keepInputUnfocused();
+    try {
+      await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    } catch (_) {
+      // Ignore transient platform timing issues while hiding the IME.
+    }
+
     final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
     final isImage = mimeType.startsWith('image/');
     final isVideo = mimeType.startsWith('video/');
@@ -4736,7 +4756,7 @@ class _ChatScreenState extends State<ChatScreen>
     );
     final displayFileName = _truncateMiddle(uploadFileName, maxChars: 44);
 
-    showModalBottomSheet(
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
