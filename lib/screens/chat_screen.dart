@@ -67,6 +67,7 @@ class _ChatScreenState extends State<ChatScreen>
   bool _isTyping = false;
   bool _isKeyboardVisible = false;
   bool _restoreInputFocusOnResume = false;
+  bool _suppressRestoreOnNextResume = false;
   bool _isRestoringInputFocus = false;
   TextSelection? _savedInputSelection;
   bool _isSwitchingInputMode = false;
@@ -222,8 +223,19 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
+      if (_suppressRestoreOnNextResume) {
+        _restoreInputFocusOnResume = false;
+        return;
+      }
       _restoreInputFocusOnResume =
           _inputFocusNode.hasFocus || _isKeyboardVisible;
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed && _suppressRestoreOnNextResume) {
+      _suppressRestoreOnNextResume = false;
+      _restoreInputFocusOnResume = false;
+      _keepInputUnfocused();
       return;
     }
 
@@ -3471,8 +3483,11 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _changeColor() {
+    _restoreInputFocusOnResume = false;
+    _keepInputUnfocused();
+
     // Show full-screen color picker modal
-    showModalBottomSheet(
+    unawaited(showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -3520,9 +3535,16 @@ class _ChatScreenState extends State<ChatScreen>
           debugPrint(
             'ðŸŽ¨ Color sent to ${widget.otherUser.fullName}: #$colorHex',
           );
+
+          _restoreInputFocusOnResume = false;
+          _keepInputUnfocused();
         },
       ),
-    );
+    ).whenComplete(() {
+      if (!mounted) return;
+      _restoreInputFocusOnResume = false;
+      _keepInputUnfocused();
+    }));
   }
 
   /// Play doorbell sound, holding the AudioPlayer reference alive in a list
@@ -4636,9 +4658,40 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool _useFrontCamera = false;
+  bool _isLaunchingCamera = false;
+
+  Future<void> _retakePhotoFromPreview({bool toggleCamera = false}) async {
+    if (!mounted) return;
+
+    if (toggleCamera) {
+      setState(() {
+        _useFrontCamera = !_useFrontCamera;
+      });
+    }
+
+    _restoreInputFocusOnResume = false;
+    _keepInputUnfocused();
+
+    // Let the preview sheet dismissal animation finish before relaunching camera.
+    await Future<void>.delayed(const Duration(milliseconds: 160));
+    if (!mounted) return;
+    await _takePhoto();
+  }
 
   /// Take a photo with camera
   Future<void> _takePhoto() async {
+    if (_isLaunchingCamera) return;
+    _isLaunchingCamera = true;
+
+    _suppressRestoreOnNextResume = true;
+    _restoreInputFocusOnResume = false;
+    _keepInputUnfocused();
+    try {
+      await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    } catch (_) {
+      // Ignore transient platform timing issues while hiding the IME.
+    }
+
     try {
       final XFile? photo = await _imagePicker.pickImage(
         source: ImageSource.camera,
@@ -4658,6 +4711,11 @@ class _ChatScreenState extends State<ChatScreen>
           context,
         ).showSnackBar(SnackBar(content: Text('Error accessing camera: $e')));
       }
+    } finally {
+      _isLaunchingCamera = false;
+      _suppressRestoreOnNextResume = false;
+      _restoreInputFocusOnResume = false;
+      _keepInputUnfocused();
     }
   }
 
@@ -4877,39 +4935,6 @@ class _ChatScreenState extends State<ChatScreen>
               ),
               child: Column(
                 children: [
-                  if (isFromCamera) ...[
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          setState(() {
-                            _useFrontCamera = !_useFrontCamera;
-                          });
-                          _takePhoto();
-                        },
-                        icon: const Icon(Icons.flip_camera_ios_outlined),
-                        label: Text(
-                          _useFrontCamera
-                              ? 'Switch to Back Camera'
-                              : 'Switch to Front Camera',
-                          style: const TextStyle(fontSize: 15),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          side: BorderSide(
-                            color: Colors.white.withValues(alpha: 0.2),
-                            width: 1.5,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
                   Row(
                     children: [
                       // Replace/Take Another Button
@@ -4920,7 +4945,7 @@ class _ChatScreenState extends State<ChatScreen>
                             onPressed: () {
                               Navigator.pop(context);
                               if (isFromCamera) {
-                                _takePhoto();
+                                unawaited(_retakePhotoFromPreview());
                               } else {
                                 _pickFile();
                               }
