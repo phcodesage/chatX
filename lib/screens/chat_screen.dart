@@ -3152,35 +3152,145 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Widget _buildRingDoorbellQuickAction() {
+  Widget _buildUnifiedActionsBar() {
+    final allButtons = <Widget>[
+      // Ring doorbell button at the start
+      _buildCompressedActionChip(
+        label: 'Ring Doorbell',
+        backgroundColor: const Color(0xFF7C3AED),
+        onPressed: _ringDoorbell,
+      ),
+      // Color button next to ring doorbell
+      _buildCompressedActionChip(
+        label: 'Change Color',
+        backgroundColor: const Color(0xFFA855F7),
+        onPressed: _changeColor,
+      ),
+      if (_showResetButton)
+        _buildCompressedActionChip(
+          label: 'Reset Color',
+          backgroundColor: const Color(0xFF6B7280),
+          onPressed: _resetColor,
+        ),
+      _buildCompressedActionChip(
+        label: 'Send File',
+        backgroundColor: const Color(0xFF10B981),
+        onPressed: _pickFile,
+      ),
+      _buildCompressedActionChip(
+        label: 'Camera',
+        backgroundColor: const Color(0xFF3B82F6),
+        onPressed: _takePhoto,
+      ),
+      _buildCompressedActionChip(
+        label: 'Record Voice',
+        backgroundColor: const Color(0xFFEF4444),
+        onPressed: _showVoiceRecordingModal,
+      ),
+      _buildCompressedActionChip(
+        label: _autoTranslate ? 'Translate (on)' : 'Translate (off)',
+        backgroundColor: _autoTranslate
+            ? const Color(0xFF059669)
+            : const Color(0xFF0891B2),
+        onPressed: _toggleAutoTranslate,
+      ),
+      _buildCompressedActionChip(
+        label: _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
+        backgroundColor: _showTimestamps
+            ? const Color(0xFF4F46E5)
+            : const Color(0xFF8B5CF6),
+        onPressed: _toggleTimestamps,
+      ),
+      _buildCompressedActionChip(
+        label: 'Export Chat',
+        backgroundColor: const Color(0xFF475569),
+        onPressed: _exportChat,
+      ),
+      if (_currentUserIsAdmin)
+        _buildCompressedActionChip(
+          label: 'Delete All',
+          backgroundColor: const Color(0xFFDC2626),
+          onPressed: _adminDeleteAllMessages,
+        ),
+    ];
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: _ringDoorbell,
-            borderRadius: BorderRadius.circular(16),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2A1F45),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: const Color(0xFF7C3AED).withValues(alpha: 0.8),
-                  width: 1,
-                ),
-              ),
-              child: const Text(
-                'ring doorbell',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Transform.translate(
+        offset: const Offset(-2, 0),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: _buildTwoRowActions(allButtons),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTwoRowActions(List<Widget> allButtons) {
+    final columns = (allButtons.length / 2).ceil();
+    final topRow = allButtons.take(columns).toList();
+    final bottomRow = allButtons.skip(columns).toList();
+
+    Widget buildRow(List<Widget> rowButtons) {
+      return Row(
+        children: [
+          for (int i = 0; i < columns; i++) ...[
+            Expanded(
+              child: i < rowButtons.length
+                  ? rowButtons[i]
+                  : const SizedBox.shrink(),
             ),
+            if (i < columns - 1) const SizedBox(width: 3),
+          ],
+        ],
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        buildRow(topRow),
+        const SizedBox(height: 3),
+        buildRow(bottomRow),
+      ],
+    );
+  }
+
+  Widget _buildCompressedActionChip({
+    required String label,
+    required Color backgroundColor,
+    required VoidCallback onPressed,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onPressed();
+        },
+        splashColor: Colors.white.withValues(alpha: 0.28),
+        highlightColor: Colors.white.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.15),
+              width: 1,
+            ),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              overflow: TextOverflow.ellipsis,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 1,
           ),
         ),
       ),
@@ -6708,9 +6818,9 @@ class _ChatScreenState extends State<ChatScreen>
                     RepaintBoundary(
                       child: Container(
                         padding: EdgeInsets.only(
-                          left: 12 * scale,
+                          left: 8 * scale,
                           right: 12 * scale,
-                          top: 8,
+                          top: 6,
                           bottom: 8 + composerInset,
                         ),
                         decoration: BoxDecoration(
@@ -6726,8 +6836,8 @@ class _ChatScreenState extends State<ChatScreen>
                             _buildReplyPreview(),
                             // Quick bulk-send button above the input; in-flow layout avoids covering chat bubbles.
                             _buildSendToManyQuickAction(),
-                            // Quick ring action below quick actions and above the composer input.
-                            _buildRingDoorbellQuickAction(),
+                            // Unified actions bar with ring doorbell and all quick actions together
+                            _buildUnifiedActionsBar(),
                             // Text input field with embedded emoji button and send button
                             ValueListenableBuilder<TextEditingValue>(
                               valueListenable: _messageController,
@@ -6909,18 +7019,7 @@ class _ChatScreenState extends State<ChatScreen>
                                                   ),
                                                 ),
                                               ),
-                                              Padding(
-                                                padding: EdgeInsets.only(
-                                                  bottom:
-                                                      isComposerExpanded ? 10 : 0,
-                                                ),
-                                                child: _buildActionsPlusButton(
-                                                  iconSize: 24 * scale,
-                                                  padding: EdgeInsets.all(
-                                                    6 * scale,
-                                                  ),
-                                                ),
-                                              ),
+                                              // Removed: Actions plus button (now using compressed actions bar above)
                                               if (!hasDraftText)
                                                 Padding(
                                                   padding: EdgeInsets.only(
