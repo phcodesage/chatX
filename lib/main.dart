@@ -71,11 +71,12 @@ Future<Widget> _resolveInitialHome() async {
   if (sharedItems.isNotEmpty) {
     final directShareUserId = sharedItems
         .map((item) => item.directShareUserId)
-        .firstWhere((id) => id != null, orElse: () => null);
+      .firstWhere((id) => id != null, orElse: () => null) ??
+      await ShareIntentService.instance.takePendingDirectShareUserId();
 
     return ShareTargetScreen(
       sharedItems: sharedItems,
-      users: const [],
+      users: cachedUsers,
       openLobbyOnExit: true,
       directShareUserId: directShareUserId,
     );

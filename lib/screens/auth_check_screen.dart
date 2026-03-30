@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../services/chat_cache_service.dart';
 import '../services/storage_service.dart';
 import '../services/socket_service.dart';
 import '../services/presence_service.dart';
@@ -55,13 +56,16 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         if (sharedItems.isNotEmpty) {
           final directShareUserId = sharedItems
               .map((item) => item.directShareUserId)
-              .firstWhere((id) => id != null, orElse: () => null);
+              .firstWhere((id) => id != null, orElse: () => null) ??
+              await ShareIntentService.instance.takePendingDirectShareUserId();
+          final cachedUsers = await ChatCacheService.loadLobbyUsers(userId);
+          if (!mounted) return;
 
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (_) => ShareTargetScreen(
                 sharedItems: sharedItems,
-                users: const [],
+                users: cachedUsers,
                 openLobbyOnExit: true,
                 directShareUserId: directShareUserId,
               ),

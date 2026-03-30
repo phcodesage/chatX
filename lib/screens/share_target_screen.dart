@@ -95,10 +95,33 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
     });
   }
 
+  DateTime _parseMessageTime(String? timestamp) {
+    if (timestamp == null || timestamp.isEmpty) {
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    try {
+      return DateTime.parse(timestamp).toUtc();
+    } catch (_) {
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
+  }
+
   List<LobbyUser> _normalizeUsers(List<LobbyUser> users) {
     final sortedUsers = List<LobbyUser>.from(users)
       ..sort(
-        (a, b) => a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase()),
+        (a, b) {
+          final timeCompare = _parseMessageTime(
+            b.lastMessageTime,
+          ).compareTo(_parseMessageTime(a.lastMessageTime));
+          if (timeCompare != 0) {
+            return timeCompare;
+          }
+
+          return a.fullName.toLowerCase().compareTo(
+            b.fullName.toLowerCase(),
+          );
+        },
       );
     return sortedUsers;
   }

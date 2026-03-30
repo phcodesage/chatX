@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
+import android.content.ComponentName
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -50,6 +51,7 @@ class MainActivity : FlutterActivity() {
     private var shareMethodChannel: MethodChannel? = null
     private var shortcutMethodChannel: MethodChannel? = null
     private var pendingSharedItems: List<Map<String, String>> = emptyList()
+    private var pendingSharedTargetUserId: String? = null
     private var pendingShortcutTargetUserId: String? = null
     private var isInCall = false
     private var isMuted = false
@@ -92,8 +94,11 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        logIntent(intent, "onCreate")
         pendingSharedItems = extractSharedItemsFromIntent(intent)
+        pendingSharedTargetUserId = extractSharedTargetUserId(intent)
         pendingShortcutTargetUserId = extractShortcutTargetUserId(intent)
+        Log.d("ShareDebug", "onCreate result: items=${pendingSharedItems.size}, sharedTarget=$pendingSharedTargetUserId, shortcutTarget=$pendingShortcutTargetUserId")
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -109,6 +114,11 @@ class MainActivity : FlutterActivity() {
                     val currentItems = pendingSharedItems
                     pendingSharedItems = emptyList()
                     result.success(currentItems)
+                }
+                "consumeInitialSharedTargetUserId" -> {
+                    val currentTarget = pendingSharedTargetUserId
+                    pendingSharedTargetUserId = null
+                    result.success(currentTarget)
                 }
                 else -> result.notImplemented()
             }
@@ -359,10 +369,14 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        logIntent(intent, "onNewIntent")
 
         val sharedItems = extractSharedItemsFromIntent(intent)
+        pendingSharedTargetUserId = extractSharedTargetUserId(intent)
+        Log.d("ShareDebug", "onNewIntent result: items=${sharedItems.size}, sharedTarget=$pendingSharedTargetUserId")
         if (sharedItems.isNotEmpty()) {
             pendingSharedItems = sharedItems
+            Log.d("ShareDebug", "onNewIntent: invoking onSharedItems, first item directShareUserId=${sharedItems.firstOrNull()?.get("directShareUserId")}")
             shareMethodChannel?.invokeMethod("onSharedItems", sharedItems)
         }
 
@@ -383,12 +397,95 @@ class MainActivity : FlutterActivity() {
             return null
         }
 
-        val action = intent.action ?: return shortcutUserId
-        if (action == Intent.ACTION_SEND || action == Intent.ACTION_SEND_MULTIPLE) {
+        // Reuse the same shortcut for two cases:
+        // 1) launcher recent-chat tap -> ACTION_SEND but with no shared payload -> open chat
+        // 2) sharesheet direct-share tap -> ACTION_SEND with EXTRA_STREAM/clipData/text -> auto-send shared content
+        if (intentHasSharedPayload(intent)) {
             return null
         }
 
         return shortcutUserId
+    }
+
+    private fun logIntent(intent: Intent?, source: String) {
+        if (intent == null) {
+            Log.d("ShareDebug", "[$source] intent is null")
+            return
+        }
+        Log.d("ShareDebug", "[$source] action=${intent.action}, type=${intent.type}")
+        Log.d("ShareDebug", "[$source] direct_share_user_id=${intent.getStringExtra("direct_share_user_id")}")
+        val stream = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION") intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        }
+        Log.d("ShareDebug", "[$source] EXTRA_STREAM=$stream")
+        Log.d("ShareDebug", "[$source] clipData=${intent.clipData}, clipData.itemCount=${intent.clipData?.itemCount ?: 0}")
+        Log.d("ShareDebug", "[$source] EXTRA_TEXT=${intent.getStringExtra(Intent.EXTRA_TEXT)?.take(80)}")
+        val extras = intent.extras
+        if (extras != null) {
+            val keys = extras.keySet().joinToString(", ")
+            Log.d("ShareDebug", "[$source] all extras keys: $keys")
+        }
+    }
+
+    private fun intentHasSharedPayload(intent: Intent): Boolean {
+        if (intent.clipData != null && intent.clipData!!.itemCount > 0) {
+            return true
+        }
+
+        if (!intent.getStringExtra(Intent.EXTRA_TEXT).isNullOrBlank()) {
+            return true
+        }
+
+        val action = intent.action ?: return false
+        return when (action) {
+            Intent.ACTION_SEND -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java) != null
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) != null
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val list = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                    !list.isNullOrEmpty()
+                } else {
+                    @Suppress("DEPRECATION")
+                    val list = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                    !list.isNullOrEmpty()
+                }
+            }
+            else -> false
+        }
+    }
+
+    private fun extractSharedTargetUserId(intent: Intent?): String? {
+        if (intent == null) {
+            return null
+        }
+
+        val action = intent.action ?: return null
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
+            return null
+        }
+
+        val id = intent.getStringExtra("direct_share_user_id")
+            ?: userIdFromShortcutIdExtra(intent)
+        Log.d("ShareDebug", "extractSharedTargetUserId: action=$action, direct_share_user_id=${intent.getStringExtra("direct_share_user_id")}, shortcut_fallback=${userIdFromShortcutIdExtra(intent)}, resolved=$id")
+        return id
+    }
+
+    private fun userIdFromShortcutIdExtra(intent: Intent): String? {
+        val sid = intent.getStringExtra("shortcut_id")
+            ?: intent.getStringExtra("android.intent.extra.shortcut.ID")
+            ?: intent.extras?.getString("android.intent.extra.shortcut.ID")
+            ?: intent.extras?.getString("android.intent.extra.shortcut_id")
+            ?: return null
+        val prefix = "share_target_user_"
+        return if (sid.startsWith(prefix)) sid.removePrefix(prefix) else null
     }
 
     private fun extractSharedItemsFromIntent(intent: Intent?): List<Map<String, String>> {
@@ -465,6 +562,8 @@ class MainActivity : FlutterActivity() {
         // If arrived via a Direct Share shortcut the shortcut intent merges its extras
         // into the ACTION_SEND intent — pick up the user id and annotate each item.
         val directShareUserId = intent.getStringExtra("direct_share_user_id")
+            ?: userIdFromShortcutIdExtra(intent)
+        Log.d("ShareDebug", "extractSharedItemsFromIntent: directShareUserId=$directShareUserId (raw=${intent.getStringExtra("direct_share_user_id")}, shortcutFallback=${userIdFromShortcutIdExtra(intent)})")
         if (!directShareUserId.isNullOrBlank() && extractedItems.isNotEmpty()) {
             return extractedItems.map { it + ("directShareUserId" to directShareUserId) }
         }
@@ -487,14 +586,18 @@ class MainActivity : FlutterActivity() {
             // The shortcut's own intent — Android will merge its extras with the
             // incoming ACTION_SEND intent when the user picks this shortcut.
             val directShareIntent = Intent(this, MainActivity::class.java).apply {
-                action = Intent.ACTION_VIEW
+                action = Intent.ACTION_SEND
                 putExtra("direct_share_user_id", userId)
+                // Secondary identifier: allows us to recover userId from shortcut ID
+                // even if the primary extra is dropped during intent merging.
+                putExtra("shortcut_id", shortcutId)
             }
 
             ShortcutInfoCompat.Builder(this, shortcutId)
                 .setShortLabel(name)
                 .setLongLabel(name)
                 .setIcon(IconCompat.createWithBitmap(makeInitialsIcon(name, colorIndex)))
+                .setActivity(ComponentName(this, MainActivity::class.java))
                 .setIntent(directShareIntent)
                 .setPersons(arrayOf(person))
                 .setLongLived(true)
@@ -504,9 +607,8 @@ class MainActivity : FlutterActivity() {
         }
 
         if (shortcuts.isNotEmpty()) {
-            shortcuts.forEach { shortcut ->
-                ShortcutManagerCompat.pushDynamicShortcut(this, shortcut)
-            }
+            ShortcutManagerCompat.removeAllDynamicShortcuts(this)
+            ShortcutManagerCompat.addDynamicShortcuts(this, shortcuts)
         }
     }
 

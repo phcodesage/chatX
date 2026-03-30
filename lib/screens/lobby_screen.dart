@@ -568,7 +568,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
       // so ShareTargetScreen can pre-select and auto-send without user interaction.
       final directShareUserId = sharedItems
           .map((i) => i.directShareUserId)
-          .firstWhere((id) => id != null, orElse: () => null);
+          .firstWhere((id) => id != null, orElse: () => null) ??
+          await ShareIntentService.instance.takePendingDirectShareUserId();
 
       final result = await Navigator.push(
         context,

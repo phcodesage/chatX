@@ -77,6 +77,7 @@ class ShareIntentService {
 
   bool _initialized = false;
   List<SharedMediaItem> _pendingItems = const [];
+  int? _pendingDirectShareUserId;
 
   Stream<List<SharedMediaItem>> get sharedItemsStream =>
       _sharedItemsController.stream;
@@ -96,6 +97,8 @@ class ShareIntentService {
       _pendingItems = initialItems;
       _sharedItemsController.add(initialItems);
     }
+
+    _pendingDirectShareUserId = await _consumeDirectShareTargetUserId();
   }
 
   Future<List<SharedMediaItem>> takePendingSharedItems() async {
@@ -106,6 +109,16 @@ class ShareIntentService {
     }
 
     return _consumeFromPlatform();
+  }
+
+  Future<int?> takePendingDirectShareUserId() async {
+    if (_pendingDirectShareUserId != null) {
+      final userId = _pendingDirectShareUserId;
+      _pendingDirectShareUserId = null;
+      return userId;
+    }
+
+    return _consumeDirectShareTargetUserId();
   }
 
   Future<dynamic> _onMethodCall(MethodCall call) async {
@@ -132,6 +145,20 @@ class ShareIntentService {
     } catch (e) {
       debugPrint('ShareIntentService consumeInitialSharedItems failed: $e');
       return const [];
+    }
+  }
+
+  Future<int?> _consumeDirectShareTargetUserId() async {
+    try {
+      final response = await _channel.invokeMethod<dynamic>(
+        'consumeInitialSharedTargetUserId',
+      );
+      if (response is int) return response;
+      if (response is String) return int.tryParse(response);
+      return null;
+    } catch (e) {
+      debugPrint('ShareIntentService consumeInitialSharedTargetUserId failed: $e');
+      return null;
     }
   }
 

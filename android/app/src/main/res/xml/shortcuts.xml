@@ -9,7 +9,15 @@
 -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
     <share-target android:targetClass="com.example.flutter_messenger_v2.MainActivity">
+        <data android:mimeType="image/*" />
+        <data android:mimeType="video/*" />
+        <data android:mimeType="audio/*" />
+        <data android:mimeType="text/*" />
+        <data android:mimeType="application/*" />
         <data android:mimeType="*/*" />
+        <data android:mimeType="text/x-vcard" />
+        <data android:mimeType="text/vcard" />
+        <data android:mimeType="application/vcard" />
         <category android:name="com.example.flutter_messenger_v2.directshare" />
     </share-target>
 </shortcuts>

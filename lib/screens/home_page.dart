@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../models/lobby_user.dart';
+import '../services/chat_cache_service.dart';
+import '../services/storage_service.dart';
 import '../services/share_intent_service.dart';
 import 'lobby_screen.dart';
 import 'share_target_screen.dart';
@@ -39,14 +42,22 @@ class _HomePageState extends State<HomePage> {
     if (sharedItems.isNotEmpty) {
       final directShareUserId = sharedItems
           .map((item) => item.directShareUserId)
-          .firstWhere((id) => id != null, orElse: () => null);
+          .firstWhere((id) => id != null, orElse: () => null) ??
+          await ShareIntentService.instance.takePendingDirectShareUserId();
+      final currentUserId = await StorageService.getUserId();
+        final List<LobbyUser> cachedUsers = currentUserId == null
+          ? const <LobbyUser>[]
+          : await ChatCacheService.loadLobbyUsers(currentUserId);
+        if (!mounted) {
+          return;
+        }
 
       await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => ShareTargetScreen(
             sharedItems: sharedItems,
-            users: const [],
+            users: cachedUsers,
             directShareUserId: directShareUserId,
           ),
         ),
