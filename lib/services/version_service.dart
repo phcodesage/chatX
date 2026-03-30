@@ -1,0 +1,501 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:open_filex/open_filex.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+import '../config/api_config.dart';
+import 'storage_service.dart';
+
+class AppVersionInfo {
+  final String version;
+  final int buildNumber;
+  final String downloadUrl;
+  final bool forceUpdate;
+  final String releaseNotes;
+
+  const AppVersionInfo({
+    required this.version,
+    required this.buildNumber,
+    required this.downloadUrl,
+    required this.forceUpdate,
+    required this.releaseNotes,
+  });
+
+  factory AppVersionInfo.fromJson(Map<String, dynamic> json) {
+    final dynamic rawBuild = json['build_number'];
+    final int build = rawBuild is int
+        ? rawBuild
+        : int.tryParse(rawBuild?.toString() ?? '') ?? 0;
+
+    return AppVersionInfo(
+      version: (json['version'] as String? ?? '').trim(),
+      buildNumber: build,
+      downloadUrl: (json['download_url'] as String? ?? '').trim(),
+      forceUpdate: json['force_update'] as bool? ?? false,
+      releaseNotes: (json['release_notes'] as String? ?? '').trim(),
+    );
+  }
+}
+
+class ApkDownloader {
+  final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(minutes: 5),
+      sendTimeout: const Duration(seconds: 30),
+    ),
+  );
+
+  Future<String> downloadApk({
+    required String url,
+    required String version,
+    String? authToken,
+    void Function(String message)? onLog,
+    required void Function(int received, int total) onProgress,
+  }) async {
+    if (!Platform.isAndroid) {
+      throw Exception('Auto-install is only supported on Android.');
+    }
+
+    await _ensureInstallPermission();
+
+    final tempDir = await getTemporaryDirectory();
+    final safeVersion = version.replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '_');
+    final outputPath = '${tempDir.path}/flask_call_app_$safeVersion.apk';
+
+    final headers = <String, String>{
+      'Accept': 'application/vnd.android.package-archive,application/octet-stream,*/*',
+    };
+    if (authToken != null && authToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $authToken';
+    }
+
+    onLog?.call('Downloading APK from: $url');
+    final response = await _dio.get<List<int>>(
+      url,
+      onReceiveProgress: onProgress,
+      options: Options(
+        responseType: ResponseType.bytes,
+        headers: headers,
+        followRedirects: true,
+        maxRedirects: 5,
+        validateStatus: (status) => status != null && status >= 200 && status < 400,
+      ),
+    );
+
+    final bytes = response.data ?? const <int>[];
+    final contentType = response.headers.value(Headers.contentTypeHeader) ?? 'unknown';
+    onLog?.call('Download response: status=${response.statusCode}, content-type=$contentType, bytes=${bytes.length}');
+
+    if (bytes.length < 4 ||
+        bytes[0] != 0x50 ||
+        bytes[1] != 0x4B ||
+        bytes[2] != 0x03 ||
+        bytes[3] != 0x04) {
+      throw Exception(
+        'Downloaded file is not a valid APK payload (zip signature missing). Check backend app-download response.',
+      );
+    }
+
+    final file = File(outputPath);
+    await file.writeAsBytes(bytes, flush: true);
+    onLog?.call('APK saved to: $outputPath');
+
+    return outputPath;
+  }
+
+  Future<OpenResult> launchInstaller(String apkPath) {
+    return OpenFilex.open(
+      apkPath,
+      type: 'application/vnd.android.package-archive',
+    );
+  }
+
+  Future<void> _ensureInstallPermission() async {
+    if (!Platform.isAndroid) return;
+    final status = await Permission.requestInstallPackages.status;
+    if (status.isGranted) return;
+
+    final requested = await Permission.requestInstallPackages.request();
+    if (!requested.isGranted) {
+      throw Exception('Install unknown apps permission is required.');
+    }
+  }
+}
+
+class VersionService {
+  static final VersionService _instance = VersionService._internal();
+  factory VersionService() => _instance;
+  VersionService._internal();
+
+  bool _isChecking = false;
+  bool _dialogVisible = false;
+  String? _lastPromptedVersion;
+
+  void _log(String message) {
+    debugPrint('[VersionService] $message');
+  }
+
+  Future<void> checkAndPromptUpdate(BuildContext context) async {
+    if (!context.mounted) {
+      _log('Skipped check: context is not mounted.');
+      return;
+    }
+    if (_isChecking) {
+      _log('Skipped check: another check is already running.');
+      return;
+    }
+    if (_dialogVisible) {
+      _log('Skipped check: update dialog is already visible.');
+      return;
+    }
+
+    _isChecking = true;
+    _log('Starting version check. Endpoint: ${ApiConfig.appVersionUrl}');
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentVersion = packageInfo.version;
+      final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+      _log('Installed version: $currentVersion (build: $currentBuild)');
+
+      final response = await http
+          .get(Uri.parse(ApiConfig.appVersionUrl))
+          .timeout(const Duration(seconds: 12));
+      _log('Version API response status: ${response.statusCode}');
+
+      if (response.statusCode != 200) {
+        _log('Stopping check: non-200 response from version API.');
+        return;
+      }
+
+      final payload = json.decode(response.body);
+      if (payload is! Map<String, dynamic>) {
+        _log('Stopping check: invalid version payload format.');
+        return;
+      }
+
+      final info = AppVersionInfo.fromJson(payload);
+      _log(
+        'Server version payload: version=${info.version}, build=${info.buildNumber}, forceUpdate=${info.forceUpdate}',
+      );
+      if (info.version.isEmpty) {
+        _log('Stopping check: server version is empty.');
+        return;
+      }
+
+      final resolvedDownloadUrl = _resolveDownloadUrl(info.downloadUrl);
+      if (resolvedDownloadUrl.isEmpty) {
+        _log('Stopping check: could not resolve download URL.');
+        return;
+      }
+      _log('Resolved download URL: $resolvedDownloadUrl');
+
+      final shouldUpdate = _isUpdateRequired(
+        currentVersion: currentVersion,
+        currentBuild: currentBuild,
+        serverVersion: info.version,
+        serverBuild: info.buildNumber,
+      );
+
+      _log('Should show update dialog: $shouldUpdate');
+      if (!shouldUpdate) {
+        _log('No update available. Dialog will not be shown.');
+        return;
+      }
+      if (_lastPromptedVersion == info.version && !info.forceUpdate) {
+        _log('Skipping dialog: same version already prompted in this session.');
+        return;
+      }
+
+      _dialogVisible = true;
+      _log('Showing update dialog for version ${info.version}.');
+
+      if (!context.mounted) return;
+
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: !info.forceUpdate,
+        builder: (dialogContext) {
+          return UpdateDialog(
+            info: info,
+            currentVersion: currentVersion,
+            downloadUrl: resolvedDownloadUrl,
+            downloader: ApkDownloader(),
+          );
+        },
+      );
+
+      _lastPromptedVersion = info.version;
+    } catch (e) {
+      _log('Version check failed: $e');
+    } finally {
+      _isChecking = false;
+      _dialogVisible = false;
+      _log('Version check finished.');
+    }
+  }
+
+  bool _isUpdateRequired({
+    required String currentVersion,
+    required int currentBuild,
+    required String serverVersion,
+    required int serverBuild,
+  }) {
+    final versionCmp = _compareSemver(serverVersion, currentVersion);
+
+    // Android installs require higher versionCode for updates.
+    // If backend provides build numbers, enforce monotonic increase.
+    if (serverBuild > 0 && currentBuild > 0) {
+      if (serverBuild <= currentBuild) {
+        _log(
+          'Not installable as update: server build ($serverBuild) <= installed build ($currentBuild).',
+        );
+        return false;
+      }
+      return versionCmp >= 0;
+    }
+
+    // Fallback when build numbers are unavailable.
+    return versionCmp > 0;
+  }
+
+  int _compareSemver(String a, String b) {
+    final aParts = _extractVersionParts(a);
+    final bParts = _extractVersionParts(b);
+    final len = aParts.length > bParts.length ? aParts.length : bParts.length;
+
+    for (var i = 0; i < len; i++) {
+      final av = i < aParts.length ? aParts[i] : 0;
+      final bv = i < bParts.length ? bParts[i] : 0;
+      if (av != bv) return av.compareTo(bv);
+    }
+
+    return 0;
+  }
+
+  List<int> _extractVersionParts(String version) {
+    final matches = RegExp(r'\d+').allMatches(version);
+    final parts = matches.map((m) => int.tryParse(m.group(0) ?? '0') ?? 0).toList();
+    if (parts.isEmpty) return <int>[0];
+    return parts;
+  }
+
+  String _resolveDownloadUrl(String rawDownloadUrl) {
+    if (rawDownloadUrl.trim().isEmpty) {
+      return ApiConfig.appDownloadUrl;
+    }
+
+    final uri = Uri.tryParse(rawDownloadUrl.trim());
+    if (uri == null) return '';
+
+    if (uri.hasScheme) {
+      return uri.toString();
+    }
+
+    final baseUri = Uri.parse(ApiConfig.baseUrl);
+    return baseUri.resolveUri(uri).toString();
+  }
+}
+
+class UpdateDialog extends StatefulWidget {
+  final AppVersionInfo info;
+  final String currentVersion;
+  final String downloadUrl;
+  final ApkDownloader downloader;
+
+  const UpdateDialog({
+    super.key,
+    required this.info,
+    required this.currentVersion,
+    required this.downloadUrl,
+    required this.downloader,
+  });
+
+  @override
+  State<UpdateDialog> createState() => _UpdateDialogState();
+}
+
+class _UpdateDialogState extends State<UpdateDialog> {
+  bool _isDownloading = false;
+  double _progress = 0;
+  String _status = '';
+
+  Future<void> _downloadAndInstall() async {
+    setState(() {
+      _isDownloading = true;
+      _progress = 0;
+      _status = 'Starting download...';
+    });
+
+    try {
+      final authToken = await StorageService.getToken();
+      debugPrint('[VersionService] Download starting. Auth token present: ${authToken != null && authToken.isNotEmpty}');
+      if (kDebugMode) {
+        debugPrint(
+          '[VersionService] Debug build detected. Installing a release APK over a debug app usually fails due to signing mismatch.',
+        );
+      }
+
+      final apkPath = await widget.downloader.downloadApk(
+        url: widget.downloadUrl,
+        version: widget.info.version,
+        authToken: authToken,
+        onLog: (message) => debugPrint('[VersionService] $message'),
+        onProgress: (received, total) {
+          if (!mounted) return;
+
+          final value = total <= 0 ? 0.0 : (received / total).clamp(0.0, 1.0);
+          final receivedMb = (received / 1024 / 1024).toStringAsFixed(1);
+          final totalMb = total <= 0
+              ? '--'
+              : (total / 1024 / 1024).toStringAsFixed(1);
+
+          setState(() {
+            _progress = value;
+            _status = 'Downloading $receivedMb / $totalMb MB';
+          });
+        },
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _progress = 1;
+        _status = 'Launching installer...';
+      });
+
+      final result = await widget.downloader.launchInstaller(apkPath);
+      if (!mounted) return;
+
+      if (result.type == ResultType.done) {
+        setState(() {
+          _status = 'Installer opened.';
+        });
+      } else {
+        setState(() {
+          _isDownloading = false;
+          _status = 'Could not open installer: ${result.message}';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isDownloading = false;
+        _status = 'Update failed: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canDismiss = !widget.info.forceUpdate && !_isDownloading;
+
+    return PopScope(
+      canPop: canDismiss,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Update Available'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _VersionBadge(label: 'Current', value: widget.currentVersion),
+                _VersionBadge(label: 'Latest', value: widget.info.version),
+              ],
+            ),
+            if (widget.info.releaseNotes.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                widget.info.releaseNotes,
+                style: const TextStyle(fontSize: 13),
+              ),
+            ],
+            const SizedBox(height: 10),
+            Text(
+              'Update source: ${_formatSourceLabel(widget.downloadUrl)}',
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+            if (_isDownloading || _status.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              LinearProgressIndicator(value: _isDownloading ? _progress : null),
+              const SizedBox(height: 8),
+              Text(
+                _status,
+                style: const TextStyle(fontSize: 12),
+              ),
+            ],
+            if (widget.info.forceUpdate) ...[
+              const SizedBox(height: 10),
+              const Text(
+                'This update is required to continue using the app.',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ],
+        ),
+        actions: _isDownloading
+            ? null
+            : [
+                if (!widget.info.forceUpdate)
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Later'),
+                  ),
+                FilledButton(
+                  onPressed: _downloadAndInstall,
+                  child: const Text('Download & Install'),
+                ),
+              ],
+      ),
+    );
+  }
+
+  String _formatSourceLabel(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return ApiConfig.appDownloadUrl;
+    final host = uri.host.isEmpty ? ApiConfig.baseUrl : uri.host;
+    final path = uri.path.isEmpty ? '/api/mobile/app-download' : uri.path;
+    return '$host$path';
+  }
+}
+
+class _VersionBadge extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _VersionBadge({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: RichText(
+        text: TextSpan(
+          style: DefaultTextStyle.of(context).style,
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            TextSpan(text: value),
+          ],
+        ),
+      ),
+    );
+  }
+}

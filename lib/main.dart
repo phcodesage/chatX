@@ -24,6 +24,7 @@ import 'services/share_intent_service.dart';
 import 'services/shortcut_service.dart';
 import 'services/socket_service.dart';
 import 'services/presence_service.dart';
+import 'services/version_service.dart';
 import 'utils/notification_handler.dart';
 
 void main() async {
@@ -149,7 +150,7 @@ Future<void> _bootstrapAppServices() async {
   }
 }
 
-class MessengerApp extends StatelessWidget {
+class MessengerApp extends StatefulWidget {
   final Widget initialHome;
 
   const MessengerApp({super.key, required this.initialHome});
@@ -159,10 +160,57 @@ class MessengerApp extends StatelessWidget {
   static const Color primaryBtn = Color(0xFF2E2A8B); // deep indigo button
 
   @override
+  State<MessengerApp> createState() => _MessengerAppState();
+}
+
+class _MessengerAppState extends State<MessengerApp>
+    with WidgetsBindingObserver {
+  DateTime? _lastResumeUpdateCheck;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final navigatorContext = NotificationHandler.navigatorKey.currentContext;
+      if (navigatorContext == null) return;
+      VersionService().checkAndPromptUpdate(navigatorContext);
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !mounted) return;
+
+    final now = DateTime.now();
+    if (_lastResumeUpdateCheck != null &&
+        now.difference(_lastResumeUpdateCheck!) <
+            const Duration(seconds: 5)) {
+      return;
+    }
+
+    _lastResumeUpdateCheck = now;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final navigatorContext = NotificationHandler.navigatorKey.currentContext;
+      if (navigatorContext == null) return;
+      VersionService().checkAndPromptUpdate(navigatorContext);
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final baseTheme = ThemeData(
       colorScheme: ColorScheme.fromSeed(
-        seedColor: blue900,
+        seedColor: MessengerApp.blue900,
         brightness: Brightness.dark,
       ),
       useMaterial3: true,
@@ -203,7 +251,7 @@ class MessengerApp extends StatelessWidget {
         splashFactory: NoSplash.splashFactory,
         highlightColor: Colors.transparent,
       ),
-      home: initialHome,
+      home: widget.initialHome,
       routes: {
         SignInPage.route: (_) => const SignInPage(),
         RegisterPage.route: (_) => const RegisterPage(),

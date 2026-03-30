@@ -18,7 +18,6 @@ import 'connected_call_screen.dart';
 import 'group_chat_screen.dart';
 import 'create_group_screen.dart';
 import 'sign_in_page.dart';
-import '../services/app_update_service.dart';
 import '../services/storage_service.dart';
 import '../config/api_config.dart';
 import '../services/presence_service.dart';
@@ -83,12 +82,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _setupRealtimeListeners();
     _setupShareIntentListener();
     _setupShortcutLaunchListener();
-    // Check for app updates after a short delay
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        AppUpdateService().checkForUpdate(context);
-      }
-    });
     // Periodically refresh "last seen" relative labels (like the web app does)
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted) setState(() {});
