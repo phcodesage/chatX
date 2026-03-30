@@ -52,6 +52,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Timer? _lastSeenRefreshTimer;
   Timer? _searchDebounceTimer;
   StreamSubscription<List<SharedMediaItem>>? _shareIntentSubscription;
+  StreamSubscription<int>? _shortcutLaunchSubscription;
   Future<int?> _currentUserId = StorageService.getUserId();
   bool _isSharePickerOpen = false;
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
@@ -81,6 +82,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _searchController.addListener(_onSearchQueryChanged);
     _setupRealtimeListeners();
     _setupShareIntentListener();
+    _setupShortcutLaunchListener();
     // Check for app updates after a short delay
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) {
@@ -498,6 +500,51 @@ class _LobbyScreenState extends State<LobbyScreen> {
         .listen((_) {
           _openSharePickerIfNeeded();
         });
+  }
+
+  void _setupShortcutLaunchListener() {
+    _shortcutLaunchSubscription?.cancel();
+    _shortcutLaunchSubscription = ShortcutService.instance.shortcutTargetStream
+        .listen((userId) {
+          _openShortcutChatIfNeeded(userId);
+        });
+  }
+
+  Future<void> _openShortcutChatIfNeeded(int userId) async {
+    if (!mounted) return;
+
+    LobbyUser? targetUser;
+    for (final user in _lobbyUsers) {
+      if (user.id == userId) {
+        targetUser = user;
+        break;
+      }
+    }
+
+    if (targetUser == null) {
+      try {
+        final refreshedUsers = await LobbyService.getLobbyUsers();
+        if (!mounted) return;
+        setState(() {
+          _lobbyUsers = _sortUsersByRecentActivity(refreshedUsers);
+        });
+        _filterUsers();
+        for (final user in _lobbyUsers) {
+          if (user.id == userId) {
+            targetUser = user;
+            break;
+          }
+        }
+      } catch (e) {
+        debugPrint('Failed to refresh users for shortcut launch: $e');
+      }
+    }
+
+    if (!mounted || targetUser == null) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ChatScreen(otherUser: targetUser!)),
+    );
   }
 
   Future<void> _openSharePickerIfNeeded() async {
@@ -1106,6 +1153,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     _typingUsers.clear();
     _shareIntentSubscription?.cancel();
+    _shortcutLaunchSubscription?.cancel();
     // Clear all lobby socket listeners to prevent memory leaks
     _socketService.removeListenersForKey('lobby');
     super.dispose();

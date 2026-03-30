@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'dart:async';
 
 import '../models/lobby_user.dart';
 
@@ -10,9 +11,64 @@ import '../models/lobby_user.dart';
 class ShortcutService {
   ShortcutService._();
 
+  static final ShortcutService instance = ShortcutService._();
+
   static const _channel = MethodChannel(
     'com.example.flutter_messenger_v2/shortcuts',
   );
+
+  final StreamController<int> _shortcutTargetController =
+      StreamController<int>.broadcast();
+  bool _initialized = false;
+  int? _pendingShortcutUserId;
+
+  Stream<int> get shortcutTargetStream => _shortcutTargetController.stream;
+
+  Future<void> initialize() async {
+    if (_initialized) return;
+    _initialized = true;
+    _channel.setMethodCallHandler(_onMethodCall);
+
+    try {
+      final result = await _channel.invokeMethod<dynamic>(
+        'consumeInitialShortcutTarget',
+      );
+      final userId = _parseUserId(result);
+      if (userId != null) {
+        _pendingShortcutUserId = userId;
+        _shortcutTargetController.add(userId);
+      }
+    } catch (e) {
+      debugPrint('ShortcutService.initialize: $e');
+    }
+  }
+
+  Future<int?> takePendingShortcutUserId() async {
+    final current = _pendingShortcutUserId;
+    _pendingShortcutUserId = null;
+    return current;
+  }
+
+  Future<dynamic> _onMethodCall(MethodCall call) async {
+    if (call.method != 'onShortcutTarget') {
+      return null;
+    }
+
+    final userId = _parseUserId(call.arguments);
+    if (userId == null) {
+      return null;
+    }
+
+    _pendingShortcutUserId = userId;
+    _shortcutTargetController.add(userId);
+    return null;
+  }
+
+  int? _parseUserId(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is String) return int.tryParse(raw);
+    return null;
+  }
 
   static Future<void> publishShareTargets(List<LobbyUser> users) async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
@@ -32,6 +88,17 @@ class ShortcutService {
       );
     } catch (e) {
       debugPrint('ShortcutService.publishShareTargets: $e');
+    }
+  }
+
+  static Future<void> reportShareUsed(int userId) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await _channel.invokeMethod<void>('reportShareUsed', {
+        'userId': userId.toString(),
+      });
+    } catch (e) {
+      debugPrint('ShortcutService.reportShareUsed: $e');
     }
   }
 }

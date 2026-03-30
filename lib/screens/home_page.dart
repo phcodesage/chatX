@@ -37,11 +37,18 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (sharedItems.isNotEmpty) {
+      final directShareUserId = sharedItems
+          .map((item) => item.directShareUserId)
+          .firstWhere((id) => id != null, orElse: () => null);
+
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) =>
-              ShareTargetScreen(sharedItems: sharedItems, users: const []),
+          builder: (context) => ShareTargetScreen(
+            sharedItems: sharedItems,
+            users: const [],
+            directShareUserId: directShareUserId,
+          ),
         ),
       );
 

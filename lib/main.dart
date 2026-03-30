@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'firebase_options.dart';
+import 'models/lobby_user.dart';
 import 'screens/sign_in_page.dart';
 import 'screens/register_page.dart';
 import 'screens/forgot_password_page.dart';
@@ -12,12 +13,15 @@ import 'screens/reset_password_page.dart';
 import 'screens/home_page.dart';
 import 'screens/lobby_screen.dart';
 import 'screens/share_target_screen.dart';
+import 'screens/chat_screen.dart';
 import 'services/firebase_messaging_service.dart';
 import 'services/fcm_service.dart';
 import 'services/auth_error_handler.dart';
 import 'services/chat_cache_service.dart';
+import 'services/lobby_service.dart';
 import 'services/storage_service.dart';
 import 'services/share_intent_service.dart';
+import 'services/shortcut_service.dart';
 import 'services/socket_service.dart';
 import 'services/presence_service.dart';
 import 'utils/notification_handler.dart';
@@ -32,6 +36,7 @@ void main() async {
   await StorageService.init();
   await ChatCacheService.init();
   await ShareIntentService.instance.initialize();
+  await ShortcutService.instance.initialize();
 
   final initialHome = await _resolveInitialHome();
 
@@ -54,17 +59,61 @@ Future<Widget> _resolveInitialHome() async {
   PresenceService().startHeartbeat();
   unawaited(PresenceService.updateStatus('online'));
 
+  // Prime Android Direct Share shortcuts from local cache so top-row
+  // conversation targets are available even before lobby fully loads.
+  final cachedUsers = await ChatCacheService.loadLobbyUsers(userId);
+  if (cachedUsers.isNotEmpty) {
+    unawaited(ShortcutService.publishShareTargets(cachedUsers));
+  }
+
   final sharedItems = await ShareIntentService.instance
       .takePendingSharedItems();
   if (sharedItems.isNotEmpty) {
+    final directShareUserId = sharedItems
+        .map((item) => item.directShareUserId)
+        .firstWhere((id) => id != null, orElse: () => null);
+
     return ShareTargetScreen(
       sharedItems: sharedItems,
       users: const [],
       openLobbyOnExit: true,
+      directShareUserId: directShareUserId,
     );
   }
 
+  final shortcutUserId = await ShortcutService.instance
+      .takePendingShortcutUserId();
+  if (shortcutUserId != null) {
+    final shortcutUser = await _resolveLobbyUser(shortcutUserId, userId);
+    if (shortcutUser != null) {
+      return ChatScreen(otherUser: shortcutUser);
+    }
+  }
+
   return const LobbyScreen();
+}
+
+Future<LobbyUser?> _resolveLobbyUser(int targetUserId, int currentUserId) async {
+  final cachedUsers = await ChatCacheService.loadLobbyUsers(currentUserId);
+  for (final user in cachedUsers) {
+    if (user.id == targetUserId) {
+      return user;
+    }
+  }
+
+  try {
+    final freshUsers = await LobbyService.getLobbyUsers();
+    await ChatCacheService.saveLobbyUsers(currentUserId, freshUsers);
+    for (final user in freshUsers) {
+      if (user.id == targetUserId) {
+        return user;
+      }
+    }
+  } catch (e) {
+    debugPrint('Failed to resolve launcher shortcut user: $e');
+  }
+
+  return null;
 }
 
 Future<void> _bootstrapAppServices() async {

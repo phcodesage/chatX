@@ -77,6 +77,13 @@
                 <data android:mimeType="image/*"/>
             </intent-filter>
 
+            <!-- Receive generic shared files from Android share sheet -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="*/*"/>
+            </intent-filter>
+
             <!-- Receive shared contact cards (.vcf / vCard) from Android share sheet -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>
@@ -91,6 +98,13 @@
                 <action android:name="android.intent.action.SEND_MULTIPLE"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="image/*"/>
+            </intent-filter>
+
+            <!-- Receive multiple generic shared files -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="*/*"/>
             </intent-filter>
 
             <!-- Receive multiple shared contact cards (.vcf / vCard) -->

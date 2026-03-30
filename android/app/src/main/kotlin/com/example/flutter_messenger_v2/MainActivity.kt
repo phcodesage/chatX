@@ -48,7 +48,9 @@ class MainActivity : FlutterActivity() {
     private val DIRECT_SHARE_CATEGORY = "com.example.flutter_messenger_v2.directshare"
     private var methodChannel: MethodChannel? = null
     private var shareMethodChannel: MethodChannel? = null
+    private var shortcutMethodChannel: MethodChannel? = null
     private var pendingSharedItems: List<Map<String, String>> = emptyList()
+    private var pendingShortcutTargetUserId: String? = null
     private var isInCall = false
     private var isMuted = false
 
@@ -91,6 +93,7 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pendingSharedItems = extractSharedItemsFromIntent(intent)
+        pendingShortcutTargetUserId = extractShortcutTargetUserId(intent)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -112,8 +115,11 @@ class MainActivity : FlutterActivity() {
         }
 
         // ── Direct Share shortcuts channel ─────────────────────────────────
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHORTCUT_CHANNEL)
-            .setMethodCallHandler { call, result ->
+        shortcutMethodChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SHORTCUT_CHANNEL,
+        )
+        shortcutMethodChannel?.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "pushShareTargets" -> {
                         try {
@@ -125,6 +131,25 @@ class MainActivity : FlutterActivity() {
                             Log.e(TAG, "pushShareTargets error: ${e.message}", e)
                             result.error("SHORTCUT_ERROR", e.message, null)
                         }
+                    }
+                    "reportShareUsed" -> {
+                        try {
+                            val userId = call.argument<String>("userId")
+                            if (userId.isNullOrBlank()) {
+                                result.error("BAD_ARGS", "userId is required", null)
+                            } else {
+                                reportShareShortcutUsed(userId)
+                                result.success(true)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "reportShareUsed error: ${e.message}", e)
+                            result.error("SHORTCUT_ERROR", e.message, null)
+                        }
+                    }
+                    "consumeInitialShortcutTarget" -> {
+                        val currentTarget = pendingShortcutTargetUserId
+                        pendingShortcutTargetUserId = null
+                        result.success(currentTarget)
                     }
                     else -> result.notImplemented()
                 }
@@ -336,12 +361,34 @@ class MainActivity : FlutterActivity() {
         setIntent(intent)
 
         val sharedItems = extractSharedItemsFromIntent(intent)
-        if (sharedItems.isEmpty()) {
-            return
+        if (sharedItems.isNotEmpty()) {
+            pendingSharedItems = sharedItems
+            shareMethodChannel?.invokeMethod("onSharedItems", sharedItems)
         }
 
-        pendingSharedItems = sharedItems
-        shareMethodChannel?.invokeMethod("onSharedItems", sharedItems)
+        val shortcutTargetUserId = extractShortcutTargetUserId(intent)
+        if (!shortcutTargetUserId.isNullOrBlank() && sharedItems.isEmpty()) {
+            pendingShortcutTargetUserId = shortcutTargetUserId
+            shortcutMethodChannel?.invokeMethod("onShortcutTarget", shortcutTargetUserId)
+        }
+    }
+
+    private fun extractShortcutTargetUserId(intent: Intent?): String? {
+        if (intent == null) {
+            return null
+        }
+
+        val shortcutUserId = intent.getStringExtra("direct_share_user_id")
+        if (shortcutUserId.isNullOrBlank()) {
+            return null
+        }
+
+        val action = intent.action ?: return shortcutUserId
+        if (action == Intent.ACTION_SEND || action == Intent.ACTION_SEND_MULTIPLE) {
+            return null
+        }
+
+        return shortcutUserId
     }
 
     private fun extractSharedItemsFromIntent(intent: Intent?): List<Map<String, String>> {
@@ -428,25 +475,28 @@ class MainActivity : FlutterActivity() {
     // ── Sharing Shortcuts (Direct Share row) ───────────────────────────────
 
     private fun pushShareShortcuts(users: List<Map<String, Any>>) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return // shortcuts require API 25+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return // shortcuts require API 25+
 
-        val shortcuts = users.take(4).mapIndexedNotNull { rank, user ->
+        val shortcuts = users.take(6).mapIndexedNotNull { rank, user ->
             val userId = user["id"]?.toString() ?: return@mapIndexedNotNull null
             val name = (user["name"] as? String)?.ifBlank { "User $userId" } ?: "User $userId"
             val colorIndex = (user["avatarColorIndex"] as? Int) ?: 0
+            val shortcutId = "share_target_user_$userId"
+            val person = Person.Builder().setName(name).build()
 
             // The shortcut's own intent — Android will merge its extras with the
             // incoming ACTION_SEND intent when the user picks this shortcut.
             val directShareIntent = Intent(this, MainActivity::class.java).apply {
-                action = Intent.ACTION_SEND
+                action = Intent.ACTION_VIEW
                 putExtra("direct_share_user_id", userId)
             }
 
-            ShortcutInfoCompat.Builder(this, "share_target_user_$userId")
+            ShortcutInfoCompat.Builder(this, shortcutId)
                 .setShortLabel(name)
                 .setLongLabel(name)
                 .setIcon(IconCompat.createWithBitmap(makeInitialsIcon(name, colorIndex)))
                 .setIntent(directShareIntent)
+                .setPersons(arrayOf(person))
                 .setLongLived(true)
                 .setCategories(setOf(DIRECT_SHARE_CATEGORY))
                 .setRank(rank)
@@ -454,8 +504,15 @@ class MainActivity : FlutterActivity() {
         }
 
         if (shortcuts.isNotEmpty()) {
-            ShortcutManagerCompat.addDynamicShortcuts(this, shortcuts)
+            shortcuts.forEach { shortcut ->
+                ShortcutManagerCompat.pushDynamicShortcut(this, shortcut)
+            }
         }
+    }
+
+    private fun reportShareShortcutUsed(userId: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return
+        ShortcutManagerCompat.reportShortcutUsed(this, "share_target_user_$userId")
     }
 
     /** Render a coloured circle with up to two initials — used as shortcut icon. */

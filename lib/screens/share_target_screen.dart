@@ -9,6 +9,7 @@ import '../services/chat_cache_service.dart';
 import '../services/lobby_service.dart';
 import '../services/message_service.dart';
 import '../services/share_intent_service.dart';
+import '../services/shortcut_service.dart';
 import '../services/storage_service.dart';
 import 'chat_screen.dart' show ChatScreen;
 import 'lobby_screen.dart';
@@ -234,6 +235,10 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
             content: caption,
           );
         }
+
+        // Feed usage back to Android Sharesheet ranking so active contacts
+        // are more likely to appear in the top Direct Share row.
+        ShortcutService.reportShareUsed(user.id);
 
         sentCount++;
         successfulUsers.add(user);

@@ -53,12 +53,17 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         if (!mounted) return;
 
         if (sharedItems.isNotEmpty) {
+          final directShareUserId = sharedItems
+              .map((item) => item.directShareUserId)
+              .firstWhere((id) => id != null, orElse: () => null);
+
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (_) => ShareTargetScreen(
                 sharedItems: sharedItems,
                 users: const [],
                 openLobbyOnExit: true,
+                directShareUserId: directShareUserId,
               ),
             ),
           );
