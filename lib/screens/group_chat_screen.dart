@@ -9,6 +9,10 @@ import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+
 import '../models/group.dart';
 import '../services/group_service.dart';
 import '../services/socket_service.dart';
@@ -1565,6 +1569,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         message.messageType == 'audio' ||
         (message.fileType?.startsWith('audio/') ?? false);
     final bool isMedia = isImage || isVideo;
+    final bool isGenericFile =
+      (!isMedia && !isAudio) &&
+      ((message.messageType == 'file' || message.messageType == 'document') ||
+       (message.fileUrl != null && message.fileUrl!.isNotEmpty));
 
     // Debug logging for file message display
     if (message.messageType != 'text' && message.messageType != 'system') {
@@ -1863,10 +1871,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           ],
           // Generic file message (not image, video, or audio)
-          if ((message.messageType == 'file' ||
-                  message.messageType == 'document') &&
-              !isMedia &&
-              !isAudio) ...[
+          if (isGenericFile) ...[
             Container(
               padding: const EdgeInsets.all(16),
               child: Row(
@@ -1885,16 +1890,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                           message.fileName ?? 'File',
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 15,
+                            fontSize: 12,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           message.fileUrl != null
-                              ? (message.fileSize != null
+                              ? ((message.fileSize != null && message.fileSize! > 0)
                                     ? _formatFileSize(message.fileSize!)
-                                    : 'Tap to open')
+                                    : 'Unknown size')
                               : 'File not available',
                           style: TextStyle(
                             color: Colors.white.withOpacity(0.7),
@@ -1904,11 +1909,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                       ],
                     ),
                   ),
-                  if (message.fileUrl != null)
+                  if (message.fileUrl != null && !isSentByMe)
+                    IconButton(
+                      onPressed: () => _downloadGroupIncomingFile(message),
+                      icon: const Icon(
+                        Icons.download,
+                        color: Colors.white70,
+                        size: 20,
+                      ),
+                    )
+                  else if (message.fileUrl != null && isSentByMe)
                     IconButton(
                       onPressed: () => _openFile(message.fileUrl!),
                       icon: const Icon(
-                        Icons.download,
+                        Icons.open_in_new,
                         color: Colors.white70,
                         size: 20,
                       ),
@@ -2108,9 +2122,96 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
+  /// Resolve a directory to save downloaded files
+  Future<Directory> _resolveDownloadDirectory() async {
+    if (Platform.isAndroid) {
+      final publicDownloads = Directory('/storage/emulated/0/Download');
+      if (await publicDownloads.exists()) return publicDownloads;
+    }
+
+    final systemDownloads = await getDownloadsDirectory();
+    if (systemDownloads != null) return systemDownloads;
+
+    final external = await getExternalStorageDirectory();
+    if (external != null) return external;
+
+    return getApplicationDocumentsDirectory();
+  }
+
+  /// Request storage permission for downloads
+  Future<bool> _requestStorageAccessForFileOps() async {
+    final storageStatus = await Permission.storage.request();
+    if (storageStatus.isGranted) return true;
+
+    final manageStatus = await Permission.manageExternalStorage.request();
+    if (manageStatus.isGranted) return true;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Storage permission required to save files'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+    return false;
+  }
+
+  /// Download incoming file message in group chat
+  Future<void> _downloadGroupIncomingFile(GroupMessage message) async {
+    final fileUrl = message.fileUrl;
+    if (fileUrl == null || fileUrl.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File URL not available')),
+      );
+      return;
+    }
+
+    final hasStorageAccess = await _requestStorageAccessForFileOps();
+    if (!hasStorageAccess) return;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Downloading file...')),
+      );
+    }
+
+    try {
+      final uri = Uri.parse(fileUrl);
+      final response = await http.get(uri).timeout(const Duration(seconds: 30));
+      if (response.statusCode < 200 || response.statusCode > 299) {
+        throw Exception('Download failed with status ${response.statusCode}');
+      }
+
+      final outputName = message.fileName ?? uri.pathSegments.last;
+      final downloadDir = await _resolveDownloadDirectory();
+      final saveFile = File('${downloadDir.path}${Platform.pathSeparator}$outputName');
+      await saveFile.writeAsBytes(response.bodyBytes, flush: true);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloaded: $outputName'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error downloading group file: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to download file: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   /// Open file URL (for downloads or external viewing)
   void _openFile(String fileUrl) {
-    // TODO: Implement file opening/downloading
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('File URL: $fileUrl'),

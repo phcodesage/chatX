@@ -18,11 +18,16 @@ class ShareTargetScreen extends StatefulWidget {
   final List<LobbyUser> users;
   final bool openLobbyOnExit;
 
+  /// When set (Direct Share shortcut tapped), skip the picker and send directly
+  /// to this user without any further interaction.
+  final int? directShareUserId;
+
   const ShareTargetScreen({
     super.key,
     required this.sharedItems,
     required this.users,
     this.openLobbyOnExit = false,
+    this.directShareUserId,
   });
 
   @override
@@ -38,6 +43,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
   late List<LobbyUser> _filteredUsers;
   bool _isSending = false;
   bool _isLoadingContacts = false;
+  bool _hasFiredDirectSend = false; // guard: only auto-send once
 
   static const List<Color> _avatarColors = [
     Color(0xFFE91E63),
@@ -121,6 +127,21 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
             .toList(growable: false);
       }
     });
+
+    // Direct Share: if a specific user was chosen in the share sheet,
+    // pre-select them and fire send without user interaction.
+    if (!_hasFiredDirectSend && widget.directShareUserId != null) {
+      final target = normalized
+          .cast<LobbyUser?>()
+          .firstWhere((u) => u?.id == widget.directShareUserId, orElse: () => null);
+      if (target != null) {
+        _hasFiredDirectSend = true;
+        setState(() => _selectedUserIds.add(target.id));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _sendSharedItems();
+        });
+      }
+    }
   }
 
   Future<void> _loadContacts() async {
@@ -175,6 +196,18 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
           final file = File(item.path);
           if (!await file.exists()) {
             throw Exception('Shared file is no longer available');
+          }
+
+          // vCard files are sent as in-chat contact cards, not generic uploads.
+          if (item.isVCard) {
+            final vcardContent = await file.readAsString();
+            final sent = await MessageService.sendMessage(
+              recipientId: user.id,
+              content: vcardContent,
+              messageType: 'contact',
+            );
+            if (sent == null) throw Exception('Failed to send contact');
+            continue;
           }
 
           final multipartFile = await http.MultipartFile.fromPath(

@@ -9,13 +9,24 @@ class SharedMediaItem {
   final String fileName;
   final String mimeType;
 
+  /// Set when the item arrived via a Direct Share shortcut tap. Non-null means
+  /// the user chose a specific chat contact in the Android share sheet — the
+  /// ShareTargetScreen will pre-select that contact and send immediately.
+  final int? directShareUserId;
+
   const SharedMediaItem({
     required this.path,
     required this.fileName,
     required this.mimeType,
+    this.directShareUserId,
   });
 
   bool get isImage => mimeType.toLowerCase().startsWith('image/');
+
+  bool get isVCard {
+    final m = mimeType.toLowerCase();
+    return m.contains('vcard') || m.contains('x-vcard') || fileName.toLowerCase().endsWith('.vcf');
+  }
 
   static SharedMediaItem? fromDynamic(dynamic value) {
     if (value is! Map) {
@@ -35,10 +46,19 @@ class SharedMediaItem {
     final mimeType =
         value['mimeType']?.toString() ?? 'application/octet-stream';
 
+    final rawUserId = value['directShareUserId'];
+    int? directShareUserId;
+    if (rawUserId is int) {
+      directShareUserId = rawUserId;
+    } else if (rawUserId is String && rawUserId.isNotEmpty) {
+      directShareUserId = int.tryParse(rawUserId);
+    }
+
     return SharedMediaItem(
       path: rawPath,
       fileName: fileName,
       mimeType: mimeType,
+      directShareUserId: directShareUserId,
     );
   }
 }

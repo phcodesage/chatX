@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Declares this activity as a Sharing Target so Android will promote it into the
+    "Direct Share" row at the top of the system share sheet.
+
+    The <data mimeType="*/*"> combined with our dynamic shortcuts (which carry the
+    matching category) is what causes our chat-contact avatars to appear in row 1 of
+    the Android Sharesheet, just like WhatsApp.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="com.example.flutter_messenger_v2.MainActivity">
+        <data android:mimeType="*/*" />
+        <category android:name="com.example.flutter_messenger_v2.directshare" />
+    </share-target>
+</shortcuts>

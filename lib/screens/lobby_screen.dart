@@ -24,6 +24,7 @@ import '../config/api_config.dart';
 import '../services/presence_service.dart';
 import '../services/chat_cache_service.dart';
 import '../services/share_intent_service.dart';
+import '../services/shortcut_service.dart';
 import '../utils/notification_handler.dart';
 import 'share_target_screen.dart';
 
@@ -516,11 +517,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     _isSharePickerOpen = true;
     try {
+      // If the items arrived via a Direct Share shortcut tap, grab the target user id
+      // so ShareTargetScreen can pre-select and auto-send without user interaction.
+      final directShareUserId = sharedItems
+          .map((i) => i.directShareUserId)
+          .firstWhere((id) => id != null, orElse: () => null);
+
       final result = await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) =>
-              ShareTargetScreen(sharedItems: sharedItems, users: _lobbyUsers),
+              ShareTargetScreen(
+                sharedItems: sharedItems,
+                users: _lobbyUsers,
+                directShareUserId: directShareUserId,
+              ),
         ),
       );
 
@@ -1144,6 +1155,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
         });
         _filterUsers();
         _openSharePickerIfNeeded();
+        // Publish direct-share shortcuts so contacts appear in top row of share sheet
+        ShortcutService.publishShareTargets(users);
       }
       if (userId != null) {
         await ChatCacheService.saveLobbyUsers(userId, users);

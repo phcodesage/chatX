@@ -11,6 +11,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import android.media.MediaRecorder
 import android.net.Uri
@@ -24,6 +29,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -36,6 +44,8 @@ class MainActivity : FlutterActivity() {
     private val AUDIO_CHANNEL = "com.example.flutter_messenger_v2/audio_recorder"
     private val QUICK_REPLY_CHANNEL = "com.example.flutter_messenger_v2/quick_reply"
     private val SHARE_CHANNEL = "com.example.flutter_messenger_v2/share_target"
+    private val SHORTCUT_CHANNEL = "com.example.flutter_messenger_v2/shortcuts"
+    private val DIRECT_SHARE_CATEGORY = "com.example.flutter_messenger_v2.directshare"
     private var methodChannel: MethodChannel? = null
     private var shareMethodChannel: MethodChannel? = null
     private var pendingSharedItems: List<Map<String, String>> = emptyList()
@@ -100,6 +110,25 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        // ── Direct Share shortcuts channel ─────────────────────────────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHORTCUT_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "pushShareTargets" -> {
+                        try {
+                            @Suppress("UNCHECKED_CAST")
+                            val users = call.arguments as? List<Map<String, Any>> ?: emptyList()
+                            pushShareShortcuts(users)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "pushShareTargets error: ${e.message}", e)
+                            result.error("SHORTCUT_ERROR", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         // ── Audio recorder channel ─────────────────────────────────────────
         // Uses MediaRecorder.getMaxAmplitude() for accurate real-time amplitude.
@@ -359,6 +388,18 @@ class MainActivity : FlutterActivity() {
         }
 
         if (uris.isEmpty()) {
+            // Some apps share vCards using EXTRA_TEXT instead of EXTRA_STREAM.
+            val textPayload = intent.getStringExtra(Intent.EXTRA_TEXT)
+            val mimeType = intent.type?.lowercase() ?: ""
+            if (!textPayload.isNullOrBlank() && mimeType.contains("vcard")) {
+                val textItem = copySharedTextToCache(
+                    text = textPayload,
+                    mimeType = if (mimeType.isBlank()) "text/x-vcard" else mimeType,
+                    extension = "vcf",
+                    index = 0,
+                )
+                return if (textItem != null) listOf(textItem) else emptyList()
+            }
             return emptyList()
         }
 
@@ -374,7 +415,109 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // If arrived via a Direct Share shortcut the shortcut intent merges its extras
+        // into the ACTION_SEND intent — pick up the user id and annotate each item.
+        val directShareUserId = intent.getStringExtra("direct_share_user_id")
+        if (!directShareUserId.isNullOrBlank() && extractedItems.isNotEmpty()) {
+            return extractedItems.map { it + ("directShareUserId" to directShareUserId) }
+        }
+
         return extractedItems
+    }
+
+    // ── Sharing Shortcuts (Direct Share row) ───────────────────────────────
+
+    private fun pushShareShortcuts(users: List<Map<String, Any>>) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return // shortcuts require API 25+
+
+        val shortcuts = users.take(4).mapIndexedNotNull { rank, user ->
+            val userId = user["id"]?.toString() ?: return@mapIndexedNotNull null
+            val name = (user["name"] as? String)?.ifBlank { "User $userId" } ?: "User $userId"
+            val colorIndex = (user["avatarColorIndex"] as? Int) ?: 0
+
+            // The shortcut's own intent — Android will merge its extras with the
+            // incoming ACTION_SEND intent when the user picks this shortcut.
+            val directShareIntent = Intent(this, MainActivity::class.java).apply {
+                action = Intent.ACTION_SEND
+                putExtra("direct_share_user_id", userId)
+            }
+
+            ShortcutInfoCompat.Builder(this, "share_target_user_$userId")
+                .setShortLabel(name)
+                .setLongLabel(name)
+                .setIcon(IconCompat.createWithBitmap(makeInitialsIcon(name, colorIndex)))
+                .setIntent(directShareIntent)
+                .setLongLived(true)
+                .setCategories(setOf(DIRECT_SHARE_CATEGORY))
+                .setRank(rank)
+                .build()
+        }
+
+        if (shortcuts.isNotEmpty()) {
+            ShortcutManagerCompat.addDynamicShortcuts(this, shortcuts)
+        }
+    }
+
+    /** Render a coloured circle with up to two initials — used as shortcut icon. */
+    private fun makeInitialsIcon(name: String, colorIndex: Int): Bitmap {
+        val avatarColors = intArrayOf(
+            0xFFE91E63.toInt(), 0xFF9C27B0.toInt(), 0xFF673AB7.toInt(),
+            0xFF3F51B5.toInt(), 0xFF2196F3.toInt(), 0xFF00BCD4.toInt(),
+            0xFF009688.toInt(), 0xFF4CAF50.toInt(), 0xFFFF9800.toInt(), 0xFFFF5722.toInt(),
+        )
+        val bg = avatarColors[colorIndex % avatarColors.size]
+        val size = 192
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bg }
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+
+        val initials = name.trim().split(' ')
+            .filter { it.isNotEmpty() }
+            .take(2)
+            .map { it.first().uppercaseChar() }
+            .joinToString("")
+            .ifEmpty { "?" }
+
+        paint.apply {
+            color = android.graphics.Color.WHITE
+            textSize = size * 0.38f
+            typeface = Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+        }
+        val textBounds = Rect()
+        paint.getTextBounds(initials, 0, initials.length, textBounds)
+        canvas.drawText(initials, size / 2f, size / 2f + textBounds.height() / 2f, paint)
+        return bmp
+    }
+
+    private fun copySharedTextToCache(
+        text: String,
+        mimeType: String,
+        extension: String,
+        index: Int,
+    ): Map<String, String>? {
+        val sharedDir = File(cacheDir, "shared_imports")
+        if (!sharedDir.exists()) {
+            sharedDir.mkdirs()
+        }
+
+        val targetFile = File(
+            sharedDir,
+            "${System.currentTimeMillis()}_$index-shared_contact.$extension",
+        )
+
+        return try {
+            targetFile.writeText(text)
+            mapOf(
+                "path" to targetFile.absolutePath,
+                "fileName" to targetFile.name,
+                "mimeType" to mimeType,
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist shared text payload", e)
+            null
+        }
     }
 
     private fun copySharedUriToCache(uri: Uri, index: Int): Map<String, String>? {

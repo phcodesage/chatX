@@ -38,6 +38,8 @@ import '../services/call_service.dart';
 import '../services/presence_service.dart';
 import '../config/api_config.dart';
 import 'connected_call_screen.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
+import '../utils/contact_utils.dart';
 
 /// Chat screen for messaging with a specific user
 class ChatScreen extends StatefulWidget {
@@ -2671,6 +2673,9 @@ class _ChatScreenState extends State<ChatScreen>
         previewText = 'ðŸŽ¬ Video';
       } else if (msg.messageType == 'file') {
         previewText = 'ðŸ“Ž ${msg.fileName ?? "File"}';
+      } else if (msg.messageType == 'contact') {
+        final contactName = ContactVCard.fromVCardString(msg.content)?.name;
+        previewText = '[Contact] ${contactName ?? 'Contact'}';
       } else {
         // For text, truncate if too long
         previewText = msg.content.length > 60
@@ -2809,6 +2814,140 @@ class _ChatScreenState extends State<ChatScreen>
               threadId: _messages[index].threadId,
               reactions: _messages[index].reactions,
               isDeleted: _messages[index].isDeleted,
+            );
+          }
+        });
+      }
+    }
+  }
+
+  // ── Contact Sending ────────────────────────────────────────────────────────
+
+  Future<void> _pickContact() async {
+    try {
+      final granted = await FlutterContacts.requestPermission(readonly: true);
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Contacts permission is required to share contacts'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final contact = await FlutterContacts.openExternalPick();
+      if (contact == null || !mounted) return;
+
+      // Fetch with full properties (phones, emails)
+      final full = await FlutterContacts.getContact(
+        contact.id,
+        withProperties: true,
+      );
+      if (full == null || !mounted) return;
+
+      _sendContactMessage(full);
+    } catch (e) {
+      debugPrint('Contact pick error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open contact picker')),
+        );
+      }
+    }
+  }
+
+  Future<void> _sendContactMessage(Contact contact) async {
+    final name = contact.displayName.isNotEmpty
+        ? contact.displayName
+        : [contact.name.first, contact.name.last]
+            .where((s) => s.isNotEmpty)
+            .join(' ');
+    final phone =
+        contact.phones.isNotEmpty ? contact.phones.first.number : '';
+    final email =
+        contact.emails.isNotEmpty ? contact.emails.first.address : null;
+
+    if (name.isEmpty || phone.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This contact has no phone number to share'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final vcard = ContactVCard(name: name, phone: phone, email: email)
+        .toVCardString();
+
+    final optimisticMessage = Message(
+      id: DateTime.now().millisecondsSinceEpoch,
+      senderId: _currentUserId!,
+      recipientId: widget.otherUser.id,
+      content: vcard,
+      messageType: 'contact',
+      timestamp: DateTime.now().toIso8601String(),
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+      isRead: false,
+      status: 'sending',
+      threadId: 'thread_${_currentUserId}_${widget.otherUser.id}',
+      reactions: {},
+      isDeleted: false,
+    );
+
+    setState(() => _messages.insert(0, optimisticMessage));
+
+    try {
+      _audioPlayer.play(AssetSource('sounds/splat2.m4a'));
+    } catch (_) {}
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+
+    try {
+      if (_socketService.isConnected) {
+        _socketService.sendMessage(
+          recipientId: widget.otherUser.id,
+          content: vcard,
+          messageType: 'contact',
+        );
+      } else {
+        final sent = await MessageService.sendMessage(
+          recipientId: widget.otherUser.id,
+          content: vcard,
+          messageType: 'contact',
+        );
+        if (sent != null && mounted) {
+          setState(() {
+            final idx =
+                _messages.indexWhere((m) => m.id == optimisticMessage.id);
+            if (idx != -1) _messages[idx] = sent;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Send contact error: $e');
+      if (mounted) {
+        setState(() {
+          final idx =
+              _messages.indexWhere((m) => m.id == optimisticMessage.id);
+          if (idx != -1) {
+            _messages[idx] = Message(
+              id: _messages[idx].id,
+              senderId: _messages[idx].senderId,
+              recipientId: _messages[idx].recipientId,
+              content: _messages[idx].content,
+              messageType: _messages[idx].messageType,
+              timestamp: _messages[idx].timestamp,
+              timestampMs: _messages[idx].timestampMs,
+              isRead: _messages[idx].isRead,
+              status: 'failed',
+              threadId: _messages[idx].threadId,
+              reactions: _messages[idx].reactions,
+              isDeleted: _messages[idx].isDeleted,
             );
           }
         });
@@ -4118,6 +4257,11 @@ class _ChatScreenState extends State<ChatScreen>
           backgroundColor: const Color(0xFF6B7280),
           onPressed: () => _runActionSheetAction(_resetColor),
         ),
+      _buildActionSheetButton(
+        label: 'Send Contact',
+        backgroundColor: const Color(0xFF0EA5E9),
+        onPressed: () => _runActionSheetAction(_pickContact),
+      ),
       _buildActionSheetButton(
         label: 'Send File',
         backgroundColor: const Color(0xFF10B981),
@@ -10664,10 +10808,11 @@ class _ChatScreenState extends State<ChatScreen>
         message.messageType == 'audio' ||
         (message.fileType?.startsWith('audio/') ?? false);
     final bool isMedia = isImage || isVideo;
+    final bool isContact = message.messageType == 'contact';
     final bool isGenericFile =
-      (message.messageType == 'file' || message.messageType == 'document') &&
-      !isMedia &&
-      !isAudio;
+      (!isMedia && !isAudio && !isContact) &&
+      ((message.messageType == 'file' || message.messageType == 'document') ||
+       (message.fileUrl != null && message.fileUrl!.isNotEmpty));
 
     // Check if this message has reactions to adjust bottom margin
     final hasReactions =
@@ -10933,6 +11078,13 @@ class _ChatScreenState extends State<ChatScreen>
                 fileSize: message.fileSize,
               ),
             ],
+            // Contact card
+            if (isContact) ...[
+              _ContactCardWidget(
+                vcard: message.content,
+                isSentByMe: isSentByMe,
+              ),
+            ],
             if (isGenericFile) ...[
               Container(
                 padding: EdgeInsets.all(16 * scale),
@@ -10949,19 +11101,29 @@ class _ChatScreenState extends State<ChatScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            message.fileName ?? 'File',
+                            (message.fileName?.isNotEmpty ?? false)
+                                ? message.fileName!
+                                : (message.fileUrl != null
+                                    ? Uri.tryParse(message.fileUrl!)
+                                            ?.pathSegments
+                                            .last
+                                            .replaceAll('%20', ' ') ??
+                                        'File'
+                                    : 'File'),
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 15 * scale,
+                              fontSize: 12 * scale,
                               fontWeight: FontWeight.w500,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                           SizedBox(height: 4 * scale),
                           Text(
                             message.fileUrl != null
-                                ? (message.fileSize != null
+                                ? ((message.fileSize != null && message.fileSize! > 0)
                                       ? _formatFileSize(message.fileSize!)
-                                      : 'Tap to open')
+                                      : 'Unknown size')
                                 : 'File not available',
                             style: TextStyle(
                               color: Colors.white.withValues(alpha: 0.7),
@@ -10971,17 +11133,20 @@ class _ChatScreenState extends State<ChatScreen>
                         ],
                       ),
                     ),
-                    if (message.fileUrl != null)
+                    if (message.fileUrl != null && !isSentByMe)
                       IconButton(
-                        onPressed: () {
-                          if (isSentByMe) {
-                            _openMessageUrl(message.fileUrl!);
-                          } else {
-                            _downloadIncomingFile(message);
-                          }
-                        },
+                        onPressed: () => _downloadIncomingFile(message),
                         icon: const Icon(
                           Icons.download,
+                          color: Colors.white70,
+                          size: 20,
+                        ),
+                      ),
+                    if (message.fileUrl != null && isSentByMe)
+                      IconButton(
+                        onPressed: () => _openMessageUrl(message.fileUrl!),
+                        icon: const Icon(
+                          Icons.open_in_new,
                           color: Colors.white70,
                           size: 20,
                         ),
@@ -10991,11 +11156,11 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ],
             // Text content (if not just filename and not audio)
-            if ((!isMedia && !isAudio && !isGenericFile) ||
+            if (!isContact && ((!isMedia && !isAudio && !isGenericFile) ||
                 (message.content.isNotEmpty &&
                     !_isOnlyFilename(message.content) &&
                     !isAudio &&
-                    !isGenericFile))
+                    !isGenericFile)))
               Padding(
                 padding: EdgeInsets.symmetric(
                   horizontal: 16 * scale,
@@ -12039,6 +12204,232 @@ class _AudioMessagePlayerState extends State<_AudioMessagePlayer> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Contact Card Message Bubble ─────────────────────────────────────────────
+
+class _ContactCardWidget extends StatefulWidget {
+  final String vcard;
+  final bool isSentByMe;
+
+  const _ContactCardWidget({required this.vcard, required this.isSentByMe});
+
+  @override
+  State<_ContactCardWidget> createState() => _ContactCardWidgetState();
+}
+
+class _ContactCardWidgetState extends State<_ContactCardWidget> {
+  bool _saving = false;
+  bool _saved = false;
+  bool _alreadyExists = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkExistingContact();
+  }
+
+  Future<void> _checkExistingContact() async {
+    final card = ContactVCard.fromVCardString(widget.vcard);
+    if (card == null) return;
+
+    final granted = await FlutterContacts.requestPermission(readonly: true);
+    if (!granted || !mounted) return;
+
+    final rawContacts = await FlutterContacts.getContacts(
+      withProperties: true,
+    );
+
+    final normalizedPhone = card.phone.replaceAll(RegExp(r'[\s\-\(\)]'), '');
+    final found = rawContacts.any((c) {
+      final phones = c.phones.map((p) => p.number.replaceAll(RegExp(r'[\s\-\(\)]'), '')).toList();
+      return phones.contains(normalizedPhone);
+    });
+
+    if (found && mounted) {
+      setState(() {
+        _alreadyExists = true;
+        _saved = true;
+      });
+    }
+  }
+
+  Future<void> _saveContact(ContactVCard card) async {
+    setState(() => _saving = true);
+    try {
+      final granted = await FlutterContacts.requestPermission();
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Contacts permission denied'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final parts = card.name.trim().split(' ');
+      final newContact = Contact()
+        ..name.first = parts.first
+        ..name.last = parts.length > 1 ? parts.skip(1).join(' ') : ''
+        ..phones = [Phone(card.phone)];
+      if (card.email != null && card.email!.isNotEmpty) {
+        newContact.emails = [Email(card.email!)];
+      }
+
+      await FlutterContacts.insertContact(newContact);
+
+      if (mounted) {
+        setState(() => _saved = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${card.name} saved to contacts')),
+        );
+      }
+    } catch (e) {
+      debugPrint('Save contact error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save contact')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final card = ContactVCard.fromVCardString(widget.vcard);
+
+    if (card == null) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: Text('Contact', style: TextStyle(color: Colors.white70)),
+      );
+    }
+
+    final initials = card.name.trim().isNotEmpty
+        ? card.name
+            .trim()
+            .split(' ')
+            .where((w) => w.isNotEmpty)
+            .map((w) => w[0])
+            .take(2)
+            .join()
+            .toUpperCase()
+        : '?';
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: const Color(0xFF475569),
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      card.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      card.phone,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (card.email != null && card.email!.isNotEmpty) ...[
+                      const SizedBox(height: 1),
+                      Text(
+                        card.email!,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.55),
+                          fontSize: 11,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Divider(color: Colors.white.withValues(alpha: 0.15), height: 1),
+          // Received messages show "Save Contact" (or "Saved" if contact exists); sent ones show a subtle label
+          if (!widget.isSentByMe)
+            TextButton.icon(
+              onPressed: (_saved || _saving) ? null : () => _saveContact(card),
+              style: TextButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: _saving
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white70,
+                      ),
+                    )
+                  : Icon(
+                      _saved ? Icons.check_circle_outline : Icons.person_add_alt_1,
+                      size: 16,
+                      color: _saved
+                          ? const Color(0xFF22C55E)
+                          : Colors.white70,
+                    ),
+              label: Text(
+                _saved ? 'Saved' : 'Save Contact',
+                style: TextStyle(
+                  color: _saved ? const Color(0xFF22C55E) : Colors.white70,
+                  fontSize: 13,
+                ),
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Contact',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.45),
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          const SizedBox(height: 4),
         ],
       ),
     );
