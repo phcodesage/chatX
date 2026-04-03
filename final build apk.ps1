@@ -61,10 +61,15 @@ if ($rawVersion -match '^([^+]+)\+(\d+)$') {
     $versionName = $Matches[1]
 }
 
+$buildNumberSuffix = ""
+if ($rawVersion -match '^([^+]+)\+(\d+)$') {
+    $buildNumberSuffix = "_build$($Matches[2])"
+}
+
 $safeAppName = ConvertTo-SafeFilePart -Value $OutputBaseName
 $safeVersion = ConvertTo-SafeFilePart -Value $versionName
 
-$targetFileName = "${safeAppName}_${safeVersion}.apk"
+$targetFileName = "${safeAppName}_${safeVersion}${buildNumberSuffix}.apk"
 
 Write-Host "Output base name: $OutputBaseName" -ForegroundColor Green
 Write-Host "Version: $rawVersion" -ForegroundColor Green

@@ -1,6 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
 
+set "APP_ID=com.example.flutter_messenger_v2"
+set "APK_PATH=build\app\outputs\flutter-apk\app-release.apk"
+set "INSTALL_LOG=%TEMP%\flutter_messenger_install_%RANDOM%.log"
+
 echo ========================================
 echo Flutter Release Build and Install Script
 echo ========================================
@@ -116,14 +120,14 @@ if errorlevel 1 (
 )
 
 :: Check if APK was created
-if not exist "build\app\outputs\flutter-apk\app-release.apk" (
+if not exist "%APK_PATH%" (
     echo ERROR: APK file not found after build
     pause
     exit /b 1
 )
 
 :: Get APK size
-for %%i in ("build\app\outputs\flutter-apk\app-release.apk") do set APK_SIZE=%%~zi
+for %%i in ("%APK_PATH%") do set APK_SIZE=%%~zi
 set /a APK_SIZE_MB=!APK_SIZE!/1024/1024
 echo.
 echo ✅ Build successful! APK size: !APK_SIZE_MB! MB
@@ -135,10 +139,10 @@ adb devices | findstr "device$" >nul
 if errorlevel 1 (
     echo.
     echo No devices connected. Skipping installation.
-    echo APK location: build\app\outputs\flutter-apk\app-release.apk
+    echo APK location: %APK_PATH%
     echo.
     echo To install manually:
-    echo   adb install -r build\app\outputs\flutter-apk\app-release.apk
+    echo   adb install -r %APK_PATH%
     echo.
     pause
     exit /b 0
@@ -150,20 +154,64 @@ echo ========================================
 echo Installing APK to device...
 echo ========================================
 echo.
-adb install -r "build\app\outputs\flutter-apk\app-release.apk"
-if errorlevel 1 (
+adb install -r "%APK_PATH%" >"%INSTALL_LOG%" 2>&1
+set "INSTALL_EXIT=!ERRORLEVEL!"
+type "%INSTALL_LOG%"
+if not !INSTALL_EXIT! EQU 0 (
+    findstr /C:"INSTALL_FAILED_UPDATE_INCOMPATIBLE" "%INSTALL_LOG%" >nul
+    if !ERRORLEVEL! EQU 0 (
+        echo.
+        echo Package conflict detected for %APP_ID%.
+        set /p remove_existing="Uninstall the existing app and reinstall? This removes app data. (y/N): "
+        if /i "!remove_existing!"=="y" (
+            adb uninstall %APP_ID%
+            if errorlevel 1 (
+                echo Could not uninstall existing app.
+                del "%INSTALL_LOG%" >nul 2>&1
+                pause
+                exit /b 1
+            )
+
+            adb install "%APK_PATH%"
+            if not errorlevel 1 (
+                echo.
+                echo ========================================
+                echo ✅ SUCCESS!
+                echo ========================================
+                echo.
+                echo Release APK built and installed successfully!
+                echo APK location: %APK_PATH%
+                echo Size: !APK_SIZE_MB! MB
+                echo.
+                del "%INSTALL_LOG%" >nul 2>&1
+                goto after_install
+            )
+        )
+    )
+
+    findstr /C:"INSTALL_FAILED_VERSION_DOWNGRADE" "%INSTALL_LOG%" >nul
+    if !ERRORLEVEL! EQU 0 (
+        echo.
+        echo The device already has a newer build installed.
+        echo Increase the build number before rebuilding.
+    )
+
     echo.
     echo ERROR: Installation failed
     echo.
     echo Troubleshooting:
     echo 1. Make sure USB debugging is enabled
     echo 2. Check if device is authorized (check device screen for prompt)
-    echo 3. Try: adb kill-server && adb start-server
-    echo 4. Manual install: adb install -r build\app\outputs\flutter-apk\app-release.apk
+    echo 3. If this is a package conflict, uninstall %APP_ID% from the device and retry
+    echo 4. If this is a downgrade, bump the build number before rebuilding
+    echo 5. Manual install: adb install -r %APK_PATH%
     echo.
+    del "%INSTALL_LOG%" >nul 2>&1
     pause
     exit /b 1
 )
+
+del "%INSTALL_LOG%" >nul 2>&1
 
 echo.
 echo ========================================
@@ -171,9 +219,11 @@ echo ✅ SUCCESS!
 echo ========================================
 echo.
 echo Release APK built and installed successfully!
-echo APK location: build\app\outputs\flutter-apk\app-release.apk
+echo APK location: %APK_PATH%
 echo Size: !APK_SIZE_MB! MB
 echo.
+
+:after_install
 
 :: Ask if user wants to start logcat for debugging
 set /p start_logcat="Start logcat for debugging? (y/N): "

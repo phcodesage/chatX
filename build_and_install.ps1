@@ -8,6 +8,9 @@ param(
     [string]$NewVersion
 )
 
+$PackageName = "com.example.flutter_messenger_v2"
+$VersionScriptPath = Join-Path $PSScriptRoot "update_app_version.ps1"
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Flutter Release Build and Install Script" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -19,12 +22,18 @@ function Test-Command($cmdname) {
 }
 
 # Function to get current version from pubspec.yaml
-function Get-CurrentVersion {
+function Get-VersionInfo {
     try {
-        $content = Get-Content "pubspec.yaml" -ErrorAction Stop
-        $versionLine = $content | Where-Object { $_ -match "^version:\s*(.+)" }
-        if ($versionLine) {
-            return $Matches[1].Trim()
+        $content = Get-Content "pubspec.yaml" -Raw -ErrorAction Stop
+        $match = [regex]::Match($content, "(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+([0-9]+))?\s*$")
+        if ($match.Success) {
+            $versionName = $match.Groups[1].Value
+            $versionCode = if ($match.Groups[2].Success) { [int]$match.Groups[2].Value } else { 0 }
+            return @{
+                VersionName = $versionName
+                VersionCode = $versionCode
+                DisplayVersion = if ($versionCode -gt 0) { "$versionName+$versionCode" } else { $versionName }
+            }
         }
     }
     catch {
@@ -34,13 +43,13 @@ function Get-CurrentVersion {
     return $null
 }
 
-# Function to increment version
-function Set-NewVersion($currentVersion, $incrementType) {
-    if ($currentVersion -match "^(\d+)\.(\d+)\.(\d+)\+(\d+)$") {
+# Function to compute the next version string.
+function Get-NextVersion($currentVersion, $incrementType) {
+    if ($currentVersion -match "^(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?$") {
         $major = [int]$Matches[1]
-        $minor = [int]$Matches[2] 
+        $minor = [int]$Matches[2]
         $patch = [int]$Matches[3]
-        $build = [int]$Matches[4]
+        $build = if ($Matches[4]) { [int]$Matches[4] } else { 0 }
         
         switch ($incrementType) {
             "patch" { 
@@ -63,25 +72,72 @@ function Set-NewVersion($currentVersion, $incrementType) {
             }
         }
         
-        $newVersion = "$major.$minor.$patch+$build"
-        
-        # Update pubspec.yaml
-        try {
-            $content = Get-Content "pubspec.yaml"
-            $content = $content -replace "^version:\s*.+", "version: $newVersion"
-            $content | Set-Content "pubspec.yaml"
-            Write-Host "✅ Version updated to: $newVersion" -ForegroundColor Green
-            return $newVersion
-        }
-        catch {
-            Write-Host "ERROR: Could not update pubspec.yaml" -ForegroundColor Red
-            return $null
-        }
+        return "$major.$minor.$patch+$build"
     }
     else {
         Write-Host "ERROR: Invalid version format in pubspec.yaml" -ForegroundColor Red
         return $null
     }
+}
+
+function Sync-Version($targetVersion) {
+    if (-not (Test-Path $VersionScriptPath)) {
+        throw "Version sync script not found at $VersionScriptPath"
+    }
+
+    & $VersionScriptPath -Version $targetVersion
+    if ($LASTEXITCODE -ne 0) {
+        throw "Version sync failed for $targetVersion"
+    }
+}
+
+function Install-Apk {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ApkPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ApplicationId
+    )
+
+    $installOutput = & adb install -r $ApkPath 2>&1
+    $installText = ($installOutput | Out-String).Trim()
+
+    if ($installText) {
+        Write-Host $installText
+    }
+
+    if ($LASTEXITCODE -eq 0) {
+        return $true
+    }
+
+    if ($installText -match "INSTALL_FAILED_UPDATE_INCOMPATIBLE") {
+        Write-Host "" 
+        Write-Host "The installed app uses the same package name but a different signing key." -ForegroundColor Yellow
+        Write-Host "Package: $ApplicationId" -ForegroundColor Yellow
+        $removeExisting = Read-Host "Uninstall the existing app and reinstall? This removes app data. (y/N)"
+        if ($removeExisting -eq "y" -or $removeExisting -eq "Y") {
+            & adb uninstall $ApplicationId
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Could not uninstall the existing app." -ForegroundColor Red
+                return $false
+            }
+
+            $retryOutput = & adb install $ApkPath 2>&1
+            $retryText = ($retryOutput | Out-String).Trim()
+            if ($retryText) {
+                Write-Host $retryText
+            }
+
+            return $LASTEXITCODE -eq 0
+        }
+    }
+    elseif ($installText -match "INSTALL_FAILED_VERSION_DOWNGRADE") {
+        Write-Host "" 
+        Write-Host "The device already has a newer build installed." -ForegroundColor Yellow
+        Write-Host "Increase the build number in pubspec.yaml and rebuild, or use update_app_version.ps1." -ForegroundColor Yellow
+    }
+
+    return $false
 }
 
 # Check Flutter
@@ -101,9 +157,9 @@ if (-not (Test-Command "adb")) {
 }
 
 # Get current version
-$currentVersion = Get-CurrentVersion
-if ($currentVersion) {
-    Write-Host "Current version: $currentVersion" -ForegroundColor Green
+$currentVersionInfo = Get-VersionInfo
+if ($currentVersionInfo) {
+    Write-Host "Current version: $($currentVersionInfo.DisplayVersion)" -ForegroundColor Green
 }
 else {
     Write-Host "Could not determine current version" -ForegroundColor Yellow
@@ -112,19 +168,23 @@ else {
 # Handle version increment
 if ($IncrementVersion -or $NewVersion) {
     if ($NewVersion) {
-        # Custom version provided
         try {
-            $content = Get-Content "pubspec.yaml"
-            $content = $content -replace "^version:\s*.+", "version: $NewVersion"
-            $content | Set-Content "pubspec.yaml"
-            Write-Host "✅ Version updated to: $NewVersion" -ForegroundColor Green
+            Sync-Version $NewVersion
+            $currentVersionInfo = Get-VersionInfo
+            Write-Host "✅ Version updated to: $($currentVersionInfo.DisplayVersion)" -ForegroundColor Green
         }
         catch {
             Write-Host "ERROR: Could not update version" -ForegroundColor Red
+            Write-Host $_.Exception.Message -ForegroundColor Red
             exit 1
         }
     }
     else {
+        if (-not $currentVersionInfo) {
+            Write-Host "ERROR: Could not determine the current version for incrementing" -ForegroundColor Red
+            exit 1
+        }
+
         # Interactive version increment
         Write-Host ""
         Write-Host "Version increment options:" -ForegroundColor Yellow
@@ -148,8 +208,19 @@ if ($IncrementVersion -or $NewVersion) {
         }
         
         if ($incrementType) {
-            $newVersion = Set-NewVersion $currentVersion $incrementType
+            $newVersion = Get-NextVersion $currentVersionInfo.DisplayVersion $incrementType
             if (-not $newVersion) {
+                exit 1
+            }
+
+            try {
+                Sync-Version $newVersion
+                $currentVersionInfo = Get-VersionInfo
+                Write-Host "✅ Version updated to: $($currentVersionInfo.DisplayVersion)" -ForegroundColor Green
+            }
+            catch {
+                Write-Host "ERROR: Could not update version" -ForegroundColor Red
+                Write-Host $_.Exception.Message -ForegroundColor Red
                 exit 1
             }
         }
@@ -237,6 +308,9 @@ Write-Host ""
 Write-Host "✅ Build successful!" -ForegroundColor Green
 Write-Host "APK size: $apkSizeMB MB" -ForegroundColor Green
 Write-Host "Build time: $([math]::Round($buildTime, 1)) seconds" -ForegroundColor Green
+if ($currentVersionInfo) {
+    Write-Host "APK version: $($currentVersionInfo.DisplayVersion)" -ForegroundColor Green
+}
 
 # Install APK if not skipped
 if (-not $SkipInstall) {
@@ -260,16 +334,17 @@ if (-not $SkipInstall) {
         Write-Host "========================================" -ForegroundColor Cyan
         Write-Host ""
         
-        adb install -r $apkPath
-        if ($LASTEXITCODE -ne 0) {
+        $installed = Install-Apk -ApkPath $apkPath -ApplicationId $PackageName
+        if (-not $installed) {
             Write-Host ""
             Write-Host "ERROR: Installation failed" -ForegroundColor Red
             Write-Host ""
             Write-Host "Troubleshooting:" -ForegroundColor Yellow
             Write-Host "1. Make sure USB debugging is enabled"
             Write-Host "2. Check if device is authorized (check device screen for prompt)"
-            Write-Host "3. Try: adb kill-server && adb start-server"
-            Write-Host "4. Manual install: adb install -r `"$apkPath`""
+            Write-Host "3. If this is a package conflict, uninstall $PackageName from the device and retry"
+            Write-Host "4. If this is a downgrade, bump the build number before rebuilding"
+            Write-Host "5. Manual install: adb install -r `"$apkPath`""
             Write-Host ""
             Read-Host "Press Enter to exit"
             exit 1

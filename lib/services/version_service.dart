@@ -56,6 +56,7 @@ class ApkDownloader {
   Future<String> downloadApk({
     required String url,
     required String version,
+    required int buildNumber,
     String? authToken,
     void Function(String message)? onLog,
     required void Function(int received, int total) onProgress,
@@ -68,7 +69,8 @@ class ApkDownloader {
 
     final tempDir = await getTemporaryDirectory();
     final safeVersion = version.replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '_');
-    final outputPath = '${tempDir.path}/flask_call_app_$safeVersion.apk';
+    final buildSuffix = buildNumber > 0 ? '_build$buildNumber' : '';
+    final outputPath = '${tempDir.path}/flask_call_app_${safeVersion}$buildSuffix.apk';
 
     final headers = <String, String>{
       'Accept': 'application/vnd.android.package-archive,application/octet-stream,*/*',
@@ -226,6 +228,7 @@ class VersionService {
           return UpdateDialog(
             info: info,
             currentVersion: currentVersion,
+            currentBuild: currentBuild,
             downloadUrl: resolvedDownloadUrl,
             downloader: ApkDownloader(),
           );
@@ -307,6 +310,7 @@ class VersionService {
 class UpdateDialog extends StatefulWidget {
   final AppVersionInfo info;
   final String currentVersion;
+  final int currentBuild;
   final String downloadUrl;
   final ApkDownloader downloader;
 
@@ -314,6 +318,7 @@ class UpdateDialog extends StatefulWidget {
     super.key,
     required this.info,
     required this.currentVersion,
+    required this.currentBuild,
     required this.downloadUrl,
     required this.downloader,
   });
@@ -346,6 +351,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
       final apkPath = await widget.downloader.downloadApk(
         url: widget.downloadUrl,
         version: widget.info.version,
+        buildNumber: widget.info.buildNumber,
         authToken: authToken,
         onLog: (message) => debugPrint('[VersionService] $message'),
         onProgress: (received, total) {
@@ -410,8 +416,14 @@ class _UpdateDialogState extends State<UpdateDialog> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                _VersionBadge(label: 'Current', value: widget.currentVersion),
-                _VersionBadge(label: 'Latest', value: widget.info.version),
+                _VersionBadge(
+                  label: 'Current',
+                  value: _formatVersionLabel(widget.currentVersion, widget.currentBuild),
+                ),
+                _VersionBadge(
+                  label: 'Latest',
+                  value: _formatVersionLabel(widget.info.version, widget.info.buildNumber),
+                ),
               ],
             ),
             if (widget.info.releaseNotes.isNotEmpty) ...[
@@ -467,6 +479,13 @@ class _UpdateDialogState extends State<UpdateDialog> {
     final host = uri.host.isEmpty ? ApiConfig.baseUrl : uri.host;
     final path = uri.path.isEmpty ? '/api/mobile/app-download' : uri.path;
     return '$host$path';
+  }
+
+  String _formatVersionLabel(String version, int buildNumber) {
+    if (buildNumber <= 0) {
+      return version;
+    }
+    return '$version+$buildNumber';
   }
 }
 

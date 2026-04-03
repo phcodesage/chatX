@@ -3521,13 +3521,21 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildUnifiedActionsBar() {
     final allButtons = <Widget>[
-      // Ring doorbell button at the start
       _buildCompressedActionChip(
-        label: 'Ring Doorbell',
-        backgroundColor: const Color(0xFF7C3AED),
-        onPressed: _ringDoorbell,
+        label: 'Camera',
+        backgroundColor: const Color(0xFF3B82F6),
+        onPressed: _takePhoto,
       ),
-      // Color button next to ring doorbell
+      _buildCompressedActionChip(
+        label: 'Send File',
+        backgroundColor: const Color(0xFF10B981),
+        onPressed: _pickFile,
+      ),
+      _buildCompressedActionChip(
+        label: 'Voice Message',
+        backgroundColor: const Color(0xFFEF4444),
+        onPressed: _showVoiceRecordingModal,
+      ),
       _buildCompressedActionChip(
         label: 'Change Color',
         backgroundColor: const Color(0xFFA855F7),
@@ -3540,38 +3548,23 @@ class _ChatScreenState extends State<ChatScreen>
           onPressed: _resetColor,
         ),
       _buildCompressedActionChip(
-        label: 'Send File',
-        backgroundColor: const Color(0xFF10B981),
-        onPressed: _pickFile,
-      ),
-      _buildCompressedActionChip(
-        label: 'Camera',
-        backgroundColor: const Color(0xFF3B82F6),
-        onPressed: _takePhoto,
-      ),
-      _buildCompressedActionChip(
-        label: 'Record Voice',
-        backgroundColor: const Color(0xFFEF4444),
-        onPressed: _showVoiceRecordingModal,
-      ),
-      _buildCompressedActionChip(
-        label: _autoTranslate ? 'Translate (on)' : 'Translate (off)',
+        label: _autoTranslate ? 'Translate On' : 'Translate Off',
         backgroundColor: _autoTranslate
             ? const Color(0xFF059669)
             : const Color(0xFF0891B2),
         onPressed: _toggleAutoTranslate,
       ),
       _buildCompressedActionChip(
-        label: _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
-        backgroundColor: _showTimestamps
-            ? const Color(0xFF4F46E5)
-            : const Color(0xFF8B5CF6),
-        onPressed: _toggleTimestamps,
-      ),
-      _buildCompressedActionChip(
         label: 'Export Chat',
         backgroundColor: const Color(0xFF475569),
         onPressed: _exportChat,
+      ),
+      _buildCompressedActionChip(
+        label: _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
+        backgroundColor: _showTimestamps
+            ? const Color(0xFF4338CA)
+            : const Color(0xFF6366F1),
+        onPressed: _toggleTimestamps,
       ),
       if (_currentUserIsAdmin)
         _buildCompressedActionChip(
@@ -3594,31 +3587,31 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Widget _buildTwoRowActions(List<Widget> allButtons) {
-    final columns = (allButtons.length / 2).ceil();
-    final topRow = allButtons.take(columns).toList();
-    final bottomRow = allButtons.skip(columns).toList();
+    final splitIndex = (allButtons.length / 2).ceil();
+    final topRow = allButtons.take(splitIndex).toList();
+    final bottomRow = allButtons.skip(splitIndex).toList();
 
-    Widget buildRow(List<Widget> rowButtons) {
-      return Row(
-        children: [
-          for (int i = 0; i < columns; i++) ...[
-            Expanded(
-              child: i < rowButtons.length
-                  ? rowButtons[i]
-                  : const SizedBox.shrink(),
-            ),
-            if (i < columns - 1) const SizedBox(width: 3),
+    Widget buildScrollableRow(List<Widget> rowButtons) {
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (int i = 0; i < rowButtons.length; i++) ...[
+              rowButtons[i],
+              if (i < rowButtons.length - 1) const SizedBox(width: 4),
+            ],
           ],
-        ],
+        ),
       );
     }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        buildRow(topRow),
-        const SizedBox(height: 3),
-        buildRow(bottomRow),
+        buildScrollableRow(topRow),
+        const SizedBox(height: 4),
+        buildScrollableRow(bottomRow),
       ],
     );
   }
@@ -3639,7 +3632,9 @@ class _ChatScreenState extends State<ChatScreen>
         highlightColor: Colors.white.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          constraints: const BoxConstraints(minHeight: 36, minWidth: 74),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+          alignment: Alignment.center,
           decoration: BoxDecoration(
             color: backgroundColor,
             borderRadius: BorderRadius.circular(12),
@@ -3648,16 +3643,20 @@ class _ChatScreenState extends State<ChatScreen>
               width: 1,
             ),
           ),
-          child: Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              overflow: TextOverflow.ellipsis,
+          child: Center(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                height: 1.1,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.visible,
+              softWrap: true,
             ),
-            textAlign: TextAlign.center,
-            maxLines: 1,
           ),
         ),
       ),
@@ -4112,9 +4111,9 @@ class _ChatScreenState extends State<ChatScreen>
       style: ElevatedButton.styleFrom(
         backgroundColor: backgroundColor,
         foregroundColor: foregroundColor,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        minimumSize: const Size(0, 40),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        minimumSize: const Size(0, 46),
+        tapTargetSize: MaterialTapTargetSize.padded,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
         textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
         elevation: 0,
@@ -4172,6 +4171,69 @@ class _ChatScreenState extends State<ChatScreen>
               icon,
               color: Colors.white70,
               size: iconSize,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDoorbellComposerButton({
+    required bool showLabel,
+    required double iconSize,
+    required EdgeInsetsGeometry padding,
+  }) {
+    const doorbellColor = Color(0xFF7E22CE);
+
+    if (!showLabel) {
+      return Tooltip(
+        message: 'Ring Doorbell',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: _ringDoorbell,
+            borderRadius: BorderRadius.circular(999),
+            splashColor: Colors.white.withValues(alpha: 0.20),
+            highlightColor: Colors.white.withValues(alpha: 0.10),
+            child: Container(
+              padding: padding,
+              decoration: const BoxDecoration(
+                color: doorbellColor,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.notifications_active_outlined,
+                color: Colors.white,
+                size: iconSize,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Tooltip(
+      message: 'Ring Doorbell',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _ringDoorbell,
+          borderRadius: BorderRadius.circular(999),
+          splashColor: Colors.white.withValues(alpha: 0.20),
+          highlightColor: Colors.white.withValues(alpha: 0.10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: doorbellColor,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: const Text(
+              'Ring Doorbell',
+              style: TextStyle(
+                color: Colors.black,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),
@@ -4287,8 +4349,8 @@ class _ChatScreenState extends State<ChatScreen>
       _buildActionSheetButton(
         label: _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
         backgroundColor: _showTimestamps
-            ? const Color(0xFF4F46E5)
-            : const Color(0xFF8B5CF6),
+            ? const Color(0xFF4338CA)
+            : const Color(0xFF6366F1),
         onPressed: () {
           _toggleTimestamps();
         },
@@ -4326,7 +4388,7 @@ class _ChatScreenState extends State<ChatScreen>
           const spacing = 10.0;
           const horizontalPadding = 20.0;
           final itemWidth = math.max(
-            88.0,
+            92.0,
             (constraints.maxWidth - horizontalPadding - (spacing * 2)) / 3,
           );
 
@@ -7316,8 +7378,9 @@ class _ChatScreenState extends State<ChatScreen>
                             _buildReplyPreview(),
                             // Quick bulk-send button above the input; in-flow layout avoids covering chat bubbles.
                             _buildSendToManyQuickAction(),
-                            // Unified actions bar with ring doorbell and all quick actions together
-                            _buildUnifiedActionsBar(),
+                            // Other action buttons (always visible unless emoji picker is open)
+                            if (!_showEmojiPicker)
+                              _buildUnifiedActionsBar(),
                             // Text input field with embedded emoji button and send button
                             ValueListenableBuilder<TextEditingValue>(
                               valueListenable: _messageController,
@@ -7335,17 +7398,17 @@ class _ChatScreenState extends State<ChatScreen>
                                 return RepaintBoundary(
                                   child: LayoutBuilder(
                                     builder: (context, constraints) {
-                                      final trailingIconCount =
-                                          hasDraftText ? 1 : 2;
                                       final iconSlotWidth = 40.0 * scale;
                                       final sendButtonReserve = 88.0 * scale;
+                                      final doorbellReserve = hasDraftText
+                                          ? (38.0 * scale)
+                                          : (100.0 * scale);
                                       final estimatedTextMaxWidth = math.max(
                                         120.0,
                                         constraints.maxWidth -
                                             sendButtonReserve -
                                             iconSlotWidth -
-                                            (trailingIconCount *
-                                                iconSlotWidth) -
+                                            doorbellReserve -
                                             (28.0 * scale),
                                       );
 
@@ -7365,6 +7428,9 @@ class _ChatScreenState extends State<ChatScreen>
                                       // Text input field with embedded controls
                                       Expanded(
                                         child: Container(
+                                          constraints: BoxConstraints(
+                                            minHeight: 44 * scale,
+                                          ),
                                           decoration: BoxDecoration(
                                             color: const Color(0xFF4D4D4D),
                                             borderRadius: BorderRadius.circular(
@@ -7499,26 +7565,22 @@ class _ChatScreenState extends State<ChatScreen>
                                                   ),
                                                 ),
                                               ),
-                                              // Removed: Actions plus button (now using compressed actions bar above)
-                                              if (!hasDraftText)
-                                                Padding(
-                                                  padding: EdgeInsets.only(
-                                                    bottom:
-                                                        isComposerExpanded
-                                                            ? 10
-                                                            : 0,
-                                                  ),
-                                                  child: _buildComposerIconButton(
-                                                    onPressed: _takePhoto,
-                                                    icon:
-                                                        Icons.camera_alt_outlined,
-                                                    iconSize: 24 * scale,
-                                                    padding: EdgeInsets.all(
-                                                      6 * scale,
-                                                    ),
-                                                    tooltip: 'Camera',
+                                              Padding(
+                                                padding: EdgeInsets.only(
+                                                  right: 6 * scale,
+                                                  bottom:
+                                                      isComposerExpanded
+                                                          ? 10
+                                                          : 0,
+                                                ),
+                                                child: _buildDoorbellComposerButton(
+                                                  showLabel: !hasDraftText,
+                                                  iconSize: 24 * scale,
+                                                  padding: EdgeInsets.all(
+                                                    6 * scale,
                                                   ),
                                                 ),
+                                              ),
                                             ],
                                           ),
                                         ),
