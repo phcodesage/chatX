@@ -19,7 +19,7 @@ class ReplyReceiver : BroadcastReceiver() {
         private const val CHAT_CHANNEL_ID = "chat_messages"
         private const val FLUTTER_PREFS = "FlutterSharedPreferences"
         private const val TOKEN_KEY = "flutter.auth_token"
-        private const val DEFAULT_BASE_URL = "https://inspect.flask-call-app.site"
+        private val DEFAULT_BASE_URL: String = BuildConfig.BASE_URL
     }
 
     override fun onReceive(context: Context, intent: Intent) {

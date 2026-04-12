@@ -15,6 +15,9 @@ const String _chatQuickReplyInputActionId = 'chat_reply_input';
 const MethodChannel _quickReplyNativeChannel = MethodChannel(
   'com.example.flutter_messenger_v2/quick_reply',
 );
+const MethodChannel _nativeNotificationPayloadChannel = MethodChannel(
+  'com.example.flutter_messenger_v2/notification_payload',
+);
 const Map<String, String> _chatQuickReplyActionMap = <String, String>{
   'chat_quick_ok': 'OK',
   'chat_quick_on_my_way': 'On my way',
@@ -553,6 +556,24 @@ class FirebaseMessagingService {
         _handleNotificationTap(message.data);
       });
 
+      // Handle foreground notification tap from native Android quick-reply
+      // notification (background → foreground case via onNewIntent)
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        _nativeNotificationPayloadChannel.setMethodCallHandler((call) async {
+          if (call.method == 'onNotificationTap') {
+            final payload = call.arguments as String?;
+            if (payload != null) {
+              try {
+                final data = jsonDecode(payload) as Map<String, dynamic>;
+                _handleNotificationTap(data);
+              } catch (e) {
+                debugPrint('Error parsing native notification payload: $e');
+              }
+            }
+          }
+        });
+      }
+
       debugPrint('✅ Firebase Messaging initialized successfully');
     } catch (e) {
       debugPrint('❌ Error initializing Firebase Messaging: $e');
@@ -984,6 +1005,26 @@ class FirebaseMessagingService {
             debugPrint('Error parsing notification payload: $e');
           }
           return;
+        }
+      }
+
+      // Check native Android notification payload — this handles taps on
+      // notifications created by the native ChatFirebaseMessagingReceiver
+      // (which bypasses FlutterLocalNotificationsPlugin entirely).
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        try {
+          final nativePayload = await _nativeNotificationPayloadChannel
+              .invokeMethod<String?>('consumeInitialNotificationPayload');
+          if (nativePayload != null) {
+            debugPrint(
+              '🔔 App opened from native Android chat notification',
+            );
+            final data = jsonDecode(nativePayload) as Map<String, dynamic>;
+            _storePendingForLobby(data);
+            return;
+          }
+        } catch (e) {
+          debugPrint('Error checking native notification payload: $e');
         }
       }
 

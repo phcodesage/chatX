@@ -46,13 +46,16 @@ class MainActivity : FlutterActivity() {
     private val QUICK_REPLY_CHANNEL = "com.example.flutter_messenger_v2/quick_reply"
     private val SHARE_CHANNEL = "com.example.flutter_messenger_v2/share_target"
     private val SHORTCUT_CHANNEL = "com.example.flutter_messenger_v2/shortcuts"
+    private val NOTIFICATION_PAYLOAD_CHANNEL = "com.example.flutter_messenger_v2/notification_payload"
     private val DIRECT_SHARE_CATEGORY = "com.example.flutter_messenger_v2.directshare"
     private var methodChannel: MethodChannel? = null
     private var shareMethodChannel: MethodChannel? = null
     private var shortcutMethodChannel: MethodChannel? = null
+    private var notificationPayloadChannel: MethodChannel? = null
     private var pendingSharedItems: List<Map<String, String>> = emptyList()
     private var pendingSharedTargetUserId: String? = null
     private var pendingShortcutTargetUserId: String? = null
+    private var pendingNotificationPayload: String? = null
     private var isInCall = false
     private var isMuted = false
 
@@ -98,6 +101,7 @@ class MainActivity : FlutterActivity() {
         pendingSharedItems = extractSharedItemsFromIntent(intent)
         pendingSharedTargetUserId = extractSharedTargetUserId(intent)
         pendingShortcutTargetUserId = extractShortcutTargetUserId(intent)
+        pendingNotificationPayload = intent?.getStringExtra("notification_payload")
         Log.d("ShareDebug", "onCreate result: items=${pendingSharedItems.size}, sharedTarget=$pendingSharedTargetUserId, shortcutTarget=$pendingShortcutTargetUserId")
     }
 
@@ -315,6 +319,22 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // ── Native notification payload bridge ────────────────────────────
+        notificationPayloadChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            NOTIFICATION_PAYLOAD_CHANNEL,
+        )
+        notificationPayloadChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "consumeInitialNotificationPayload" -> {
+                    val payload = pendingNotificationPayload
+                    pendingNotificationPayload = null
+                    result.success(payload)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -363,6 +383,8 @@ class MainActivity : FlutterActivity() {
             Log.w(TAG, "Receiver already unregistered")
         }
         shareMethodChannel = null
+        shortcutMethodChannel = null
+        notificationPayloadChannel = null
         super.onDestroy()
     }
 
@@ -384,6 +406,12 @@ class MainActivity : FlutterActivity() {
         if (!shortcutTargetUserId.isNullOrBlank() && sharedItems.isEmpty()) {
             pendingShortcutTargetUserId = shortcutTargetUserId
             shortcutMethodChannel?.invokeMethod("onShortcutTarget", shortcutTargetUserId)
+        }
+
+        val notificationPayload = intent.getStringExtra("notification_payload")
+        if (!notificationPayload.isNullOrBlank()) {
+            pendingNotificationPayload = notificationPayload
+            notificationPayloadChannel?.invokeMethod("onNotificationTap", notificationPayload)
         }
     }
 

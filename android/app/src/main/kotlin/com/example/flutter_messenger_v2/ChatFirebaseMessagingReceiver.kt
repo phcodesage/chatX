@@ -22,7 +22,7 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
         private const val TAG = "ChatFcmReceiver"
         private const val CHAT_CHANNEL_ID = "chat_messages"
         private const val CHAT_CHANNEL_NAME = "Chat Messages"
-        private const val DEFAULT_BASE_URL = "https://inspect.flask-call-app.site"
+        private val DEFAULT_BASE_URL: String = BuildConfig.BASE_URL
         private const val REQUEST_QUICK_REPLY = 4100
     }
 

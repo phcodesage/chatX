@@ -1,9 +1,14 @@
 /// API Configuration
-/// Change the baseUrl here to point to your backend server
+/// Change the baseUrl in .env.json (root of project) and build with:
+///   flutter run --dart-define-from-file=.env.json
+///   flutter build apk --dart-define-from-file=.env.json
 class ApiConfig {
-  // Base URL for the API - change this to switch backends
-  static const String baseUrl ='https://check.flask-meet.site/'; //development locally
-  //static const String baseUrl = 'https://web.flask-call-app.site'; //production
+  // Base URL is injected at build time via --dart-define-from-file=.env.json.
+  // The default keeps plain `flutter run` (without --dart-define-from-file) working.
+  static const String baseUrl = String.fromEnvironment(
+    'BASE_URL',
+    defaultValue: 'https://check.flask-meet.site',
+  );
 
   // API endpoints
   static const String authPrefix = '/api/auth';

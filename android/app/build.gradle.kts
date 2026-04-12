@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -5,6 +7,21 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
     // Temporarily disabled for v2 build: id("com.google.gms.google-services")
 }
+
+// ---------------------------------------------------------------------------
+// Decode --dart-define / --dart-define-from-file values passed by Flutter.
+// Flutter base64-encodes each KEY=VALUE pair and joins them with ",".
+// ---------------------------------------------------------------------------
+fun dartDefines(): Map<String, String> {
+    val raw = (project.findProperty("dart-defines") as? String) ?: return emptyMap()
+    return raw.split(",").associate { encoded ->
+        val decoded = String(Base64.getDecoder().decode(encoded), Charsets.UTF_8)
+        val idx = decoded.indexOf('=')
+        if (idx < 0) decoded to "" else decoded.substring(0, idx) to decoded.substring(idx + 1)
+    }
+}
+
+val dartEnv: Map<String, String> = dartDefines()
 
 android {
     namespace = "com.example.flutter_messenger_v2"
@@ -21,6 +38,10 @@ android {
         jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.flutter_messenger_v2"
@@ -30,6 +51,11 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Expose BASE_URL to native Kotlin code via BuildConfig.BASE_URL.
+        // Falls back to the same default as api_config.dart when no dart-define is present.
+        val baseUrl = dartEnv["BASE_URL"] ?: "https://check.flask-meet.site"
+        buildConfigField("String", "BASE_URL", "\"$baseUrl\"")
     }
 
     buildTypes {

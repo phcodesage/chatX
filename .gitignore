@@ -46,3 +46,6 @@ app.*.map.json
 
 
 commit-msg.md
+
+# Environment config — contains server URLs, keep out of source control
+.env.json
