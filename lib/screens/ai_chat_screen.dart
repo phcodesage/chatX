@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
 import '../services/storage_service.dart';
+import '../widgets/reaction_picker.dart';
 import '../widgets/chat_composer_shell.dart';
 
 class AiChatScreen extends StatefulWidget {
@@ -24,6 +25,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
+  final Map<int, Map<String, Set<String>>> _messageReactions =
+      <int, Map<String, Set<String>>>{};
 
   bool _isLoading = true;
   bool _isSending = false;
@@ -32,6 +35,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
   bool _autoCorrectionEnabled = true;
 
   int? _sessionId;
+  int? _currentUserId;
+  int _nextLocalMessageId = 1;
 
   static const String _showTimestampsKey = 'ai_show_timestamps';
   static const String _autoCorrectionEnabledKey = 'ai_auto_correction_enabled';
@@ -202,6 +207,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
 
   Future<void> _initialize() async {
+    _currentUserId = await StorageService.getUserId();
     await _loadUiPreferences();
     await _initializeAiSession();
   }
@@ -288,6 +294,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
           )
           .map(
             (m) => <String, String>{
+              'id': (m['id'] ?? m['message_id'] ?? '').toString(),
               'role': m['role'].toString(),
               'content': m['content'].toString(),
               'timestamp': (m['created_at'] ?? m['timestamp'] ?? '')
@@ -380,6 +387,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     setState(() {
       _isSending = true;
       _messages.add(<String, String>{
+        'id': '${_nextLocalMessageId++}',
         'role': 'user',
         'content': content,
         'timestamp': DateTime.now().toIso8601String(),
@@ -410,6 +418,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
         if (!mounted) return;
         setState(() {
           _messages.add(<String, String>{
+            'id': '${_nextLocalMessageId++}',
             'role': 'assistant',
             'content': reply,
             'timestamp': DateTime.now().toIso8601String(),
@@ -421,6 +430,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
       if (!mounted) return;
       setState(() {
         _messages.add(<String, String>{
+          'id': '${_nextLocalMessageId++}',
           'role': 'assistant',
           'content': 'Sorry, I could not respond right now. ($e)',
           'timestamp': DateTime.now().toIso8601String(),
@@ -537,10 +547,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
   }
 
-  void _onRingDoorbell() {
-    _showInfo('Ring doorbell UI is shown in AI chat, action is disabled.');
-  }
-
   void _insertEmoji(String emoji) {
     final current = _messageController.text;
     final selection = _messageController.selection;
@@ -597,43 +603,244 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
   }
 
+  String _formatTimestampFull(String? raw) {
+    if (raw == null || raw.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(raw).toLocal();
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} $h:$m';
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  int _messageId(Map<String, String> message) {
+    final fromPayload = int.tryParse(message['id'] ?? '');
+    if (fromPayload != null) return fromPayload;
+    return (message['timestamp'] ?? message['content'] ?? '').hashCode;
+  }
+
+  String _ensureColorEmoji(String emoji) {
+    const variationSelector = '\uFE0F';
+    const needsSelector = <int>{
+      0x2764,
+      0x2602,
+      0x2614,
+      0x263A,
+      0x2B50,
+      0x2600,
+      0x2601,
+      0x260E,
+      0x2709,
+      0x270F,
+      0x2744,
+      0x2728,
+      0x2702,
+      0x26A1,
+      0x2615,
+    };
+    if (emoji.isNotEmpty &&
+        needsSelector.contains(emoji.runes.first) &&
+        !emoji.contains(variationSelector)) {
+      return emoji + variationSelector;
+    }
+    return emoji;
+  }
+
+  Widget _buildReactionPills(int messageId) {
+    final reactions = _messageReactions[messageId];
+    if (reactions == null || reactions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final currentUserStr = _currentUserId?.toString() ?? '';
+    final pills = <Widget>[];
+
+    reactions.forEach((emoji, users) {
+      if (users.isEmpty) return;
+      final iReacted = users.contains(currentUserStr);
+      pills.add(
+        Container(
+          margin: const EdgeInsets.only(right: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: iReacted ? const Color(0xFF3A3A5C) : const Color(0xFF2C2C2E),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: iReacted
+                  ? const Color(0xFF6D28D9).withOpacity(0.5)
+                  : Colors.white.withOpacity(0.15),
+              width: iReacted ? 1.0 : 0.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_ensureColorEmoji(emoji), style: const TextStyle(fontSize: 16)),
+              const SizedBox(width: 2),
+              Text(
+                '${users.length}',
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+
+    if (pills.isEmpty) return const SizedBox.shrink();
+    return Wrap(spacing: 2, runSpacing: 2, children: pills);
+  }
+
+  void _toggleReaction(int messageId, String emoji) {
+    final currentUserStr = _currentUserId?.toString() ?? 'me';
+    setState(() {
+      _messageReactions.putIfAbsent(messageId, () => <String, Set<String>>{});
+      _messageReactions[messageId]!.putIfAbsent(emoji, () => <String>{});
+      final users = _messageReactions[messageId]![emoji]!;
+
+      if (users.contains(currentUserStr)) {
+        users.remove(currentUserStr);
+        if (users.isEmpty) {
+          _messageReactions[messageId]!.remove(emoji);
+        }
+      } else {
+        users.add(currentUserStr);
+      }
+
+      if (_messageReactions[messageId]!.isEmpty) {
+        _messageReactions.remove(messageId);
+      }
+    });
+  }
+
+  void _showReactionPicker(BuildContext context, int messageId, Offset position) {
+    ReactionPicker.show(
+      context: context,
+      position: position,
+      onReactionSelected: (emoji) => _toggleReaction(messageId, emoji),
+    );
+  }
+
   Widget _buildMessageBubble(Map<String, String> message) {
     final isUser = message['role'] == 'user';
     final timestamp = _formatTimestamp(message['timestamp']);
+    final fullTimestamp = _formatTimestampFull(message['timestamp']);
+    final messageId = _messageId(message);
+    final hasReactions =
+        _messageReactions[messageId] != null && _messageReactions[messageId]!.isNotEmpty;
 
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-        constraints: const BoxConstraints(maxWidth: 340),
-        child: Column(
-          crossAxisAlignment:
-              isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          children: <Widget>[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: isUser ? const Color(0xFF00D9FF) : const Color(0xFF252542),
-                borderRadius: BorderRadius.circular(12),
+    final bubbleWidget = Container(
+      margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.70,
+      ),
+      decoration: BoxDecoration(
+        color: isUser ? const Color(0xFF420796) : const Color(0xFF3944BC),
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(16),
+          topRight: const Radius.circular(16),
+          bottomLeft: Radius.circular(isUser ? 16 : 4),
+          bottomRight: Radius.circular(isUser ? 4 : 16),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Text(
+              message['content'] ?? '',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                height: 1.35,
               ),
+            ),
+          ),
+          if (isUser)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Text(
+                    timestamp,
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(
+                    Icons.done_all,
+                    size: 16,
+                    color: Color(0xFF00BCD4),
+                  ),
+                ],
+              ),
+            ),
+          if (_showTimestamps)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               child: Text(
-                message['content'] ?? '',
-                style: TextStyle(
-                  color: isUser ? Colors.black87 : Colors.white,
-                  height: 1.35,
+                fullTimestamp,
+                style: const TextStyle(
+                  color: Color(0xFFFF69B4),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
-            if (_showTimestamps && timestamp.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4, left: 4, right: 4),
-                child: Text(
-                  timestamp,
-                  style: TextStyle(color: Colors.grey[500], fontSize: 11),
-                ),
+        ],
+      ),
+    );
+
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Column(
+        crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Builder(
+            builder: (rowContext) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  bubbleWidget,
+                  if (!isUser)
+                    GestureDetector(
+                      onTapDown: (details) {
+                        // Use the exact tap position for stable overlay placement.
+                        _showReactionPicker(
+                          context,
+                          messageId,
+                          details.globalPosition,
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Icon(
+                          Icons.sentiment_satisfied_alt_outlined,
+                          color: Colors.white.withOpacity(0.6),
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+          if (hasReactions)
+            Padding(
+              padding: EdgeInsets.only(
+                left: isUser ? 0 : 8,
+                right: isUser ? 8 : 0,
+                bottom: 6,
               ),
-          ],
-        ),
+              child: _buildReactionPills(messageId),
+            ),
+        ],
       ),
     );
   }
@@ -685,65 +892,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
           child: Padding(
             padding: padding,
             child: Icon(icon, color: color, size: iconSize),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDoorbellComposerButton({required bool showLabel}) {
-    const doorbellColor = Colors.white;
-
-    if (!showLabel) {
-      return Tooltip(
-        message: 'Ring Doorbell',
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: _onRingDoorbell,
-            borderRadius: BorderRadius.circular(999),
-            splashColor: Colors.white.withOpacity(0.20),
-            highlightColor: Colors.white.withOpacity(0.10),
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: const BoxDecoration(
-                color: doorbellColor,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.notifications_active_outlined,
-                color: Colors.black,
-                size: 22,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Tooltip(
-      message: 'Ring Doorbell',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: _onRingDoorbell,
-          borderRadius: BorderRadius.circular(999),
-          splashColor: Colors.white.withOpacity(0.20),
-          highlightColor: Colors.white.withOpacity(0.10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: doorbellColor,
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: const Text(
-              'Ring Doorbell',
-              style: TextStyle(
-                color: Colors.black,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
           ),
         ),
       ),
@@ -952,7 +1100,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
           ValueListenableBuilder<TextEditingValue>(
             valueListenable: _messageController,
             builder: (context, value, _) {
-              final hasDraftText = value.text.trim().isNotEmpty;
               final textStyle = const TextStyle(
                 color: Colors.white,
                 fontSize: 18,
@@ -962,9 +1109,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
               return LayoutBuilder(
                 builder: (context, constraints) {
+                  const iconSlotWidth = 40.0;
+                  const sendButtonReserve = 88.0;
                   final estimatedTextMaxWidth = math.max(
                     120.0,
-                    constraints.maxWidth - 88.0 - 40.0 - 100.0 - 28.0,
+                    constraints.maxWidth - sendButtonReserve - iconSlotWidth - 28.0,
                   );
 
                   final isComposerExpanded = _isComposerMultiline(
@@ -1047,15 +1196,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
                                     ),
                                     isDense: true,
                                   ),
-                                ),
-                              ),
-                              Padding(
-                                padding: EdgeInsets.only(
-                                  right: 6,
-                                  bottom: isComposerExpanded ? 10 : 0,
-                                ),
-                                child: _buildDoorbellComposerButton(
-                                  showLabel: !hasDraftText,
                                 ),
                               ),
                             ],
