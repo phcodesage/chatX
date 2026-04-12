@@ -7829,11 +7829,22 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Show context menu for message
-  void _showMessageContextMenu(Message message, bool isSentByMe) {
-    showModalBottomSheet(
+  Future<void> _showMessageContextMenu(Message message, bool isSentByMe) async {
+    _keepInputUnfocused();
+
+    var actionInvoked = false;
+
+    void closeWithAction(BuildContext sheetContext, VoidCallback action) {
+      actionInvoked = true;
+      Navigator.pop(sheetContext);
+      action();
+    }
+
+    await showModalBottomSheet(
       context: context,
+      requestFocus: false,
       backgroundColor: Colors.transparent,
-      builder: (context) => SafeArea(
+      builder: (sheetContext) => SafeArea(
         child: Container(
           margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -7911,8 +7922,7 @@ class _ChatScreenState extends State<ChatScreen>
                 icon: Icons.reply_rounded,
                 label: 'Reply',
                 onTap: () {
-                  Navigator.pop(context);
-                  _setReplyTo(message);
+                  closeWithAction(sheetContext, () => _setReplyTo(message));
                 },
               ),
               if (message.messageType == 'text' && !message.isDeleted)
@@ -7920,8 +7930,10 @@ class _ChatScreenState extends State<ChatScreen>
                   icon: Icons.copy_rounded,
                   label: 'Copy',
                   onTap: () {
-                    Navigator.pop(context);
-                    _copyMessageToClipboard(message);
+                    closeWithAction(
+                      sheetContext,
+                      () => _copyMessageToClipboard(message),
+                    );
                   },
                 ),
               if (!isSentByMe &&
@@ -7937,8 +7949,10 @@ class _ChatScreenState extends State<ChatScreen>
                       : 'Translate',
                   iconColor: const Color(0xFF60A5FA),
                   onTap: () {
-                    Navigator.pop(context);
-                    _translateMessage(message);
+                    closeWithAction(
+                      sheetContext,
+                      () => _translateMessage(message),
+                    );
                   },
                 ),
               if (isSentByMe &&
@@ -7948,8 +7962,10 @@ class _ChatScreenState extends State<ChatScreen>
                   icon: Icons.edit_rounded,
                   label: 'Edit',
                   onTap: () {
-                    Navigator.pop(context);
-                    _showEditMessageDialog(message);
+                    closeWithAction(
+                      sheetContext,
+                      () => _showEditMessageDialog(message),
+                    );
                   },
                 ),
               if (isSentByMe && !message.isDeleted)
@@ -7960,8 +7976,10 @@ class _ChatScreenState extends State<ChatScreen>
                   textColor: const Color(0xFFFCA5A5),
                   tileColor: const Color(0xFF341E2A),
                   onTap: () {
-                    Navigator.pop(context);
-                    _showDeleteConfirmation(message);
+                    closeWithAction(
+                      sheetContext,
+                      () => _showDeleteConfirmation(message),
+                    );
                   },
                 ),
             ],
@@ -7969,6 +7987,10 @@ class _ChatScreenState extends State<ChatScreen>
         ),
       ),
     );
+
+    if (!actionInvoked && mounted) {
+      _keepInputUnfocused();
+    }
   }
 
   Widget _buildContextMenuActionTile({
@@ -10901,7 +10923,11 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Build the main bubble widget (wrapped with tap handlers)
     final bubbleWidget = GestureDetector(
-      onTapDown: (details) => _toggleTaskActionForMessage(message, details.globalPosition),
+      onTap: () {
+        if (_canQuickToggleTaskAction(message) && !message.isTask) {
+          _addMessageToTask(message);
+        }
+      },
       onLongPress: () => _showMessageContextMenu(message, isSentByMe),
       child: Container(
         margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
