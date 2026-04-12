@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:io';
 import 'dart:ui';
@@ -55,6 +56,10 @@ class _ChatScreenState extends State<ChatScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final SocketService _socketService = SocketService();
   final TextEditingController _messageController = TextEditingController();
+  final TextEditingController _autoCorrectionWrongController =
+    TextEditingController();
+  final TextEditingController _autoCorrectionCorrectController =
+    TextEditingController();
   final TextSelectionControls _compactSelectionControls =
       _CompactTextSelectionControls();
   final ScrollController _scrollController = ScrollController();
@@ -83,6 +88,7 @@ class _ChatScreenState extends State<ChatScreen>
   String _typingPreview = '';
   int? _currentUserId;
   Timer? _typingTimer;
+  Timer? _autoCorrectionPreviewTimer;
   Timer?
   _typingHideTimer; // auto-clears the partner's typing indicator if stop event is missed
   Timer? _typingUpdateThrottle;
@@ -96,6 +102,23 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Auto-translate toggle
   bool _autoTranslate = false;
+
+  // Auto-correction UI state (voice/input replacement dictionary)
+  bool _autoCorrectionEnabled = true;
+  final Map<String, String> _manualAutoCorrectionMappings = {
+    'rush': 'rech',
+    'rache': 'rech',
+  };
+  final Map<String, String> _learnedAutoCorrectionMappings = {
+    'helo': 'hello',
+  };
+
+  static const String _autoCorrectionEnabledPrefKey =
+      'autoCorrectionEnabled';
+  static const String _autoCorrectionManualPrefKey =
+      'autoCorrectionManualMappings';
+  static const String _autoCorrectionLearnedPrefKey =
+      'autoCorrectionLearnedMappings';
 
   // Scroll to bottom button state
   bool _isAtBottom = true;
@@ -510,6 +533,7 @@ class _ChatScreenState extends State<ChatScreen>
     await _loadSavedChatColor();
 
     await _loadTimestampPreference();
+    await _loadAutoCorrectionPreferences();
     await _loadCachedMessages();
     await _loadMessages();
     _loadPinnedExcalidrawLinks();
@@ -612,6 +636,71 @@ class _ChatScreenState extends State<ChatScreen>
     if (newValue) {
       await _translateExistingMessages();
     }
+  }
+
+  Future<void> _loadAutoCorrectionPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final enabled = prefs.getBool(_autoCorrectionEnabledPrefKey);
+    final manualRaw = prefs.getString(_autoCorrectionManualPrefKey);
+    final learnedRaw = prefs.getString(_autoCorrectionLearnedPrefKey);
+
+    Map<String, String> parseMap(String? raw) {
+      if (raw == null || raw.isEmpty) return {};
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map) return {};
+        final result = <String, String>{};
+        decoded.forEach((key, value) {
+          final wrong = key.toString().trim().toLowerCase();
+          final correct = value.toString().trim();
+          if (wrong.isNotEmpty && correct.isNotEmpty) {
+            result[wrong] = correct;
+          }
+        });
+        return result;
+      } catch (_) {
+        return {};
+      }
+    }
+
+    final manualMap = parseMap(manualRaw);
+    final learnedMap = parseMap(learnedRaw);
+
+    if (!mounted) return;
+
+    setState(() {
+      if (enabled != null) {
+        _autoCorrectionEnabled = enabled;
+      }
+      if (manualMap.isNotEmpty) {
+        _manualAutoCorrectionMappings
+          ..clear()
+          ..addAll(manualMap);
+      }
+      if (learnedMap.isNotEmpty) {
+        _learnedAutoCorrectionMappings
+          ..clear()
+          ..addAll(learnedMap);
+      }
+    });
+
+    debugPrint(
+      '[AutoCorrect] Loaded prefs: enabled=$_autoCorrectionEnabled, manual=${_manualAutoCorrectionMappings.length}, learned=${_learnedAutoCorrectionMappings.length}',
+    );
+  }
+
+  Future<void> _saveAutoCorrectionPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoCorrectionEnabledPrefKey, _autoCorrectionEnabled);
+    await prefs.setString(
+      _autoCorrectionManualPrefKey,
+      jsonEncode(_manualAutoCorrectionMappings),
+    );
+    await prefs.setString(
+      _autoCorrectionLearnedPrefKey,
+      jsonEncode(_learnedAutoCorrectionMappings),
+    );
   }
 
   void _showTopBanner(
@@ -2545,7 +2634,7 @@ class _ChatScreenState extends State<ChatScreen>
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF2D2D2D),
         title: const Text(
-          'Delete All Messages',
+          'Delete Messages',
           style: TextStyle(color: Colors.white),
         ),
         content: Text(
@@ -2565,7 +2654,7 @@ class _ChatScreenState extends State<ChatScreen>
               backgroundColor: const Color(0xFFDC2626),
               foregroundColor: Colors.white,
             ),
-            child: const Text('Delete All'),
+            child: const Text('Delete Messages'),
           ),
         ],
       ),
@@ -2691,8 +2780,134 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  String _matchReplacementCase(String sourceWord, String replacement) {
+    if (sourceWord.isEmpty || replacement.isEmpty) return replacement;
+
+    if (sourceWord == sourceWord.toUpperCase()) {
+      return replacement.toUpperCase();
+    }
+
+    final first = sourceWord[0];
+    if (first == first.toUpperCase()) {
+      return replacement[0].toUpperCase() + replacement.substring(1);
+    }
+
+    return replacement;
+  }
+
+  String _applyAutoCorrection(
+    String input, {
+    bool learn = true,
+    bool verboseLogs = true,
+    String logPrefix = '[AutoCorrect]',
+    bool trimInput = true,
+  }) {
+    if (!_autoCorrectionEnabled) {
+      if (verboseLogs) debugPrint('$logPrefix Skipped: disabled');
+      return input;
+    }
+
+    final normalizedInput = trimInput ? input.trim() : input;
+    if (normalizedInput.trim().isEmpty) {
+      if (verboseLogs) debugPrint('$logPrefix Skipped: empty input');
+      return normalizedInput;
+    }
+
+    final dictionary = <String, String>{};
+
+    void addEntries(Map<String, String> source) {
+      for (final entry in source.entries) {
+        final wrong = entry.key.trim().toLowerCase();
+        final correct = entry.value.trim();
+        if (wrong.isEmpty || correct.isEmpty) continue;
+        dictionary[wrong] = correct;
+      }
+    }
+
+    addEntries(_learnedAutoCorrectionMappings);
+    addEntries(_manualAutoCorrectionMappings);
+
+    if (dictionary.isEmpty) {
+      if (verboseLogs) debugPrint('$logPrefix Skipped: no mappings');
+      return normalizedInput;
+    }
+
+    if (verboseLogs) {
+      debugPrint('$logPrefix Input: "$normalizedInput"');
+      debugPrint('$logPrefix Mappings loaded: ${dictionary.length}');
+    }
+
+    var corrected = normalizedInput;
+    var hasChanges = false;
+    final appliedCorrections = <MapEntry<String, String>>[];
+
+    final entries = dictionary.entries.toList()
+      ..sort((a, b) => b.key.length.compareTo(a.key.length));
+
+    for (final entry in entries) {
+      final wrong = entry.key.trim();
+      final correct = entry.value.trim();
+      if (wrong.isEmpty || correct.isEmpty) continue;
+
+      final regex = RegExp('\\b${RegExp.escape(wrong)}\\b', caseSensitive: false);
+      final matches = regex.allMatches(corrected).length;
+      if (matches == 0) continue;
+
+      if (verboseLogs) {
+        debugPrint('$logPrefix Match "$wrong" -> "$correct" count=$matches');
+      }
+
+      corrected = corrected.replaceAllMapped(regex, (match) {
+        hasChanges = true;
+        return _matchReplacementCase(match.group(0) ?? wrong, correct);
+      });
+
+      appliedCorrections.add(MapEntry(wrong.toLowerCase(), correct));
+    }
+
+    if (hasChanges) {
+      if (learn) {
+        var learnedChanged = false;
+        for (final correction in appliedCorrections) {
+          if (_learnedAutoCorrectionMappings[correction.key] !=
+              correction.value) {
+            _learnedAutoCorrectionMappings[correction.key] = correction.value;
+            learnedChanged = true;
+          }
+        }
+        if (learnedChanged) {
+          unawaited(_saveAutoCorrectionPreferences());
+        }
+      }
+      if (verboseLogs) {
+        debugPrint('$logPrefix Output: "$corrected"');
+        debugPrint(
+          '$logPrefix Applied mappings: ${appliedCorrections.map((e) => '"${e.key}"->"${e.value}"').join(', ')}',
+        );
+      }
+    } else {
+      if (verboseLogs) debugPrint('$logPrefix No mapping matched input');
+    }
+
+    return corrected;
+  }
+
+  String _applyAutoCorrectionOnSend(String input) {
+    return _applyAutoCorrection(
+      input,
+      learn: true,
+      verboseLogs: true,
+      logPrefix: '[AutoCorrect:send]',
+      trimInput: true,
+    );
+  }
+
   Future<void> _sendMessage() async {
-    final content = _messageController.text.trim();
+    final rawContent = _messageController.text.trim();
+    final content = _applyAutoCorrectionOnSend(rawContent);
+    if (rawContent != content) {
+      debugPrint('[AutoCorrect:send] Corrected before send: "$rawContent" -> "$content"');
+    }
     if (content.isEmpty) return;
     final markAsTask = _markNextMessageAsTask;
 
@@ -2782,7 +2997,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (_socketService.isConnected) {
         // Send via Socket.IO for real-time delivery
         debugPrint(
-          'âœ… Sending message via Socket.IO${replyToId != null ? ' (replying to $replyToId)' : ''}',
+          'Sending message via Socket.IO${replyToId != null ? ' (replying to $replyToId)' : ''}',
         );
         _socketService.sendMessage(
           recipientId: widget.otherUser.id,
@@ -3133,6 +3348,7 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _showSendToManyDialog() async {
     final draftContent = _messageController.text.trim();
     if (draftContent.isEmpty) return;
+    final correctedDraftContent = _applyAutoCorrectionOnSend(draftContent);
 
     final currentUserId = _currentUserId ?? await StorageService.getUserId();
     if (!mounted) return;
@@ -3430,7 +3646,7 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       final response = await MessageService.sendManyMessages(
         recipientIds: selectedIds,
-        content: draftContent,
+        content: correctedDraftContent,
         messageType: 'text',
         replyToId: replyToId,
         bulkBatchId: _buildBulkBatchId(),
@@ -3580,6 +3796,11 @@ class _ChatScreenState extends State<ChatScreen>
         onPressed: _showVoiceRecordingModal,
       ),
       _buildCompressedActionChip(
+        label: 'Auto Correction',
+        backgroundColor: const Color(0xFFF59E0B),
+        onPressed: _showAutoCorrectionDictionaryModal,
+      ),
+      _buildCompressedActionChip(
         label: 'Change Color',
         backgroundColor: const Color(0xFFA855F7),
         onPressed: _changeColor,
@@ -3603,7 +3824,7 @@ class _ChatScreenState extends State<ChatScreen>
         onPressed: _exportChat,
       ),
       _buildCompressedActionChip(
-        label: _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
+        label: _showTimestamps ? 'Hide\nTimestamps' : 'Show\nTimestamps',
         backgroundColor: _showTimestamps
             ? const Color(0xFF4338CA)
             : const Color(0xFF6366F1),
@@ -3611,7 +3832,7 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       if (_currentUserIsAdmin)
         _buildCompressedActionChip(
-          label: 'Delete All',
+          label: 'Delete Messages',
           backgroundColor: const Color(0xFFDC2626),
           onPressed: _adminDeleteAllMessages,
         ),
@@ -3634,17 +3855,27 @@ class _ChatScreenState extends State<ChatScreen>
     final topRow = allButtons.take(splitIndex).toList();
     final bottomRow = allButtons.skip(splitIndex).toList();
 
-    Widget buildScrollableRow(List<Widget> rowButtons) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (int i = 0; i < rowButtons.length; i++) ...[
-              rowButtons[i],
-              if (i < rowButtons.length - 1) const SizedBox(width: 4),
+    Widget buildFittedRow(List<Widget> rowButtons) {
+      if (rowButtons.isEmpty) return const SizedBox.shrink();
+
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          const gap = 4.0;
+          final totalGap = gap * (rowButtons.length - 1);
+          final itemWidth = math.max(
+            58.0,
+            (constraints.maxWidth - totalGap) / rowButtons.length,
+          );
+
+          return Row(
+            children: [
+              for (int i = 0; i < rowButtons.length; i++) ...[
+                SizedBox(width: itemWidth, child: rowButtons[i]),
+                if (i < rowButtons.length - 1) const SizedBox(width: gap),
+              ],
             ],
-          ],
-        ),
+          );
+        },
       );
     }
 
@@ -3652,10 +3883,286 @@ class _ChatScreenState extends State<ChatScreen>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        buildScrollableRow(topRow),
+        buildFittedRow(topRow),
         const SizedBox(height: 4),
-        buildScrollableRow(bottomRow),
+        buildFittedRow(bottomRow),
       ],
+    );
+  }
+
+  Future<void> _showAutoCorrectionDictionaryModal() async {
+    _autoCorrectionWrongController.clear();
+    _autoCorrectionCorrectController.clear();
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      requestFocus: false,
+      backgroundColor: const Color(0xFF161625),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Widget buildMappingsTable(Map<String, String> mappings) {
+              if (mappings.isEmpty) {
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF202036),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.08),
+                    ),
+                  ),
+                  child: const Text(
+                    'No mappings yet',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                );
+              }
+
+              return Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF202036),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2A2A47),
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(11),
+                        ),
+                      ),
+                      child: const Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Wrong',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Correct',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    ...mappings.entries.map(
+                      (entry) => Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 9,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                entry.key,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                entry.value,
+                                style: const TextStyle(
+                                  color: Color(0xFF86EFAC),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 12,
+                  bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 42,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      const Text(
+                        'Auto Correction Dictionary',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        value: _autoCorrectionEnabled,
+                        activeColor: const Color(0xFFF59E0B),
+                        title: const Text(
+                          'Auto correction',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        subtitle: const Text(
+                          'Replace known wrong words in voice input',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                        onChanged: (value) {
+                          setState(() => _autoCorrectionEnabled = value);
+                          unawaited(_saveAutoCorrectionPreferences());
+                          setModalState(() {});
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Manual mappings',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _autoCorrectionWrongController,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                hintText: 'wrong',
+                                hintStyle: const TextStyle(color: Colors.white54),
+                                filled: true,
+                                fillColor: const Color(0xFF252542),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 10,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: _autoCorrectionCorrectController,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                hintText: 'correct',
+                                hintStyle: const TextStyle(color: Colors.white54),
+                                filled: true,
+                                fillColor: const Color(0xFF252542),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 10,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            final wrong = _autoCorrectionWrongController.text
+                                .trim()
+                                .toLowerCase();
+                            final correct = _autoCorrectionCorrectController.text
+                                .trim();
+                            if (wrong.isEmpty || correct.isEmpty) return;
+
+                            setState(() {
+                              _manualAutoCorrectionMappings[wrong] = correct;
+                            });
+                            unawaited(_saveAutoCorrectionPreferences());
+                            setModalState(() {});
+                            _autoCorrectionWrongController.clear();
+                            _autoCorrectionCorrectController.clear();
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFF59E0B),
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Add mapping'),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      buildMappingsTable(_manualAutoCorrectionMappings),
+                      const SizedBox(height: 14),
+                      const Text(
+                        'Learned items',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      buildMappingsTable(_learnedAutoCorrectionMappings),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -3675,8 +4182,8 @@ class _ChatScreenState extends State<ChatScreen>
         highlightColor: Colors.white.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          constraints: const BoxConstraints(minHeight: 36, minWidth: 74),
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+          constraints: const BoxConstraints(minHeight: 36, minWidth: 58),
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: backgroundColor,
@@ -3691,7 +4198,7 @@ class _ChatScreenState extends State<ChatScreen>
               label,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: FontWeight.w600,
                 height: 1.1,
               ),
@@ -3725,6 +4232,24 @@ class _ChatScreenState extends State<ChatScreen>
       _startTyping();
     }
 
+    // Apply local auto-correction with a tiny debounce so typing stays smooth.
+    _autoCorrectionPreviewTimer?.cancel();
+    _autoCorrectionPreviewTimer = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      final currentText = _messageController.text;
+      final corrected = _applyAutoCorrection(
+        currentText,
+        learn: false,
+        verboseLogs: false,
+        logPrefix: '[AutoCorrect:preview]',
+        trimInput: false,
+      );
+      if (corrected != currentText) {
+        debugPrint('[AutoCorrect:preview] "$currentText" -> "$corrected"');
+        _replaceInputTextWithSanitized(corrected);
+      }
+    });
+
     // Send live preview (throttled) - no setState here
     _sendTypingUpdate(text);
 
@@ -3755,6 +4280,17 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _sendTypingUpdate(String text) {
+    final typingPreview = _applyAutoCorrection(
+      text,
+      learn: false,
+      verboseLogs: false,
+      logPrefix: '[AutoCorrect:typing]',
+      trimInput: false,
+    );
+    if (typingPreview != text) {
+      debugPrint('[AutoCorrect:typing] "$text" -> "$typingPreview"');
+    }
+
     // Throttle typing updates to avoid spamming
     final now = DateTime.now();
     if (_lastTypingUpdate != null) {
@@ -3763,7 +4299,7 @@ class _ChatScreenState extends State<ChatScreen>
         // Too soon, schedule for later
         _typingUpdateThrottle?.cancel();
         _typingUpdateThrottle = Timer(const Duration(milliseconds: 500), () {
-          _socketService.sendTypingUpdate(widget.otherUser.id, text);
+          _socketService.sendTypingUpdate(widget.otherUser.id, typingPreview);
           _lastTypingUpdate = DateTime.now();
         });
         return;
@@ -3771,7 +4307,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     // Send immediately
-    _socketService.sendTypingUpdate(widget.otherUser.id, text);
+    _socketService.sendTypingUpdate(widget.otherUser.id, typingPreview);
     _lastTypingUpdate = now;
   }
 
@@ -3789,6 +4325,7 @@ class _ChatScreenState extends State<ChatScreen>
     // Cancel any pending throttled typing update so it doesn't fire after stop
     _typingUpdateThrottle?.cancel();
     _typingUpdateThrottle = null;
+    _autoCorrectionPreviewTimer?.cancel();
     // Send empty typing_update to explicitly clear live preview on receiver
     _socketService.sendTypingUpdate(widget.otherUser.id, '');
     _socketService.stopTyping(widget.otherUser.id);
@@ -4226,7 +4763,7 @@ class _ChatScreenState extends State<ChatScreen>
     required double iconSize,
     required EdgeInsetsGeometry padding,
   }) {
-    const doorbellColor = Color(0xFF7E22CE);
+    const doorbellColor = Colors.white;
 
     if (!showLabel) {
       return Tooltip(
@@ -4246,7 +4783,7 @@ class _ChatScreenState extends State<ChatScreen>
               ),
               child: Icon(
                 Icons.notifications_active_outlined,
-                color: Colors.white,
+                color: Colors.black,
                 size: iconSize,
               ),
             ),
@@ -4405,7 +4942,7 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       if (_currentUserIsAdmin)
         _buildActionSheetButton(
-          label: 'Delete All',
+          label: 'Delete Messages',
           backgroundColor: const Color(0xFFDC2626),
           onPressed: () => _runActionSheetAction(_adminDeleteAllMessages),
         ),
@@ -6943,6 +7480,8 @@ class _ChatScreenState extends State<ChatScreen>
     _taskBadgeAnimController.dispose();
     _taskModalVersion.dispose();
     _messageController.dispose();
+    _autoCorrectionWrongController.dispose();
+    _autoCorrectionCorrectController.dispose();
     _scrollController.dispose();
     _inputScrollController.dispose();
     _audioPlayer.dispose();
@@ -6952,6 +7491,7 @@ class _ChatScreenState extends State<ChatScreen>
     _activeDoorbellPlayers.clear();
     _inputFocusNode.dispose();
     _typingTimer?.cancel();
+    _autoCorrectionPreviewTimer?.cancel();
     _typingHideTimer?.cancel();
     _typingUpdateThrottle?.cancel();
     _lastSeenRefreshTimer?.cancel();
