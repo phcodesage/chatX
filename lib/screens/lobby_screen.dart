@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
 import '../models/lobby_user.dart';
 import '../models/group.dart';
@@ -27,6 +28,7 @@ import '../services/share_intent_service.dart';
 import '../services/shortcut_service.dart';
 import '../utils/notification_handler.dart';
 import 'share_target_screen.dart';
+import 'ai_chat_screen.dart';
 
 /// Lobby/Chat list screen
 class LobbyScreen extends StatefulWidget {
@@ -55,6 +57,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   StreamSubscription<int>? _shortcutLaunchSubscription;
   Future<int?> _currentUserId = StorageService.getUserId();
   bool _isSharePickerOpen = false;
+  bool _hasAiSession = false;
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
   // Typing indicator: maps userId → auto-clear timer
@@ -74,10 +77,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
     Color(0xFFFF5722), // Deep Orange
   ];
 
+  bool get _showAiSuggestion => _searchController.text.trim().isNotEmpty;
+
   @override
   void initState() {
     super.initState();
     _loadLobby();
+    _loadAiSessionPresence();
     _loadAdminStatus();
     _searchController.addListener(_onSearchQueryChanged);
     _setupRealtimeListeners();
@@ -1287,6 +1293,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
+  Future<void> _loadAiSessionPresence() async {
+    final userId = await StorageService.getUserId();
+    if (userId == null) {
+      if (!mounted) return;
+      setState(() {
+        _hasAiSession = false;
+      });
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final sessionId = prefs.getInt('ai_session_id_$userId');
+
+    if (!mounted) return;
+    setState(() {
+      _hasAiSession = sessionId != null;
+    });
+  }
+
   Future<List<LobbyUser>> _ensureSelfUserInLobby({
     required List<LobbyUser> users,
     required int? currentUserId,
@@ -1917,6 +1942,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
         ? _filteredGroups.isEmpty
         : selectedUsers.isEmpty;
 
+    final query = _searchController.text.trim().toLowerCase();
+    final aiMatchesQuery =
+      query.isEmpty || 'ask ai ai assistant ai chat'.contains(query);
+    final showAiChatTile =
+      _activeFilter == LobbyQuickFilter.all && _hasAiSession && aiMatchesQuery;
+    final hasVisibleResults = !isFilterEmpty || showAiChatTile;
+
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A2E),
       appBar: AppBar(
@@ -1954,9 +1986,48 @@ class _LobbyScreenState extends State<LobbyScreen> {
               controller: _searchController,
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
-                hintText: 'Search conversations...',
+                hintText: 'Search conversations or Ask AI',
                 hintStyle: TextStyle(color: Colors.grey[500]),
                 prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
+                suffixIcon: _showAiSuggestion
+                    ? Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: TextButton.icon(
+                          onPressed: () {
+                            final query = _searchController.text.trim();
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => AiChatScreen(
+                                  initialPrompt: query,
+                                ),
+                              ),
+                            ).then((_) {
+                              _loadAiSessionPresence();
+                              _loadLobby(useCacheFirst: false);
+                            });
+                          },
+                          style: TextButton.styleFrom(
+                            foregroundColor: const Color(0xFF00D9FF),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          icon: const Icon(Icons.auto_awesome, size: 16),
+                          label: const Text(
+                            'Ask AI',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      )
+                    : null,
+                suffixIconConstraints: const BoxConstraints(
+                  minWidth: 0,
+                  minHeight: 0,
+                ),
                 filled: true,
                 fillColor: const Color(0xFF252542),
                 border: OutlineInputBorder(
@@ -1973,7 +2044,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           Expanded(
             child: (_isLoading && _lobbyUsers.isEmpty && _groups.isEmpty)
                 ? _buildLoadingShimmer()
-                : isFilterEmpty
+                : !hasVisibleResults
                 ? Center(
                     child: Text(
                       _searchController.text.isEmpty
@@ -1995,6 +2066,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         if (_activeFilter == LobbyQuickFilter.all &&
                             _filteredGroups.isNotEmpty)
                           _buildGroupsSectionHeader(),
+                        if (showAiChatTile) _buildAiChatTile(),
                         if (_activeFilter != LobbyQuickFilter.all &&
                             _activeFilter != LobbyQuickFilter.groups)
                           _buildSectionHeader(
@@ -2460,6 +2532,79 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       ),
                     ],
                   ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAiChatTile() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF252542),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const AiChatScreen(),
+              ),
+            ).then((_) {
+              _loadAiSessionPresence();
+              _loadLobby(useCacheFirst: false);
+            });
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00D9FF).withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(26),
+                  ),
+                  child: const Icon(
+                    Icons.auto_awesome,
+                    color: Color(0xFF00D9FF),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Ask AI',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Continue your AI conversation',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  _formatTime(DateTime.now().toIso8601String()),
+                  style: TextStyle(color: Colors.grey[500], fontSize: 12),
                 ),
               ],
             ),
