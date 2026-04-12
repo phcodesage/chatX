@@ -596,18 +596,15 @@ class _ChatScreenState extends State<ChatScreen>
       'enabled': newValue,
     });
 
-    // Show feedback snackbar
+    // Show feedback notification
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            newValue ? 'Auto-translate enabled' : 'Auto-translate disabled',
-          ),
-          duration: const Duration(seconds: 1),
-          backgroundColor: newValue
-              ? const Color(0xFF059669)
-              : Colors.grey[700],
-        ),
+      _showTopBanner(
+        newValue ? 'Auto-translate enabled' : 'Auto-translate disabled',
+        backgroundColor: newValue
+            ? const Color(0xFF059669)
+            : Colors.grey[700] ?? const Color(0xFF4B5563),
+        icon: Icons.translate,
+        autoHideAfter: const Duration(seconds: 1),
       );
     }
 
@@ -615,6 +612,52 @@ class _ChatScreenState extends State<ChatScreen>
     if (newValue) {
       await _translateExistingMessages();
     }
+  }
+
+  void _showTopBanner(
+    String message, {
+    Color backgroundColor = const Color(0xFF059669),
+    IconData icon = Icons.check_circle_outline,
+    Duration? autoHideAfter = const Duration(seconds: 2),
+    bool showDismiss = true,
+  }) {
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.hideCurrentMaterialBanner();
+    messenger.showMaterialBanner(
+      MaterialBanner(
+        content: Text(message),
+        leading: Icon(icon, color: Colors.white),
+        backgroundColor: backgroundColor,
+        contentTextStyle: const TextStyle(color: Colors.white),
+        actions: [
+          TextButton(
+            onPressed: messenger.hideCurrentMaterialBanner,
+            child: Text(
+              showDismiss ? 'DISMISS' : 'HIDE',
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (autoHideAfter != null) {
+      Timer(autoHideAfter, () {
+        if (mounted) {
+          messenger.hideCurrentMaterialBanner();
+        }
+      });
+    }
+  }
+
+  void _hideTopBanner() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.hideCurrentMaterialBanner();
   }
 
   /// Translate all existing messages for this conversation
@@ -5044,9 +5087,12 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       debugPrint('Error picking file: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error picking file: $e')));
+        _showTopBanner(
+          'Error picking file: $e',
+          backgroundColor: const Color(0xFFB91C1C),
+          icon: Icons.error_outline,
+          autoHideAfter: const Duration(seconds: 3),
+        );
       }
     }
   }
@@ -5105,9 +5151,12 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       debugPrint('Error taking photo: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error accessing camera: $e')));
+        _showTopBanner(
+          'Error accessing camera: $e',
+          backgroundColor: const Color(0xFFB91C1C),
+          icon: Icons.error_outline,
+          autoHideAfter: const Duration(seconds: 3),
+        );
       }
     } finally {
       _isLaunchingCamera = false;
@@ -6651,28 +6700,14 @@ class _ChatScreenState extends State<ChatScreen>
     Duration duration,
   ) async {
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
 
     try {
-      // Show uploading indicator
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              ),
-              SizedBox(width: 12),
-              Text('Sending voice message...'),
-            ],
-          ),
-          duration: Duration(seconds: 30),
-        ),
+      _showTopBanner(
+        'Sending voice message...',
+        backgroundColor: const Color(0xFF1F2937),
+        icon: Icons.mic,
+        autoHideAfter: null,
+        showDismiss: false,
       );
 
       final file = File(path);
@@ -6713,7 +6748,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (!mounted) return;
 
       // Hide uploading indicator
-      messenger.hideCurrentSnackBar();
+      _hideTopBanner();
 
       if (result != null && result['success'] == true) {
         final fileData = result['file'] ?? result;
@@ -6761,12 +6796,11 @@ class _ChatScreenState extends State<ChatScreen>
           _scrollToBottom();
         });
 
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Voice message sent!'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
-          ),
+        _showTopBanner(
+          'Voice message sent!',
+          backgroundColor: const Color(0xFF059669),
+          icon: Icons.check_circle_outline,
+          autoHideAfter: const Duration(seconds: 2),
         );
 
         // Clean up recording file
@@ -6774,22 +6808,22 @@ class _ChatScreenState extends State<ChatScreen>
           await file.delete();
         } catch (_) {}
       } else {
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Failed to send voice message'),
-            backgroundColor: Colors.red,
-          ),
+        _showTopBanner(
+          'Failed to send voice message',
+          backgroundColor: const Color(0xFFB91C1C),
+          icon: Icons.error_outline,
+          autoHideAfter: const Duration(seconds: 3),
         );
       }
     } catch (e) {
       debugPrint('Error uploading voice message: $e');
       if (!mounted) return;
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('Error sending voice message: $e'),
-          backgroundColor: Colors.red,
-        ),
+      _hideTopBanner();
+      _showTopBanner(
+        'Error sending voice message: $e',
+        backgroundColor: const Color(0xFFB91C1C),
+        icon: Icons.error_outline,
+        autoHideAfter: const Duration(seconds: 3),
       );
     }
   }
@@ -6801,28 +6835,14 @@ class _ChatScreenState extends State<ChatScreen>
     String mimeType,
   ) async {
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
 
     try {
-      // Show uploading indicator
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              ),
-              SizedBox(width: 12),
-              Text('Uploading file...'),
-            ],
-          ),
-          duration: Duration(seconds: 30),
-        ),
+      _showTopBanner(
+        'Uploading file...',
+        backgroundColor: const Color(0xFF1F2937),
+        icon: Icons.upload_file,
+        autoHideAfter: null,
+        showDismiss: false,
       );
 
       // Create MultipartFile with explicit content type so server knows the MIME type
@@ -6842,7 +6862,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (!mounted) return;
 
       // Hide uploading indicator
-      messenger.hideCurrentSnackBar();
+      _hideTopBanner();
 
       if (result != null && result['success'] == true) {
         final fileData = result['file'] ?? result;
@@ -6893,11 +6913,11 @@ class _ChatScreenState extends State<ChatScreen>
         }
         _scrollToBottom();
 
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('File sent!'),
-            duration: Duration(seconds: 2),
-          ),
+        _showTopBanner(
+          'File sent!',
+          backgroundColor: const Color(0xFF059669),
+          icon: Icons.check_circle_outline,
+          autoHideAfter: const Duration(seconds: 2),
         );
       } else {
         throw Exception(result?['error'] ?? 'Upload failed');
@@ -6905,9 +6925,12 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       debugPrint('Error uploading file: $e');
       if (!mounted) return;
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(content: Text('Failed to send file: $e')),
+      _hideTopBanner();
+      _showTopBanner(
+        'Failed to send file: $e',
+        backgroundColor: const Color(0xFFB91C1C),
+        icon: Icons.error_outline,
+        autoHideAfter: const Duration(seconds: 3),
       );
     }
   }
@@ -8314,7 +8337,6 @@ class _ChatScreenState extends State<ChatScreen>
   /// Translate a message manually
   Future<void> _translateMessage(Message message) async {
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
 
     try {
       // Check if already translated - toggle off if so
@@ -8322,36 +8344,22 @@ class _ChatScreenState extends State<ChatScreen>
         setState(() {
           _messageTranslations.remove(message.id);
         });
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Translation hidden'),
-            duration: Duration(seconds: 1),
-            backgroundColor: Color(0xFF6B7280),
-          ),
+        _showTopBanner(
+          'Translation hidden',
+          backgroundColor: const Color(0xFF6B7280),
+          icon: Icons.translate,
+          autoHideAfter: const Duration(seconds: 1),
         );
         return;
       }
 
       // Show loading indicator
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              ),
-              SizedBox(width: 12),
-              Text('Translating...'),
-            ],
-          ),
-          duration: Duration(seconds: 30),
-          backgroundColor: Color(0xFF4F46E5),
-        ),
+      _showTopBanner(
+        'Translating...',
+        backgroundColor: const Color(0xFF4F46E5),
+        icon: Icons.translate,
+        autoHideAfter: null,
+        showDismiss: false,
       );
 
       final targetLang = await TranslationService.getUserLanguage();
@@ -8363,7 +8371,7 @@ class _ChatScreenState extends State<ChatScreen>
       if (!mounted) return;
 
       // Hide loading indicator
-      messenger.hideCurrentSnackBar();
+      _hideTopBanner();
 
       if (translatedText != null && translatedText != message.content) {
         // Store translation and update UI
@@ -8371,44 +8379,40 @@ class _ChatScreenState extends State<ChatScreen>
           _messageTranslations[message.id] = translatedText;
         });
 
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Message translated'),
-            duration: Duration(seconds: 1),
-            backgroundColor: Color(0xFF4CAF50),
-          ),
+        _showTopBanner(
+          'Message translated',
+          backgroundColor: const Color(0xFF4CAF50),
+          icon: Icons.check_circle_outline,
+          autoHideAfter: const Duration(seconds: 1),
         );
       } else if (translatedText == message.content) {
         // Same text, no translation needed
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Message is already in your language'),
-            duration: Duration(seconds: 2),
-            backgroundColor: Color(0xFF6B7280),
-          ),
+        _showTopBanner(
+          'Message is already in your language',
+          backgroundColor: const Color(0xFF6B7280),
+          icon: Icons.info_outline,
+          autoHideAfter: const Duration(seconds: 2),
         );
       } else {
         // Translation failed
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Translation failed. Please try again.'),
-            duration: Duration(seconds: 3),
-            backgroundColor: Color(0xFFEF4444),
-          ),
+        _showTopBanner(
+          'Translation failed. Please try again.',
+          backgroundColor: const Color(0xFFEF4444),
+          icon: Icons.error_outline,
+          autoHideAfter: const Duration(seconds: 3),
         );
       }
     } catch (e) {
       // Hide loading indicator
       if (!mounted) return;
-      messenger.hideCurrentSnackBar();
+      _hideTopBanner();
 
       debugPrint('Translation error: $e');
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('Translation failed. Please try again.'),
-          duration: Duration(seconds: 3),
-          backgroundColor: Color(0xFFEF4444),
-        ),
+      _showTopBanner(
+        'Translation failed. Please try again.',
+        backgroundColor: const Color(0xFFEF4444),
+        icon: Icons.error_outline,
+        autoHideAfter: const Duration(seconds: 3),
       );
     }
   }
