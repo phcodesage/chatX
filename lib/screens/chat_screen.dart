@@ -206,6 +206,11 @@ class _ChatScreenState extends State<ChatScreen>
   String _partnerStatus = 'offline';
   String? _partnerLastSeen;
 
+  bool get _isSelfChat {
+    final currentUserId = _currentUserId;
+    return currentUserId != null && widget.otherUser.id == currentUserId;
+  }
+
   void _notifyTaskModalChanged() {
     _taskModalVersion.value = _taskModalVersion.value + 1;
   }
@@ -417,6 +422,8 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Mark visible messages as read
   void _markVisibleMessagesAsRead() {
+    if (_isSelfChat) return;
+
     final unreadMessageIds = <int>[];
 
     // Find unread messages from the other user
@@ -438,6 +445,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Sync delivery and read statuses for messages loaded from history.
   Future<void> _syncLoadedMessageStatuses(List<Message> loadedMessages) async {
+    if (_isSelfChat) return;
     if (loadedMessages.isEmpty) return;
 
     final incomingMessages = loadedMessages.where((message) {
@@ -843,7 +851,9 @@ class _ChatScreenState extends State<ChatScreen>
           _typingPreview = '';
 
           // Increment unread count if not at bottom (for incoming messages)
-          if (!_isAtBottom && incomingMessage.senderId == widget.otherUser.id) {
+          if (!_isSelfChat &&
+              !_isAtBottom &&
+              incomingMessage.senderId == widget.otherUser.id) {
             _unreadCount++;
           }
         });
@@ -893,7 +903,7 @@ class _ChatScreenState extends State<ChatScreen>
     });
 
     // Listen for message_sent (echoes our own messages from other devices)
-    _socketService.addListener('messageSent', key, (Map<String, dynamic> data) {
+    _socketService.addListener('messageSent', key, (Map<String, dynamic> data) async {
       final recipientId = _toInt(data['recipient_id']);
       // Only process if this is for the current conversation
       if (recipientId == widget.otherUser.id) {
@@ -931,6 +941,7 @@ class _ChatScreenState extends State<ChatScreen>
           if (shouldMarkAsTask) {
             _socketService.addTask(message.id);
           }
+          await _persistConversationCacheSnapshot();
         } else {
           // Check if message already exists (by ID)
           final alreadyExists = _messages.any((m) => m.id == message.id);
@@ -947,6 +958,7 @@ class _ChatScreenState extends State<ChatScreen>
           if (shouldMarkAsTask) {
             _socketService.addTask(message.id);
           }
+          await _persistConversationCacheSnapshot();
         }
       }
     });
@@ -954,6 +966,7 @@ class _ChatScreenState extends State<ChatScreen>
     // Listen for typing indicator (includes live typing preview)
     _socketService.addListener('userTyping', key, (Map<String, dynamic> data) {
       if (data['user_id'] == widget.otherUser.id) {
+        if (_isSelfChat) return;
         setState(() {
           final isTyping = data['is_typing'] ?? false;
           final message = data['message'] as String? ?? '';
@@ -988,6 +1001,7 @@ class _ChatScreenState extends State<ChatScreen>
     ) {
       if (data['user_id'] == widget.otherUser.id ||
           data['sender_id'] == widget.otherUser.id) {
+        if (_isSelfChat) return;
         final preview = data['message'] ?? '';
         setState(() {
           _otherUserTyping = preview.isNotEmpty;
@@ -2125,6 +2139,17 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  Future<void> _persistConversationCacheSnapshot() async {
+    final currentUserId = _currentUserId ?? await StorageService.getUserId();
+    if (currentUserId == null) return;
+
+    await ChatCacheService.saveConversationMessages(
+      currentUserId,
+      widget.otherUser.id,
+      _messages.reversed.toList(),
+    );
+  }
+
   Future<void> _loadPinnedExcalidrawLinks() async {
     try {
       final links = await MessageService.getConversationExcalidrawLinks(
@@ -3043,6 +3068,7 @@ class _ChatScreenState extends State<ChatScreen>
           if (markAsTask && _socketService.isConnected) {
             _socketService.addTask(sentMessage.id);
           }
+          await _persistConversationCacheSnapshot();
           debugPrint('âœ… Message sent via REST API');
         }
       }
@@ -4280,6 +4306,8 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _sendTypingUpdate(String text) {
+    if (_isSelfChat) return;
+
     final typingPreview = _applyAutoCorrection(
       text,
       learn: false,
@@ -4312,6 +4340,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _startTyping() {
+    if (_isSelfChat) return;
     if (mounted) {
       setState(() => _isTyping = true);
     }
@@ -4327,8 +4356,10 @@ class _ChatScreenState extends State<ChatScreen>
     _typingUpdateThrottle = null;
     _autoCorrectionPreviewTimer?.cancel();
     // Send empty typing_update to explicitly clear live preview on receiver
-    _socketService.sendTypingUpdate(widget.otherUser.id, '');
-    _socketService.stopTyping(widget.otherUser.id);
+    if (!_isSelfChat) {
+      _socketService.sendTypingUpdate(widget.otherUser.id, '');
+      _socketService.stopTyping(widget.otherUser.id);
+    }
     _typingTimer?.cancel();
   }
 
@@ -7474,6 +7505,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    unawaited(_persistConversationCacheSnapshot());
     _inputModeSwitchTimer?.cancel();
     _metricsRefreshTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -7569,7 +7601,7 @@ class _ChatScreenState extends State<ChatScreen>
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
-                    _buildHeaderStatusPill(),
+                    if (!_isSelfChat) _buildHeaderStatusPill(),
                   ],
                 ),
               ),
@@ -7577,18 +7609,20 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
         actions: [
-          // Video call button
-          IconButton(
-            icon: Icon(Icons.videocam, color: Colors.white, size: 24 * scale),
-            onPressed: () => _showCallSetupModal(CallType.video),
-            tooltip: 'Video Call',
-          ),
-          // Audio call button
-          IconButton(
-            icon: Icon(Icons.call, color: Colors.white, size: 24 * scale),
-            onPressed: () => _showCallSetupModal(CallType.audio),
-            tooltip: 'Audio Call',
-          ),
+          if (!_isSelfChat)
+            // Video call button
+            IconButton(
+              icon: Icon(Icons.videocam, color: Colors.white, size: 24 * scale),
+              onPressed: () => _showCallSetupModal(CallType.video),
+              tooltip: 'Video Call',
+            ),
+          if (!_isSelfChat)
+            // Audio call button
+            IconButton(
+              icon: Icon(Icons.call, color: Colors.white, size: 24 * scale),
+              onPressed: () => _showCallSetupModal(CallType.audio),
+              tooltip: 'Audio Call',
+            ),
           // Dedicated task button with animated count badge
           Stack(
             clipBehavior: Clip.none,
@@ -11979,6 +12013,9 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   String _statusForUi(Message message) {
+    if (_isSelfChat && message.senderId == _currentUserId) {
+      return 'seen';
+    }
     if (_databaseLoadedMessageIds.contains(message.id)) {
       return 'sent';
     }

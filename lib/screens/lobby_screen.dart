@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:shimmer/shimmer.dart';
 import '../models/lobby_user.dart';
 import '../models/group.dart';
+import '../models/message.dart';
 import '../services/lobby_service.dart';
 import '../services/group_service.dart';
 import '../services/auth_service.dart';
@@ -857,10 +858,61 @@ class _LobbyScreenState extends State<LobbyScreen> {
     debugPrint('Doorbell ring received from ${data['sender_name']}');
   }
 
+  int? _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  String? _extractEventTimestamp(Map<String, dynamic> data) {
+    final createdAt = data['created_at'];
+    if (createdAt is String && createdAt.trim().isNotEmpty) {
+      return createdAt.trim();
+    }
+
+    final timestamp = data['timestamp'];
+    if (timestamp is String && timestamp.trim().isNotEmpty) {
+      return timestamp.trim();
+    }
+
+    final timestampMs = _toInt(data['timestamp_ms']);
+    if (timestampMs != null && timestampMs > 0) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        timestampMs,
+        isUtc: true,
+      ).toIso8601String();
+    }
+
+    final nestedMessage = data['message'];
+    if (nestedMessage is Map<String, dynamic>) {
+      final nestedCreatedAt = nestedMessage['created_at'];
+      if (nestedCreatedAt is String && nestedCreatedAt.trim().isNotEmpty) {
+        return nestedCreatedAt.trim();
+      }
+
+      final nestedTimestamp = nestedMessage['timestamp'];
+      if (nestedTimestamp is String && nestedTimestamp.trim().isNotEmpty) {
+        return nestedTimestamp.trim();
+      }
+
+      final nestedTimestampMs = _toInt(nestedMessage['timestamp_ms']);
+      if (nestedTimestampMs != null && nestedTimestampMs > 0) {
+        return DateTime.fromMillisecondsSinceEpoch(
+          nestedTimestampMs,
+          isUtc: true,
+        ).toIso8601String();
+      }
+    }
+
+    return null;
+  }
+
   void _handleNewMessage(Map<String, dynamic> data) {
-    final senderId = data['sender_id'] as int;
+    final senderId = _toInt(data['sender_id']);
+    if (senderId == null) return;
     final content = data['content'] as String?;
-    final createdAt = data['created_at'] as String?;
+    final createdAt = _extractEventTimestamp(data);
 
     // Update unread count and last message info for sender
     setState(() {
@@ -906,9 +958,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _handleSentMessage(Map<String, dynamic> data) {
-    final recipientId = data['recipient_id'] as int;
+    final senderId = _toInt(data['sender_id']);
+    final currentUserId = _socketService.currentUserId;
+    final recipientId =
+        _toInt(data['recipient_id']) ??
+        _toInt(data['receiver_id']) ??
+        ((senderId != null && senderId == currentUserId)
+            ? currentUserId
+            : null);
+    if (recipientId == null) return;
     final content = data['content'] as String?;
-    final createdAt = data['created_at'] as String?;
+    final createdAt = _extractEventTimestamp(data);
 
     // Update last message info for recipient (showing our sent message)
     setState(() {
@@ -954,13 +1014,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _handleFileMessage(Map<String, dynamic> data) {
-    final senderId = data['sender_id'] as int;
+    final senderId = _toInt(data['sender_id']);
+    if (senderId == null) return;
     final fileName = data['file_name'] as String?;
-    final createdAt = data['timestamp_ms'] != null
-        ? DateTime.fromMillisecondsSinceEpoch(
-            data['timestamp_ms'] as int,
-          ).toIso8601String()
-        : null;
+    final createdAt = _extractEventTimestamp(data);
 
     // Show file name as last message preview
     final filePreview = fileName != null ? "📎 $fileName" : "📎 File";
@@ -1001,13 +1058,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _handleVoiceMessage(Map<String, dynamic> data) {
-    final senderId = data['sender_id'] as int;
+    final senderId = _toInt(data['sender_id']);
+    if (senderId == null) return;
     final duration = data['duration'] as int?;
-    final createdAt = data['timestamp_ms'] != null
-        ? DateTime.fromMillisecondsSinceEpoch(
-            data['timestamp_ms'] as int,
-          ).toIso8601String()
-        : null;
+    final createdAt = _extractEventTimestamp(data);
 
     // Show voice message with duration as last message preview
     final voicePreview = duration != null
@@ -1168,7 +1222,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
     if (useCacheFirst && userId != null) {
       final cached = await ChatCacheService.loadLobbyUsers(userId);
       if (cached.isNotEmpty && mounted) {
-        final sortedCachedUsers = _sortUsersByRecentActivity(cached);
+        final username = await StorageService.getUsername();
+        final usersWithSelf = await _ensureSelfUserInLobby(
+          users: cached,
+          currentUserId: userId,
+          currentUsername: username,
+        );
+        final sortedCachedUsers = _sortUsersByRecentActivity(usersWithSelf);
         setState(() {
           _lobbyUsers = sortedCachedUsers;
           _filteredUsers = List.from(sortedCachedUsers);
@@ -1186,7 +1246,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
         }),
       ]);
 
-      final users = _sortUsersByRecentActivity(results[0] as List<LobbyUser>);
+      final fetchedUsers = results[0] as List<LobbyUser>;
+      final username = await StorageService.getUsername();
+      final usersWithSelf = await _ensureSelfUserInLobby(
+        users: fetchedUsers,
+        currentUserId: userId,
+        currentUsername: username,
+      );
+      final users = _sortUsersByRecentActivity(usersWithSelf);
       final groups = _sortGroupsByRecentActivity(results[1] as List<Group>);
 
       if (mounted) {
@@ -1217,6 +1284,143 @@ class _LobbyScreenState extends State<LobbyScreen> {
         _openSharePickerIfNeeded();
       }
       debugPrint('Error loading lobby: $e');
+    }
+  }
+
+  Future<List<LobbyUser>> _ensureSelfUserInLobby({
+    required List<LobbyUser> users,
+    required int? currentUserId,
+    required String? currentUsername,
+  }) async {
+    if (currentUserId == null) return users;
+
+    final exists = users.any((user) => user.id == currentUserId);
+    if (exists) {
+      return _hydrateSelfUserFromCache(
+        users: users,
+        currentUserId: currentUserId,
+      );
+    }
+
+    final syntheticSelfUser = LobbyUser(
+      id: currentUserId,
+      username: (currentUsername?.trim().isNotEmpty ?? false)
+          ? currentUsername!.trim()
+          : 'you',
+      email: '',
+      firstName: 'You',
+      lastName: '',
+      fullName: 'You',
+      avatarUrl: null,
+      bio: null,
+      status: 'online',
+      statusMessage: null,
+      lastSeen: null,
+      isOnline: true,
+      isAdmin: false,
+      timezone: 'UTC',
+      unreadCount: 0,
+      isContact: true,
+      isAdminUser: false,
+      lastMessage: null,
+      lastMessageTime: null,
+      lastMessageIsFromMe: null,
+    );
+
+    final withSelf = List<LobbyUser>.from(users)..add(syntheticSelfUser);
+    return _hydrateSelfUserFromCache(
+      users: withSelf,
+      currentUserId: currentUserId,
+    );
+  }
+
+  Future<List<LobbyUser>> _hydrateSelfUserFromCache({
+    required List<LobbyUser> users,
+    required int currentUserId,
+  }) async {
+    final selfIndex = users.indexWhere((user) => user.id == currentUserId);
+    if (selfIndex == -1) return users;
+
+    final selfUser = users[selfIndex];
+    final cachedMessages = await ChatCacheService.loadConversationMessages(
+      currentUserId,
+      currentUserId,
+    );
+    if (cachedMessages.isEmpty) return users;
+
+    Message latestMessage = cachedMessages.first;
+    for (final candidate in cachedMessages.skip(1)) {
+      final candidateTime = candidate.timestampMs > 0
+          ? DateTime.fromMillisecondsSinceEpoch(candidate.timestampMs)
+          : _parseMessageTime(candidate.timestamp);
+      final latestTime = latestMessage.timestampMs > 0
+          ? DateTime.fromMillisecondsSinceEpoch(latestMessage.timestampMs)
+          : _parseMessageTime(latestMessage.timestamp);
+      if (candidateTime.isAfter(latestTime)) {
+        latestMessage = candidate;
+      }
+    }
+
+    final cachedTimestamp = latestMessage.timestamp.trim();
+    final hasCurrentPreview = selfUser.lastMessage?.trim().isNotEmpty ?? false;
+    final hasCurrentTime = selfUser.lastMessageTime?.trim().isNotEmpty ?? false;
+    final shouldUseCachedMessage =
+        !hasCurrentPreview ||
+        !hasCurrentTime ||
+        _parseMessageTime(cachedTimestamp).isAfter(
+          _parseMessageTime(selfUser.lastMessageTime),
+        );
+    if (!shouldUseCachedMessage) {
+      return users;
+    }
+
+    final hydratedUsers = List<LobbyUser>.from(users);
+    hydratedUsers[selfIndex] = LobbyUser(
+      id: selfUser.id,
+      username: selfUser.username,
+      email: selfUser.email,
+      firstName: selfUser.firstName,
+      lastName: selfUser.lastName,
+      fullName: selfUser.fullName,
+      avatarUrl: selfUser.avatarUrl,
+      bio: selfUser.bio,
+      status: selfUser.status,
+      statusMessage: selfUser.statusMessage,
+      lastSeen: selfUser.lastSeen,
+      isOnline: selfUser.isOnline,
+      isAdmin: selfUser.isAdmin,
+      timezone: selfUser.timezone,
+      unreadCount: 0,
+      isContact: selfUser.isContact,
+      isAdminUser: selfUser.isAdminUser,
+      lastMessage: _previewTextForMessage(latestMessage),
+      lastMessageTime: cachedTimestamp,
+      lastMessageIsFromMe: true,
+    );
+    return hydratedUsers;
+  }
+
+  String _previewTextForMessage(Message message) {
+    switch (message.messageType.toLowerCase()) {
+      case 'image':
+        return message.fileName?.trim().isNotEmpty == true
+            ? '📷 ${message.fileName!.trim()}'
+            : '📷 Photo';
+      case 'video':
+        return message.fileName?.trim().isNotEmpty == true
+            ? '🎬 ${message.fileName!.trim()}'
+            : '🎬 Video';
+      case 'audio':
+      case 'voice':
+        return '🎤 Voice message';
+      case 'file':
+      case 'document':
+        return message.fileName?.trim().isNotEmpty == true
+            ? '📎 ${message.fileName!.trim()}'
+            : '📎 File';
+      default:
+        final trimmedContent = message.content.trim();
+        return trimmedContent.isNotEmpty ? trimmedContent : 'No messages yet';
     }
   }
 
@@ -2008,6 +2212,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget _buildUserTile(LobbyUser user, {bool isOnlineSection = false}) {
     final avatarColor = _getAvatarColor(user.avatarColorIndex);
     final effectiveStatus = _getEffectiveStatus(user);
+    final isSelfChatTile = user.id == _socketService.currentUserId;
+    final displayUnreadCount = isSelfChatTile ? 0 : user.unreadCount;
 
     // Get last message preview
     String _getLastMessagePreview() {
@@ -2094,7 +2300,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 debugPrint('[LOBBY] mark-read REST fallback failed: $e');
               }
               // Reload lobby and restore socket listeners when returning from chat
-              _loadLobby();
+              _loadLobby(useCacheFirst: false);
               _setupRealtimeListeners();
             });
           },
@@ -2223,16 +2429,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       Text(
                         _formatTime(user.lastMessageTime),
                         style: TextStyle(
-                          color: user.unreadCount > 0
+                          color: displayUnreadCount > 0
                               ? const Color(0xFF00D9FF)
                               : Colors.grey[500],
                           fontSize: 11,
-                          fontWeight: user.unreadCount > 0
+                          fontWeight: displayUnreadCount > 0
                               ? FontWeight.w600
                               : FontWeight.normal,
                         ),
                       ),
-                    if (user.unreadCount > 0) ...[
+                    if (displayUnreadCount > 0) ...[
                       const SizedBox(height: 6),
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -2244,7 +2450,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
-                          user.unreadCount > 99 ? '99+' : '${user.unreadCount}',
+                          displayUnreadCount > 99 ? '99+' : '$displayUnreadCount',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
