@@ -8587,6 +8587,36 @@ class _ChatScreenState extends State<ChatScreen>
               ),
               if (message.messageType == 'text' && !message.isDeleted)
                 _buildContextMenuActionTile(
+                  icon: message.isTask
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
+                  label: message.isTask ? 'Unmark task' : 'Mark as task',
+                  iconColor: const Color(0xFFF59E0B),
+                  onTap: () {
+                    closeWithAction(
+                      sheetContext,
+                      () => message.isTask
+                          ? _unmarkMessageTask(message)
+                          : _addMessageToTask(message),
+                    );
+                  },
+                ),
+              if (_canQuickToggleExcalidrawPin(message))
+                _buildContextMenuActionTile(
+                  icon: Icons.bookmark,
+                  label: message.excalidrawPinnedAt != null
+                      ? 'Unpin Excalidraw'
+                      : 'Pin Excalidraw',
+                  iconColor: const Color(0xFFB794F6),
+                  onTap: () {
+                    closeWithAction(
+                      sheetContext,
+                      () => _toggleExcalidrawPin(message),
+                    );
+                  },
+                ),
+              if (message.messageType == 'text' && !message.isDeleted)
+                _buildContextMenuActionTile(
                   icon: Icons.copy_rounded,
                   label: 'Copy',
                   onTap: () {
@@ -11597,7 +11627,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Build the main bubble widget (wrapped with tap handlers)
     final bubbleWidget = GestureDetector(
-      onTapDown: (details) {
+      onTapUp: (details) {
         _toggleTaskActionForMessage(message, details.globalPosition);
       },
       onLongPress: () => _showMessageContextMenu(message, isSentByMe),
