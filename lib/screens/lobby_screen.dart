@@ -58,6 +58,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Future<int?> _currentUserId = StorageService.getUserId();
   bool _isSharePickerOpen = false;
   bool _hasAiSession = false;
+  String? _aiLastMessageTime;
+  String? _aiLastMessagePreview;
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
 
   // Typing indicator: maps userId → auto-clear timer
@@ -1305,10 +1307,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     final prefs = await SharedPreferences.getInstance();
     final sessionId = prefs.getInt('ai_session_id_$userId');
+    final aiLastMessageTime = prefs.getString('ai_last_message_time_$userId');
+    final aiLastMessagePreview = prefs.getString('ai_last_message_preview_$userId');
 
     if (!mounted) return;
     setState(() {
       _hasAiSession = sessionId != null;
+      _aiLastMessageTime = aiLastMessageTime;
+      _aiLastMessagePreview = aiLastMessagePreview;
     });
   }
 
@@ -1520,6 +1526,33 @@ class _LobbyScreenState extends State<LobbyScreen> {
       return a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase());
     });
     return sortedUsers;
+  }
+
+  /// Builds a time-sorted list of user tiles interleaved with the AI tile,
+  /// so the most recently active conversation always rises to the top.
+  List<Widget> _buildSortedUserAndAiTiles(
+    List<LobbyUser> users, {
+    bool includeAi = false,
+    bool isOnlineSection = false,
+  }) {
+    final entries = <({DateTime time, Widget tile})>[];
+
+    for (final user in users) {
+      entries.add((
+        time: _parseMessageTime(user.lastMessageTime),
+        tile: _buildUserTile(user, isOnlineSection: isOnlineSection),
+      ));
+    }
+
+    if (includeAi) {
+      entries.add((
+        time: _parseMessageTime(_aiLastMessageTime),
+        tile: _buildAiChatTile(),
+      ));
+    }
+
+    entries.sort((a, b) => b.time.compareTo(a.time));
+    return entries.map((e) => e.tile).toList();
   }
 
   List<Group> _sortGroupsByRecentActivity(List<Group> groups) {
@@ -2066,7 +2099,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         if (_activeFilter == LobbyQuickFilter.all &&
                             _filteredGroups.isNotEmpty)
                           _buildGroupsSectionHeader(),
-                        if (showAiChatTile) _buildAiChatTile(),
                         if (_activeFilter != LobbyQuickFilter.all &&
                             _activeFilter != LobbyQuickFilter.groups)
                           _buildSectionHeader(
@@ -2079,18 +2111,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
                             ..._filteredGroups.map(
                               (group) => _buildGroupTile(group),
                             ),
-                          ...selectedUsers.map((user) => _buildUserTile(user)),
+                          ..._buildSortedUserAndAiTiles(
+                            selectedUsers,
+                            includeAi: showAiChatTile,
+                          ),
                         ] else if (_activeFilter == LobbyQuickFilter.groups)
                           ..._filteredGroups.map(
                             (group) => _buildGroupTile(group),
                           )
                         else
-                          ...selectedUsers.map(
-                            (user) => _buildUserTile(
-                              user,
-                              isOnlineSection:
-                                  _activeFilter == LobbyQuickFilter.online,
-                            ),
+                          ..._buildSortedUserAndAiTiles(
+                            selectedUsers,
+                            isOnlineSection:
+                                _activeFilter == LobbyQuickFilter.online,
                           ),
                       ],
                     ),
@@ -2542,6 +2575,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _buildAiChatTile() {
+    final preview = _aiLastMessagePreview ?? 'Start a conversation';
+    final timeLabel = _aiLastMessageTime != null
+        ? _formatTime(_aiLastMessageTime!)
+        : '';
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
@@ -2567,16 +2605,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
+                // Bot avatar — gradient circle with smart_toy icon
                 Container(
                   width: 52,
                   height: 52,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF00D9FF).withOpacity(0.18),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF00C9A7), Color(0xFF845EC2)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
                     borderRadius: BorderRadius.circular(26),
                   ),
                   child: const Icon(
-                    Icons.auto_awesome,
-                    color: Color(0xFF00D9FF),
+                    Icons.smart_toy_rounded,
+                    color: Colors.white,
+                    size: 28,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -2584,17 +2628,30 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Ask AI',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        children: [
+                          const Text(
+                            'AI Chat',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF00E676),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Continue your AI conversation',
+                        preview,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: Colors.grey[400], fontSize: 12),
@@ -2602,9 +2659,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     ],
                   ),
                 ),
-                Text(
-                  _formatTime(DateTime.now().toIso8601String()),
-                  style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      timeLabel,
+                      style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Always on',
+                      style: TextStyle(
+                        color: const Color(0xFF00E676),
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

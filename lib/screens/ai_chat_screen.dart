@@ -412,6 +412,20 @@ class _AiChatScreenState extends State<AiChatScreen> {
     });
     _scrollToBottom();
 
+    // Persist last AI message time + preview so lobby can sort/display correctly
+    if (_currentUserId != null) {
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setString(
+          'ai_last_message_time_$_currentUserId',
+          DateTime.now().toUtc().toIso8601String(),
+        );
+        prefs.setString(
+          'ai_last_message_preview_$_currentUserId',
+          'You: $content',
+        );
+      });
+    }
+
     try {
       final response = await http
           .post(
@@ -441,6 +455,19 @@ class _AiChatScreenState extends State<AiChatScreen> {
           });
         });
         _scrollToBottom();
+        // Update preview with AI's reply
+        if (_currentUserId != null) {
+          SharedPreferences.getInstance().then((prefs) {
+            prefs.setString(
+              'ai_last_message_preview_$_currentUserId',
+              reply.length > 60 ? '${reply.substring(0, 60)}...' : reply,
+            );
+            prefs.setString(
+              'ai_last_message_time_$_currentUserId',
+              DateTime.now().toUtc().toIso8601String(),
+            );
+          });
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -1299,11 +1326,29 @@ class _AiChatScreenState extends State<AiChatScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1A2E),
         elevation: 0,
-        title: const Row(
+        title: Row(
           children: <Widget>[
-            Icon(Icons.auto_awesome, color: Color(0xFF00D9FF)),
-            SizedBox(width: 8),
-            Text('Ask AI'),
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF00C9A7), Color(0xFF845EC2)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: const Icon(Icons.smart_toy_rounded, color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 10),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text('AI Chat', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                Text('Always on', style: TextStyle(fontSize: 11, color: Color(0xFF00E676))),
+              ],
+            ),
           ],
         ),
       ),
