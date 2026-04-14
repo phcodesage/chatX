@@ -2361,6 +2361,38 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// Scroll to a specific task bubble and flash-highlight it
+  void _jumpToTaskBubble(Message task) {
+    final index = _messages.indexWhere((m) => m.id == task.id);
+    if (!_scrollController.hasClients) return;
+
+    if (index == -1) {
+      // Message not loaded in current window; just scroll to top
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    } else {
+      // reverse:true list → index 0 is at offset 0 (bottom), higher indexes scroll up
+      final estimatedOffset = (index * 88.0).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      _scrollController.animateTo(
+        estimatedOffset,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeInOut,
+      );
+    }
+
+    // Flash-highlight the bubble
+    setState(() => _bubbleFlashId = task.id);
+    Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _bubbleFlashId = null);
+    });
+  }
+
   /// Scroll to bottom and mark all messages as read
   Future<void> _scrollToBottomAndMarkRead() async {
     // Scroll to bottom
@@ -10428,16 +10460,253 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Show full detail sheet for a task with jump-to-bubble button
+  void _showTaskDetail(Message task, bool isCompleted) {
+    final isSentByMe = task.senderId == _currentUserId;
+    final senderLabel = isSentByMe ? 'You' : widget.otherUser.fullName;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        bool localCompleted = isCompleted;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Container(
+                margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A2B),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFFBBF24).withValues(alpha: 0.45),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      blurRadius: 24,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Drag handle + header
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.25),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.task_alt,
+                            color: Color(0xFFFBBF24),
+                            size: 18,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        const Text(
+                          'Task Detail',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const Spacer(),
+                        if (localCompleted)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF22C55E).withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: const Color(0xFF22C55E).withValues(alpha: 0.5),
+                              ),
+                            ),
+                            child: const Text(
+                              'Completed',
+                              style: TextStyle(
+                                color: Color(0xFF4ADE80),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    // Sender + timestamp row
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 12,
+                          backgroundColor: isSentByMe
+                              ? const Color(0xFF7C3AED)
+                              : const Color(0xFF3944BC),
+                          child: Text(
+                            senderLabel[0].toUpperCase(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          senderLabel,
+                          style: TextStyle(
+                            color: Colors.grey[300],
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '·',
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          task.formattedTimestampFull,
+                          style: TextStyle(
+                            color: Colors.grey[500],
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // Full message content
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.08),
+                        ),
+                      ),
+                      child: Text(
+                        task.content,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Action buttons row
+                    Row(
+                      children: [
+                        // Toggle complete button
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              if (localCompleted) {
+                                _socketService.uncompleteTask(task.id);
+                              } else {
+                                _socketService.completeTask(task.id);
+                              }
+                              _refreshMessages();
+                              setSheetState(() => localCompleted = !localCompleted);
+                            },
+                            icon: Icon(
+                              localCompleted ? Icons.undo : Icons.check_circle_outline,
+                              size: 16,
+                              color: localCompleted
+                                  ? Colors.grey[400]
+                                  : const Color(0xFF22C55E),
+                            ),
+                            label: Text(
+                              localCompleted ? 'Unmark' : 'Complete',
+                              style: TextStyle(
+                                color: localCompleted
+                                    ? Colors.grey[400]
+                                    : const Color(0xFF22C55E),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(
+                                color: localCompleted
+                                    ? Colors.grey.withValues(alpha: 0.3)
+                                    : const Color(0xFF22C55E).withValues(alpha: 0.5),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        // Jump to bubble button
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(sheetCtx); // close detail sheet
+                              Navigator.pop(context);  // close task modal
+                              _jumpToTaskBubble(task);
+                            },
+                            icon: const Icon(
+                              Icons.my_location,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                            label: const Text(
+                              'Jump to bubble',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF7C3AED),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 0,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildTaskCard(Message task, bool isCompleted) {
     return GestureDetector(
-      onTap: () {
-        if (isCompleted) {
-          _socketService.uncompleteTask(task.id);
-        } else {
-          _socketService.completeTask(task.id);
-        }
-        _refreshMessages();
-      },
+      onTap: () => _showTaskDetail(task, isCompleted),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         decoration: BoxDecoration(
