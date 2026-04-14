@@ -1660,6 +1660,146 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
+  void _openNewChatPicker() {
+    final currentId = _socketService.currentUserId;
+    // Show all known contacts except current user (they can "message yourself" via the tile)
+    final contacts = _lobbyUsers.where((u) => u.id != currentId).toList();
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.4,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (_, scrollController) {
+            return Column(
+              children: [
+                // Handle bar
+                Container(
+                  margin: const EdgeInsets.only(top: 10, bottom: 6),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[600],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Row(
+                    children: [
+                      Text(
+                        'New Chat',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(color: Color(0xFF2D2D4E), height: 1),
+                Expanded(
+                  child: contacts.isEmpty
+                      ? Center(
+                          child: Text(
+                            'No contacts yet',
+                            style: TextStyle(color: Colors.grey[500]),
+                          ),
+                        )
+                      : ListView.builder(
+                          controller: scrollController,
+                          itemCount: contacts.length,
+                          itemBuilder: (_, index) {
+                            final user = contacts[index];
+                            final avatarColor = _getAvatarColor(user.avatarColorIndex);
+                            return ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 4,
+                              ),
+                              leading: CircleAvatar(
+                                radius: 24,
+                                backgroundColor: avatarColor,
+                                child: user.avatarUrl != null
+                                    ? ClipOval(
+                                        child: Image.network(
+                                          user.avatarUrl!,
+                                          width: 48,
+                                          height: 48,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) => Text(
+                                            user.initials,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    : Text(
+                                        user.initials,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                              ),
+                              title: Text(
+                                user.fullName,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              subtitle: Text(
+                                user.isOnline ? 'Online' : 'Offline',
+                                style: TextStyle(
+                                  color: user.isOnline
+                                      ? const Color(0xFF00E676)
+                                      : Colors.grey[500],
+                                  fontSize: 12,
+                                ),
+                              ),
+                              trailing: user.isOnline
+                                  ? const Icon(
+                                      Icons.circle,
+                                      color: Color(0xFF00E676),
+                                      size: 10,
+                                    )
+                                  : null,
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ChatScreen(otherUser: user),
+                                  ),
+                                ).then((_) {
+                                  _loadLobby(useCacheFirst: false);
+                                  _setupRealtimeListeners();
+                                });
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _handleLogout() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -2131,6 +2271,36 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
         ],
       ),
+      floatingActionButton: _activeFilter != LobbyQuickFilter.groups
+          ? FloatingActionButton(
+              onPressed: _openNewChatPicker,
+              backgroundColor: const Color(0xFF00D9FF),
+              foregroundColor: const Color(0xFF1A1A2E),
+              elevation: 6,
+              shape: const CircleBorder(),
+              child: const Icon(Icons.chat_rounded, size: 26),
+            )
+          : (_isCurrentUserAdmin
+              ? FloatingActionButton(
+                  onPressed: () async {
+                    final result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CreateGroupScreen(),
+                      ),
+                    );
+                    if (result == true) {
+                      _loadLobby(useCacheFirst: false);
+                    }
+                  },
+                  backgroundColor: const Color(0xFF00D9FF),
+                  foregroundColor: const Color(0xFF1A1A2E),
+                  elevation: 6,
+                  shape: const CircleBorder(),
+                  child: const Icon(Icons.group_add_rounded, size: 26),
+                )
+              : null),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: NavigationBar(
         backgroundColor: const Color(0xFF1A1A2E),
         indicatorColor: const Color(0xFF252542),
