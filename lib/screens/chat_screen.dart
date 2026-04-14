@@ -190,6 +190,11 @@ class _ChatScreenState extends State<ChatScreen>
   // Task filter: 'pending' or 'completed'
   String _taskFilter = 'pending';
 
+  // All task-marked messages for this conversation, loaded independently of
+  // the paginated _messages list so the full task count is always accurate.
+  List<Message> _taskMessages = [];
+  bool _isLoadingTasks = false;
+
   // Message IDs loaded from local cache/server history.
   // For these historical records, UI should always display status as "sent".
   final Set<int> _databaseLoadedMessageIds = {};
@@ -547,6 +552,9 @@ class _ChatScreenState extends State<ChatScreen>
     await _loadCachedMessages();
     await _loadMessages();
     _loadPinnedExcalidrawLinks();
+    // Fetch all task-marked messages for this conversation in the background
+    // so the task modal shows the full count, not just the loaded page.
+    unawaited(_loadConversationTasks());
     _joinChatRoom();
     _setupRealtimeListeners();
   }
@@ -2283,11 +2291,92 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// Fetch ALL task-marked messages for this conversation in the background.
+  /// This runs independently of the paginated _messages list so that the task
+  /// modal always shows the correct total count (e.g. 43 tasks, not just the
+  /// 14 that happen to be in the currently loaded page).
+  Future<void> _loadConversationTasks() async {
+    if (_isLoadingTasks) return;
+    _isLoadingTasks = true;
+    try {
+      final rawTasks = await MessageService.getChatTasksForConversation(
+        widget.otherUser.id,
+      );
+      if (!mounted) return;
+
+      // Convert each task JSON back into a minimal Message that the existing
+      // task modal / badge code can use directly from _taskMessages.
+      final taskMessages = rawTasks.map((t) {
+        // The endpoint returns message-shaped JSON with is_task=true.
+        // Build a Message from it.  Fields that aren't relevant to task
+        // display are filled with safe defaults.
+        return Message.fromJson({
+          'id': t['id'] ?? t['message_id'] ?? 0,
+          'sender_id': t['created_by_user_id'] ?? 0,
+          'recipient_id': t['assigned_to_user_id'] ?? widget.otherUser.id,
+          'content': t['content'] ?? t['title'] ?? '',
+          'message_type': t['message_type'] ?? 'text',
+          'timestamp': t['created_at'] ?? DateTime.now().toIso8601String(),
+          'timestamp_ms': 0,
+          'is_read': true,
+          'status': 'seen',
+          'thread_id': '',
+          'reactions': <String, dynamic>{},
+          'is_deleted': false,
+          'is_task': true,
+          'task_created_at': t['task_created_at'] ?? t['created_at'],
+          'task_completed_at': t['task_completed_at'] ?? t['completed_at'],
+          'file_url': t['file_url'],
+          'file_name': t['file_name'],
+          'file_type': t['file_type'],
+          'file_size': t['file_size'],
+        });
+      }).toList();
+
+      setState(() {
+        // Merge: keep any live-arrived tasks already in _taskMessages that
+        // aren't yet in the server response (very recent marks), then add all
+        // server tasks, deduplicating by id.
+        final serverIds = taskMessages.map((m) => m.id).toSet();
+        final liveOnly =
+            _taskMessages.where((m) => !serverIds.contains(m.id)).toList();
+        _taskMessages = [...taskMessages, ...liveOnly];
+        // Also merge into _messages so task bubbles in the current page keep
+        // their highlight / checkbox.
+        _mergeTaskStatesIntoMessages(taskMessages);
+      });
+    } catch (e) {
+      debugPrint('Error loading conversation tasks: $e');
+    } finally {
+      _isLoadingTasks = false;
+    }
+  }
+
+  /// Apply task state from the full task list back onto any messages that are
+  /// already in the visible _messages page so their bubble UI stays in sync.
+  void _mergeTaskStatesIntoMessages(List<Message> taskMessages) {
+    final taskById = {for (final t in taskMessages) t.id: t};
+    for (int i = 0; i < _messages.length; i++) {
+      final m = _messages[i];
+      if (taskById.containsKey(m.id)) {
+        final t = taskById[m.id]!;
+        if (m.isTask != t.isTask ||
+            m.taskCreatedAt != t.taskCreatedAt ||
+            m.taskCompletedAt != t.taskCompletedAt) {
+          _messages[i] = _copyMessageWithTaskState(
+            m,
+            isTask: t.isTask,
+            taskCreatedAt: t.taskCreatedAt,
+            taskCompletedAt: t.taskCompletedAt,
+          );
+        }
+      }
+    }
+  }
+
   /// Load older messages (pagination) when user taps "Load more"
   Future<void> _loadMoreMessages() async {
     if (_isLoadingMore || !_hasMoreMessages || _messages.isEmpty) return;
-
-    setState(() => _isLoadingMore = true);
 
     try {
       // _messages is newest-first; the oldest is at the end
@@ -7721,7 +7810,7 @@ class _ChatScreenState extends State<ChatScreen>
               ),
               Builder(
                 builder: (context) {
-                  final count = _messages.where((m) => m.isTask).length;
+                  final count = _taskMessages.where((m) => m.isTask).length;
                   if (count == 0) return const SizedBox.shrink();
                   return Positioned(
                     right: 4,
@@ -9429,9 +9518,17 @@ class _ChatScreenState extends State<ChatScreen>
           taskCompletedAt: null,
         );
         _messages[index] = updatedMessage;
+        // Keep _taskMessages in sync with the visible page version
+        _upsertTaskMessage(updatedMessage);
       } else {
         _pendingLiveTaskCreatedAtByMessageId[messageId] = createdAt;
         _pendingLiveTaskCompletedAtByMessageId.remove(messageId);
+        // If this message isn't on the visible page yet, add a stub so the
+        // badge / modal count is immediately correct.
+        if (!_taskMessages.any((m) => m.id == messageId)) {
+          _upsertTaskMessageFromData(messageId, data, isTask: true,
+              taskCreatedAt: createdAt, taskCompletedAt: null);
+        }
       }
     });
     if (mounted) _taskBadgeAnimController.forward(from: 0);
@@ -9459,10 +9556,13 @@ class _ChatScreenState extends State<ChatScreen>
           taskCompletedAt: completedAt,
         );
         _messages[index] = updatedMessage;
+        _upsertTaskMessage(updatedMessage);
       } else {
         _pendingLiveTaskCreatedAtByMessageId[messageId] =
             _pendingLiveTaskCreatedAtByMessageId[messageId] ?? createdAt;
         _pendingLiveTaskCompletedAtByMessageId[messageId] = completedAt;
+        _upsertTaskMessageFromData(messageId, data, isTask: true,
+            taskCreatedAt: createdAt, taskCompletedAt: completedAt);
       }
     });
     _notifyTaskModalChanged();
@@ -9484,7 +9584,7 @@ class _ChatScreenState extends State<ChatScreen>
       final index = _messages.indexWhere((m) => m.id == messageId);
       if (index != -1) {
         final message = _messages[index];
-        _messages[index] = _copyMessageWithTaskState(
+        final updated = _copyMessageWithTaskState(
           message,
           isTask: shouldRemainTask,
           taskCreatedAt: shouldRemainTask
@@ -9492,18 +9592,72 @@ class _ChatScreenState extends State<ChatScreen>
               : null,
           taskCompletedAt: null,
         );
+        _messages[index] = updated;
+        if (shouldRemainTask) {
+          _upsertTaskMessage(updated);
+        } else {
+          _taskMessages.removeWhere((m) => m.id == messageId);
+        }
       } else {
         if (shouldRemainTask) {
           _pendingLiveTaskCreatedAtByMessageId[messageId] =
               _pendingLiveTaskCreatedAtByMessageId[messageId] ?? createdAt;
+          _upsertTaskMessageFromData(messageId, data, isTask: true,
+              taskCreatedAt: createdAt, taskCompletedAt: null);
         } else {
           _pendingLiveTaskCreatedAtByMessageId.remove(messageId);
+          _taskMessages.removeWhere((m) => m.id == messageId);
         }
         _pendingLiveTaskCompletedAtByMessageId.remove(messageId);
       }
     });
     if (mounted) _taskBadgeAnimController.forward(from: 0);
     _notifyTaskModalChanged();
+  }
+
+  /// Insert or update a message in _taskMessages by id.
+  void _upsertTaskMessage(Message updated) {
+    final idx = _taskMessages.indexWhere((m) => m.id == updated.id);
+    if (idx != -1) {
+      _taskMessages[idx] = updated;
+    } else {
+      _taskMessages.add(updated);
+    }
+  }
+
+  /// Build a minimal Message stub from socket event data and upsert it into
+  /// _taskMessages. Used when the real message object isn't on the visible page.
+  void _upsertTaskMessageFromData(
+    int messageId,
+    Map<String, dynamic> data, {
+    required bool isTask,
+    required String? taskCreatedAt,
+    required String? taskCompletedAt,
+  }) {
+    final payload = _extractTaskPayloadMap(data);
+    final content = (payload?['content'] as String?) ??
+        (data['content'] as String?) ?? '';
+    final senderId = _toInt(payload?['sender_id']) ??
+        _toInt(data['sender_id']) ?? 0;
+    final timestamp = taskCreatedAt ?? DateTime.now().toIso8601String();
+    final stub = Message.fromJson({
+      'id': messageId,
+      'sender_id': senderId,
+      'recipient_id': widget.otherUser.id,
+      'content': content,
+      'message_type': 'text',
+      'timestamp': timestamp,
+      'timestamp_ms': 0,
+      'is_read': true,
+      'status': 'seen',
+      'thread_id': '',
+      'reactions': <String, dynamic>{},
+      'is_deleted': false,
+      'is_task': isTask,
+      'task_created_at': taskCreatedAt,
+      'task_completed_at': taskCompletedAt,
+    });
+    _upsertTaskMessage(stub);
   }
 
   String? _extractExcalidrawPinnedAtFromEvent(Map<String, dynamic> data) {
@@ -9827,7 +9981,7 @@ class _ChatScreenState extends State<ChatScreen>
         return ValueListenableBuilder<int>(
           valueListenable: _taskModalVersion,
           builder: (context, _, __) {
-            final allTasks = _messages.where((m) => m.isTask).toList();
+            final allTasks = _taskMessages.where((m) => m.isTask).toList();
             final pendingTasks = allTasks.where((t) => t.taskCompletedAt == null).toList();
             final completedTasks = allTasks.where((t) => t.taskCompletedAt != null).toList();
 
@@ -10128,7 +10282,7 @@ class _ChatScreenState extends State<ChatScreen>
         return ValueListenableBuilder<int>(
           valueListenable: _taskModalVersion,
           builder: (context, _, __) {
-            final allTasks = _messages.where((m) => m.isTask).toList();
+            final allTasks = _taskMessages.where((m) => m.isTask).toList();
             final pendingTasks = allTasks.where((t) => t.taskCompletedAt == null).toList();
             final completedTasks = allTasks.where((t) => t.taskCompletedAt != null).toList();
             return Padding(

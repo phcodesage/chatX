@@ -2272,16 +2272,46 @@ class _LobbyScreenState extends State<LobbyScreen> {
         ],
       ),
       floatingActionButton: _activeFilter != LobbyQuickFilter.groups
-          ? FloatingActionButton(
-              onPressed: _openNewChatPicker,
-              backgroundColor: const Color(0xFF00D9FF),
-              foregroundColor: const Color(0xFF1A1A2E),
-              elevation: 6,
-              shape: const CircleBorder(),
-              child: const Icon(Icons.chat_rounded, size: 26),
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // AI Chat mini FAB
+                if (_hasAiSession)
+                  FloatingActionButton.small(
+                    heroTag: 'fab_ai',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const AiChatScreen(),
+                        ),
+                      ).then((_) {
+                        _loadAiSessionPresence();
+                        _loadLobby(useCacheFirst: false);
+                      });
+                    },
+                    backgroundColor: const Color(0xFF00D9FF),
+                    foregroundColor: Colors.white,
+                    elevation: 4,
+                    shape: const CircleBorder(),
+                    child: const Icon(Icons.smart_toy_rounded, size: 20),
+                  ),
+                if (_hasAiSession) const SizedBox(height: 12),
+                // New Chat main FAB
+                FloatingActionButton(
+                  heroTag: 'fab_chat',
+                  onPressed: _openNewChatPicker,
+                  backgroundColor: const Color(0xFF4C1D95),
+                  foregroundColor: Colors.white,
+                  elevation: 6,
+                  shape: const CircleBorder(),
+                  child: const Icon(Icons.chat_rounded, size: 26),
+                ),
+              ],
             )
           : (_isCurrentUserAdmin
               ? FloatingActionButton(
+                  heroTag: 'fab_group',
                   onPressed: () async {
                     final result = await Navigator.push(
                       context,
@@ -2293,8 +2323,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       _loadLobby(useCacheFirst: false);
                     }
                   },
-                  backgroundColor: const Color(0xFF00D9FF),
-                  foregroundColor: const Color(0xFF1A1A2E),
+                  backgroundColor: const Color(0xFF4C1D95),
+                  foregroundColor: Colors.white,
                   elevation: 6,
                   shape: const CircleBorder(),
                   child: const Icon(Icons.group_add_rounded, size: 26),

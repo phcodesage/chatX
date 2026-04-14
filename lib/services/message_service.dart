@@ -430,6 +430,88 @@ class MessageService {
     }
   }
 
+  /// Get all chat-based tasks (messages marked as tasks) for the current user
+  static Future<List<Map<String, dynamic>>> getChatTasks() async {
+    try {
+      final token = await StorageService.getToken();
+
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await http
+          .get(
+            Uri.parse(ApiConfig.chatTasksUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final tasks = data['tasks'] as List?;
+        return tasks?.cast<Map<String, dynamic>>() ?? [];
+      } else if (response.statusCode == 401) {
+        debugPrint('🔐 Token expired - redirecting to sign in');
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        throw Exception('Session expired');
+      } else {
+        debugPrint('Get chat tasks error - Status: ${response.statusCode}');
+        return [];
+      }
+    } catch (e) {
+      debugPrint('Get chat tasks error: $e');
+      return [];
+    }
+  }
+
+  /// Get all chat-based tasks for a specific 1-on-1 conversation.
+  /// Returns messages that have is_task=True between current user and [otherUserId].
+  static Future<List<Map<String, dynamic>>> getChatTasksForConversation(
+    int otherUserId,
+  ) async {
+    try {
+      final token = await StorageService.getToken();
+
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final response = await http
+          .get(
+            Uri.parse(ApiConfig.getChatTasksForUserUrl(otherUserId)),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final tasks = data['tasks'] as List?;
+        return tasks?.cast<Map<String, dynamic>>() ?? [];
+      } else if (response.statusCode == 401) {
+        await AuthErrorHandler().handleAuthError(
+          message: 'Your session has expired. Please sign in again.',
+        );
+        throw Exception('Session expired');
+      } else {
+        debugPrint(
+          'Get conversation tasks error - Status: ${response.statusCode}',
+        );
+        return [];
+      }
+    } catch (e) {
+      debugPrint('Get conversation tasks error: $e');
+      return [];
+    }
+  }
+
   /// Create a new task
   static Future<Map<String, dynamic>?> createTask({
     required String title,

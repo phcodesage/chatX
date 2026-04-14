@@ -48,6 +48,9 @@ class ApiConfig {
 
   // Task endpoints
   static String get tasksUrl => '$baseUrl$mobilePrefix/tasks';
+  static String get chatTasksUrl => '$baseUrl$mobilePrefix/tasks/chat';
+  static String getChatTasksForUserUrl(int otherUserId) =>
+      '$baseUrl$mobilePrefix/tasks/chat?other_user_id=$otherUserId';
   static String getTaskUrl(int taskId) => '$baseUrl$mobilePrefix/tasks/$taskId';
   static String getTaskCompleteUrl(int taskId) =>
       '$baseUrl$mobilePrefix/tasks/$taskId/complete';

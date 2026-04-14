@@ -41,7 +41,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
     // Listen for task added event
     _socketService.addListener('taskAdded', key, (Map<String, dynamic> data) {
-      _loadTasks(); // Refresh on any task change
+      _handleChatTaskAdded(data);
     });
 
     // Listen for task completed event
@@ -69,6 +69,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         final task = _chatBasedTasks[index];
         _chatBasedTasks[index] = Task(
           id: task.id,
+          messageId: task.messageId,
           title: task.title,
           description: task.description,
           assignedToUserId: task.assignedToUserId,
@@ -78,8 +79,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
           isCompleted: true,
           createdAt: task.createdAt,
           completedAt:
-              data['completed_at'] as String? ??
+              (data['task_completed_at'] as String?) ??
+              (data['completed_at'] as String?) ??
               DateTime.now().toIso8601String(),
+          isChatTask: true,
+          isGroupTask: task.isGroupTask,
+          groupId: task.groupId,
         );
       }
     });
@@ -95,6 +100,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         final task = _chatBasedTasks[index];
         _chatBasedTasks[index] = Task(
           id: task.id,
+          messageId: task.messageId,
           title: task.title,
           description: task.description,
           assignedToUserId: task.assignedToUserId,
@@ -104,8 +110,72 @@ class _TaskListScreenState extends State<TaskListScreen> {
           isCompleted: false,
           createdAt: task.createdAt,
           completedAt: null,
+          isChatTask: true,
+          isGroupTask: task.isGroupTask,
+          groupId: task.groupId,
         );
       }
+    });
+  }
+
+  void _handleChatTaskAdded(Map<String, dynamic> data) {
+    final messageId = _extractTaskMessageId(data);
+    if (messageId == null) return;
+
+    // Don't add a duplicate that we already loaded from the API
+    if (_chatBasedTasks.any(
+      (t) => t.id == messageId || t.messageId == messageId,
+    )) return;
+
+    final payload = data['message_data'] ?? data['message'];
+    final Map<String, dynamic>? msg = payload is Map
+        ? Map<String, dynamic>.from(payload as Map)
+        : null;
+
+    final String title = (data['title'] as String?)?.isNotEmpty == true
+        ? data['title'] as String
+        : (msg?['content'] as String?)?.isNotEmpty == true
+            ? msg!['content'] as String
+            : 'Task #$messageId';
+    final createdAt =
+        (data['task_created_at'] as String?) ??
+        (msg?['task_created_at'] as String?) ??
+        (msg?['created_at'] as String?) ??
+        DateTime.now().toIso8601String();
+    final createdByUserId =
+        _toInt(msg?['sender_id']) ?? _toInt(data['sender_id']) ?? 0;
+    final createdByUsername =
+        (data['created_by_username'] as String?) ??
+        (msg?['sender_username'] as String?) ??
+        (data['sender_username'] as String?);
+    final assignedToUserId =
+        _toInt(data['assigned_to_user_id']) ??
+        _toInt(msg?['recipient_id']) ??
+        _toInt(data['recipient_id']);
+    final assignedToUsername =
+        (data['assigned_to_username'] as String?) ??
+        (msg?['recipient_username'] as String?) ??
+        (data['recipient_username'] as String?);
+    final bool isGroupTask = data['is_group_task'] as bool? ?? false;
+    final int? groupId = _toInt(data['group_id']);
+
+    final task = Task(
+      id: messageId,
+      messageId: messageId,
+      title: title,
+      createdByUserId: createdByUserId,
+      createdByUsername: createdByUsername,
+      assignedToUserId: assignedToUserId,
+      assignedToUsername: assignedToUsername,
+      isCompleted: false,
+      createdAt: createdAt,
+      isChatTask: true,
+      isGroupTask: isGroupTask,
+      groupId: groupId,
+    );
+
+    setState(() {
+      _chatBasedTasks.add(task);
     });
   }
 
@@ -116,12 +186,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
     });
 
     try {
-      // Fetch admin-created tasks from API
-      final taskData = await MessageService.getAllTasks();
-      final tasks = taskData.map((json) => Task.fromJson(json)).toList();
+      // Fetch admin-created tasks and chat-based tasks in parallel
+      final results = await Future.wait([
+        MessageService.getAllTasks(),
+        MessageService.getChatTasks(),
+      ]);
+
+      final tasks = results[0].map((json) => Task.fromJson(json)).toList();
+      final chatTasks = results[1]
+          .map((json) => Task.fromJson(json, isChatTask: true))
+          .toList();
 
       setState(() {
         _tasks = tasks;
+        _chatBasedTasks = chatTasks;
         _isLoading = false;
       });
     } catch (e) {
@@ -169,13 +247,22 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Future<void> _toggleTaskComplete(Task task) async {
     try {
-      final success = await MessageService.completeTask(task.id);
-      if (success) {
+      if (task.isChatTask) {
+        // Chat-based tasks are toggled via socket.
+        // Use the underlying message id (messageId) when available.
+        final socketId = task.messageId ?? task.id;
+        if (task.isCompleted) {
+          _socketService.uncompleteTask(socketId);
+        } else {
+          _socketService.completeTask(socketId);
+        }
+        // Optimistically update local state; socket will confirm via event.
         setState(() {
-          final index = _tasks.indexWhere((t) => t.id == task.id);
+          final index = _chatBasedTasks.indexWhere((t) => t.id == task.id);
           if (index != -1) {
-            _tasks[index] = Task(
+            _chatBasedTasks[index] = Task(
               id: task.id,
+              messageId: task.messageId,
               title: task.title,
               description: task.description,
               assignedToUserId: task.assignedToUserId,
@@ -187,9 +274,35 @@ class _TaskListScreenState extends State<TaskListScreen> {
               completedAt: !task.isCompleted
                   ? DateTime.now().toIso8601String()
                   : null,
+              isChatTask: true,
+              isGroupTask: task.isGroupTask,
+              groupId: task.groupId,
             );
           }
         });
+      } else {
+        final success = await MessageService.completeTask(task.id);
+        if (success) {
+          setState(() {
+            final index = _tasks.indexWhere((t) => t.id == task.id);
+            if (index != -1) {
+              _tasks[index] = Task(
+                id: task.id,
+                title: task.title,
+                description: task.description,
+                assignedToUserId: task.assignedToUserId,
+                assignedToUsername: task.assignedToUsername,
+                createdByUserId: task.createdByUserId,
+                createdByUsername: task.createdByUsername,
+                isCompleted: !task.isCompleted,
+                createdAt: task.createdAt,
+                completedAt: !task.isCompleted
+                    ? DateTime.now().toIso8601String()
+                    : null,
+              );
+            }
+          });
+        }
       }
     } catch (e) {
       debugPrint('Error toggling task: $e');
