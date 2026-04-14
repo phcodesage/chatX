@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -189,6 +190,12 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Task filter: 'pending' or 'completed'
   String _taskFilter = 'pending';
+
+  // Per-message GlobalKeys used by _jumpToTaskBubble for accurate scrolling.
+  final Map<int, GlobalKey> _messageItemKeys = {};
+
+  // True while the jump-to-bubble flow is loading older pages.
+  bool _isJumpingToMessage = false;
 
   // All task-marked messages for this conversation, loaded independently of
   // the paginated _messages list so the full task count is always accurate.
@@ -2452,34 +2459,97 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Scroll to a specific task bubble and flash-highlight it
   void _jumpToTaskBubble(Message task) {
-    final index = _messages.indexWhere((m) => m.id == task.id);
-    if (!_scrollController.hasClients) return;
+    _doJumpToTaskBubble(task);
+  }
 
-    if (index == -1) {
-      // Message not loaded in current window; just scroll to top
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+  Future<void> _doJumpToTaskBubble(Message task) async {
+    setState(() {
+      _isJumpingToMessage = true;
+      _bubbleFlashId = task.id;
+    });
+
+    try {
+      // ── 1. Paginate until the message is in _messages ─────────────────────
+      final bool alreadyLoaded =
+          _messages.any((m) => m.id == task.id);
+      while (!_messages.any((m) => m.id == task.id) &&
+          _hasMoreMessages &&
+          mounted) {
+        await _loadMoreMessages();
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      final int index = _messages.indexWhere((m) => m.id == task.id);
+      if (index == -1 || !mounted || !_scrollController.hasClients) return;
+
+      // Wait for layout to settle after any new messages were inserted.
+      await WidgetsBinding.instance.endOfFrame;
+
+      final ScrollPosition pos = _scrollController.position;
+
+      // ── 2. Initial jump to bring the item into the render tree ────────────
+      //
+      // Case A – we had to paginate: the target was just appended at the END
+      // of _messages (oldest = highest index = highest scroll offset).
+      // Jump straight to maxScrollExtent so those items get built.
+      //
+      // Case B – item was already loaded: use a proportion estimate.
+      // All initially-loaded messages are within the first fetch (~50 items)
+      // so they live near scroll-offset-0 (bottom) and the estimate is tight.
+      if (!alreadyLoaded) {
+        _scrollController.jumpTo(pos.maxScrollExtent);
+      } else {
+        final double fracOffset = _messages.length > 1
+            ? (index / (_messages.length - 1)) * pos.maxScrollExtent
+            : 0.0;
+        final double jumpTarget =
+            (fracOffset - pos.viewportDimension / 2 + 40)
+                .clamp(0.0, pos.maxScrollExtent);
+        _scrollController.jumpTo(jumpTarget);
+      }
+      await WidgetsBinding.instance.endOfFrame;
+
+      // ── 3. If item still not built, sweep the scroll range until it is ────
+      // Each step is cacheExtent-sized (500 px) so we cover the whole content.
+      if (_messageItemKeys[task.id]?.currentContext == null) {
+        final double step = 400;
+        double sweep = 0;
+        while (sweep <= pos.maxScrollExtent && mounted) {
+          _scrollController.jumpTo(sweep.clamp(0.0, pos.maxScrollExtent));
+          await WidgetsBinding.instance.endOfFrame;
+          if (_messageItemKeys[task.id]?.currentContext != null) break;
+          sweep += step;
+        }
+      }
+
+      if (_messageItemKeys[task.id]?.currentContext == null || !mounted) return;
+
+      // ── 4. Pixel-perfect scroll using RenderAbstractViewport ─────────────
+      // getOffsetToReveal(ro, 0.5) returns the exact scroll offset that places
+      // the item's centre at the viewport's centre, handling reverse:true correctly.
+      final BuildContext ctx = _messageItemKeys[task.id]!.currentContext!;
+      final RenderObject? ro = ctx.findRenderObject();
+      if (ro == null || !ro.attached) return;
+
+      final double revealOffset = RenderAbstractViewport.of(ro)
+          .getOffsetToReveal(ro, 0.5)
+          .offset
+          .clamp(
+            _scrollController.position.minScrollExtent,
+            _scrollController.position.maxScrollExtent,
+          );
+
+      await _scrollController.animateTo(
+        revealOffset,
         duration: const Duration(milliseconds: 400),
         curve: Curves.easeInOut,
       );
-    } else {
-      // reverse:true list → index 0 is at offset 0 (bottom), higher indexes scroll up
-      final estimatedOffset = (index * 88.0).clamp(
-        0.0,
-        _scrollController.position.maxScrollExtent,
-      );
-      _scrollController.animateTo(
-        estimatedOffset,
-        duration: const Duration(milliseconds: 450),
-        curve: Curves.easeInOut,
-      );
+    } finally {
+      if (mounted) setState(() => _isJumpingToMessage = false);
+      Timer(const Duration(seconds: 2), () {
+        if (mounted) setState(() => _bubbleFlashId = null);
+      });
     }
-
-    // Flash-highlight the bubble
-    setState(() => _bubbleFlashId = task.id);
-    Timer(const Duration(seconds: 2), () {
-      if (mounted) setState(() => _bubbleFlashId = null);
-    });
   }
 
   /// Scroll to bottom and mark all messages as read
@@ -8019,12 +8089,12 @@ class _ChatScreenState extends State<ChatScreen>
                                     );
                                   }
 
-                                  return Column(
-                                    children: [
-                                      ?dateSeparator,
-                                      // System messages (call summaries) render as a centered pill
-                                      if (message.messageType == 'system')
-                                        Padding(
+                                  // The key is placed on a SizedBox that wraps ONLY the
+                                  // message content, excluding the date separator, so that
+                                  // getOffsetToReveal centres the bubble itself.
+                                  final Widget msgContent =
+                                      message.messageType == 'system'
+                                      ? Padding(
                                           padding: const EdgeInsets.symmetric(
                                             vertical: 6,
                                           ),
@@ -8053,20 +8123,78 @@ class _ChatScreenState extends State<ChatScreen>
                                             ),
                                           ),
                                         )
-                                      else
-                                        _buildSwipeableMessage(
+                                      : _buildSwipeableMessage(
                                           message,
                                           isSentByMe,
                                           _buildMessageBubble(
                                             message,
                                             isSentByMe,
                                           ),
+                                        );
+
+                                  return Column(
+                                    children: [
+                                      ?dateSeparator,
+                                      SizedBox(
+                                        key: _messageItemKeys.putIfAbsent(
+                                          message.id,
+                                          () => GlobalKey(),
                                         ),
+                                        child: msgContent,
+                                      ),
                                     ],
                                   );
                                 },
                               ),
                             ),
+                            // Jump-to-bubble loading overlay
+                            if (_isJumpingToMessage)
+                              Positioned.fill(
+                                child: Container(
+                                  color: Colors.black.withValues(alpha: 0.55),
+                                  child: Center(
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 24,
+                                        vertical: 16,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF1E1E2E),
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: const Color(0xFF7C3AED)
+                                              .withValues(alpha: 0.5),
+                                        ),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                Color(0xFF7C3AED),
+                                              ),
+                                            ),
+                                          ),
+                                          SizedBox(width: 12),
+                                          Text(
+                                            'Finding message…',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
                             // Scroll to bottom button - positioned inside messages area
                             if (!_isAtBottom)
                               Positioned(
