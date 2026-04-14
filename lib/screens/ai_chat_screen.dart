@@ -33,6 +33,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   bool _showEmojiPicker = false;
   bool _showTimestamps = false;
   bool _autoCorrectionEnabled = true;
+  bool _isAtBottom = true;
 
   int? _sessionId;
   int? _currentUserId;
@@ -195,15 +196,30 @@ class _AiChatScreenState extends State<AiChatScreen> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_handleScrollPosition);
     _initialize();
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_handleScrollPosition);
     _messageController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
+  }
+
+  void _handleScrollPosition() {
+    if (!_scrollController.hasClients) return;
+    const bottomThreshold = 24.0;
+    final distanceFromBottom =
+        _scrollController.position.maxScrollExtent - _scrollController.offset;
+    final atBottom = distanceFromBottom <= bottomThreshold;
+    if (_isAtBottom != atBottom && mounted) {
+      setState(() {
+        _isAtBottom = atBottom;
+      });
+    }
   }
 
   Future<void> _initialize() async {
@@ -589,6 +605,10 @@ class _AiChatScreenState extends State<AiChatScreen> {
         curve: Curves.easeOut,
       );
     });
+  }
+
+  void _scrollToBottomButtonTap() {
+    _scrollToBottom();
   }
 
   String _formatTimestamp(String? raw) {
@@ -1301,16 +1321,51 @@ class _AiChatScreenState extends State<AiChatScreen> {
                       style: TextStyle(color: Colors.grey[400]),
                     ),
                   )
-                : ListView.builder(
-                    controller: _scrollController,
-                    itemCount: _messages.length + (_isSending ? 1 : 0),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemBuilder: (context, index) {
-                      if (_isSending && index == _messages.length) {
-                        return _buildThinkingBubble();
-                      }
-                      return _buildMessageBubble(_messages[index]);
-                    },
+                : Stack(
+                    children: [
+                      ListView.builder(
+                        controller: _scrollController,
+                        itemCount: _messages.length + (_isSending ? 1 : 0),
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        itemBuilder: (context, index) {
+                          if (_isSending && index == _messages.length) {
+                            return _buildThinkingBubble();
+                          }
+                          return _buildMessageBubble(_messages[index]);
+                        },
+                      ),
+                      if (!_isAtBottom)
+                        Positioned(
+                          bottom: 16,
+                          left: 0,
+                          right: 0,
+                          child: Center(
+                            child: GestureDetector(
+                              onTap: _scrollToBottomButtonTap,
+                              child: Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF7C3AED),
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.3),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.keyboard_arrow_down,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
           ),
           _buildComposer(),

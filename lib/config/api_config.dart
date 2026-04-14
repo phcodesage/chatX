@@ -8,6 +8,7 @@ class ApiConfig {
   static const String baseUrl = String.fromEnvironment(
     'BASE_URL',
     defaultValue: 'https://check.flask-meet.site',
+    //defaultValue: 'https://web.flask-call-app.site/'
   );
 
   // API endpoints

@@ -1542,9 +1542,26 @@ class SocketService {
   }
 
   /// Set a reaction on a message
-  void setReaction(int messageId, String emoji) {
-    emit('set_reaction', {'message_id': messageId, 'reaction': emoji});
-    debugPrint('👍 Sending reaction: emoji=$emoji, messageId=$messageId');
+  void setReaction(
+    int messageId,
+    String emoji, {
+    int? chatUserId,
+    String? roomId,
+  }) {
+    final normalizedEmoji = emoji.replaceAll('\uFE0F', '');
+    final payload = <String, dynamic>{
+      'message_id': messageId,
+      // Keep both keys for backend compatibility across deployments.
+      'reaction': emoji,
+      'emoji': emoji,
+      'emoji_plain': normalizedEmoji,
+      if (chatUserId != null) 'user_id': chatUserId,
+      if (roomId != null && roomId.isNotEmpty) 'room': roomId,
+    };
+    emit('set_reaction', payload);
+    debugPrint(
+      '👍 Sending reaction: emoji=$emoji, emoji_plain=$normalizedEmoji, messageId=$messageId, chatUserId=$chatUserId, room=$roomId',
+    );
   }
 
   /// Clear reaction from a message
@@ -1662,13 +1679,16 @@ class SocketService {
 
   /// Set a reaction on a group message
   void setGroupReaction(int messageId, int groupId, String emoji) {
+    final normalizedEmoji = emoji.replaceAll('\uFE0F', '');
     emit('set_group_reaction', {
       'message_id': messageId,
       'group_id': groupId,
+      'reaction': emoji,
       'emoji': emoji,
+      'emoji_plain': normalizedEmoji,
     });
     debugPrint(
-      '👍 Sending group reaction: emoji=$emoji, messageId=$messageId, groupId=$groupId',
+      '👍 Sending group reaction: emoji=$emoji, emoji_plain=$normalizedEmoji, messageId=$messageId, groupId=$groupId',
     );
   }
 

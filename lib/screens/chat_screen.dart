@@ -74,6 +74,8 @@ class _ChatScreenState extends State<ChatScreen>
   List<Map<String, dynamic>> _pinnedExcalidrawLinks = [];
   bool _isLoading = true;
   bool _isLoadingMessages = false; // Guard against concurrent message loads
+  bool _isLoadingMore = false; // Guard against concurrent "load more" calls
+  bool _hasMoreMessages = true; // Whether older messages may exist on server
   bool _isTyping = false;
   bool _isKeyboardVisible = false;
   bool _restoreInputFocusOnResume = false;
@@ -2201,6 +2203,7 @@ class _ChatScreenState extends State<ChatScreen>
                 .where((message) => message.id > 0)
                 .map((message) => message.id),
           );
+        _hasMoreMessages = messages.length >= 50;
         _isLoading = false;
 
         // Populate _messageReactions from loaded messages
@@ -2277,6 +2280,54 @@ class _ChatScreenState extends State<ChatScreen>
     } finally {
       _isLoadingMessages = false;
       debugPrint('ðŸ Message loading process completed');
+    }
+  }
+
+  /// Load older messages (pagination) when user taps "Load more"
+  Future<void> _loadMoreMessages() async {
+    if (_isLoadingMore || !_hasMoreMessages || _messages.isEmpty) return;
+
+    setState(() => _isLoadingMore = true);
+
+    try {
+      // _messages is newest-first; the oldest is at the end
+      final oldestId = _messages.last.id;
+
+      final olderMessages = await MessageService.getConversationMessages(
+        userId: widget.otherUser.id,
+        limit: 50,
+        beforeId: oldestId,
+        offlineFirst: false,
+      );
+
+      if (!mounted) return;
+
+      if (olderMessages.isEmpty) {
+        setState(() {
+          _hasMoreMessages = false;
+          _isLoadingMore = false;
+        });
+        return;
+      }
+
+      // API returns oldest-first; reverse to newest-first before appending
+      final newMessages = olderMessages.reversed.toList();
+
+      // Deduplicate against messages already present
+      final existingIds = _messages.map((m) => m.id).toSet();
+      final uniqueNew = newMessages.where((m) => !existingIds.contains(m.id)).toList();
+
+      setState(() {
+        _messages.addAll(uniqueNew);
+        _databaseLoadedMessageIds.addAll(
+          uniqueNew.where((m) => m.id > 0).map((m) => m.id),
+        );
+        _hasMoreMessages = olderMessages.length >= 50;
+        _isLoadingMore = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading more messages: $e');
+      if (mounted) setState(() => _isLoadingMore = false);
     }
   }
 
@@ -7784,10 +7835,45 @@ class _ChatScreenState extends State<ChatScreen>
                                   parent: AlwaysScrollableScrollPhysics(),
                                 ),
                                 cacheExtent: 500,
-                                itemCount: _messages.length,
+                                itemCount: _messages.length + (_hasMoreMessages ? 1 : 0),
                                 addAutomaticKeepAlives: false,
                                 addRepaintBoundaries: true,
                                 itemBuilder: (context, index) {
+                                  // "Load more" button at the top (last index in reversed list)
+                                  if (index == _messages.length) {
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(vertical: 12),
+                                      child: Center(
+                                        child: _isLoadingMore
+                                            ? const SizedBox(
+                                                width: 24,
+                                                height: 24,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                                    Color(0xFF7C3AED),
+                                                  ),
+                                                ),
+                                              )
+                                            : TextButton.icon(
+                                                onPressed: _loadMoreMessages,
+                                                icon: const Icon(
+                                                  Icons.history,
+                                                  size: 16,
+                                                  color: Color(0xFF7C3AED),
+                                                ),
+                                                label: const Text(
+                                                  'Load more messages',
+                                                  style: TextStyle(
+                                                    color: Color(0xFF7C3AED),
+                                                    fontSize: 13,
+                                                  ),
+                                                ),
+                                              ),
+                                      ),
+                                    );
+                                  }
+
                                   final message = _messages[index];
                                   final isSentByMe =
                                       message.senderId == _currentUserId;
@@ -11303,7 +11389,14 @@ class _ChatScreenState extends State<ChatScreen>
   void _toggleReaction(int messageId, String emoji) {
     // Backend set_reaction now handles toggle: if user has this emoji it removes it,
     // if not it adds it. User can have multiple different emojis on same message.
-    _socketService.setReaction(messageId, emoji);
+    final ids = [_currentUserId ?? 0, widget.otherUser.id]..sort();
+    final roomId = 'chat_${ids[0]}_${ids[1]}';
+    _socketService.setReaction(
+      messageId,
+      emoji,
+      chatUserId: widget.otherUser.id,
+      roomId: roomId,
+    );
     debugPrint('ðŸ‘† Toggling reaction $emoji on message $messageId');
   }
 
@@ -11452,7 +11545,14 @@ class _ChatScreenState extends State<ChatScreen>
       context: context,
       position: position,
       onReactionSelected: (emoji) {
-        _socketService.setReaction(messageId, emoji);
+        final ids = [_currentUserId ?? 0, widget.otherUser.id]..sort();
+        final roomId = 'chat_${ids[0]}_${ids[1]}';
+        _socketService.setReaction(
+          messageId,
+          emoji,
+          chatUserId: widget.otherUser.id,
+          roomId: roomId,
+        );
       },
     );
   }
@@ -11497,10 +11597,8 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Build the main bubble widget (wrapped with tap handlers)
     final bubbleWidget = GestureDetector(
-      onTap: () {
-        if (_canQuickToggleTaskAction(message) && !message.isTask) {
-          _addMessageToTask(message);
-        }
+      onTapDown: (details) {
+        _toggleTaskActionForMessage(message, details.globalPosition);
       },
       onLongPress: () => _showMessageContextMenu(message, isSentByMe),
       child: Container(
