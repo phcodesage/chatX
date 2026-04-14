@@ -10230,8 +10230,13 @@ class _ChatScreenState extends State<ChatScreen>
                                     itemBuilder: (context, index) {
                                       final isCompleted =
                                           _taskFilter == 'completed';
+                                      // Global task number = position in the
+                                      // full chronological allTasks list + 1
+                                      final taskNumber =
+                                          allTasks.indexOf(displayTasks[index]) + 1;
                                       return _buildTaskCard(
-                                          displayTasks[index], isCompleted);
+                                          displayTasks[index], isCompleted,
+                                          taskNumber);
                                     },
                                   ),
                                 ],
@@ -10592,9 +10597,12 @@ class _ChatScreenState extends State<ChatScreen>
                                           itemBuilder: (context, index) {
                                             final isCompleted =
                                                 _taskFilter == 'completed';
+                                            final taskNumber =
+                                                allTasks.indexOf(displayTasks[index]) + 1;
                                             return _buildTaskCard(
                                                 displayTasks[index],
-                                                isCompleted);
+                                                isCompleted,
+                                                taskNumber);
                                           },
                                         ),
                                       ],
@@ -10858,7 +10866,21 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Widget _buildTaskCard(Message task, bool isCompleted) {
+  Widget _buildTaskCard(Message task, bool isCompleted, int taskNumber) {
+    // Cycling accent colours matching the web UI
+    const accentColors = [
+      Color(0xFF8B5CF6), // purple
+      Color(0xFF3B82F6), // blue
+      Color(0xFF10B981), // green
+      Color(0xFFF59E0B), // amber
+      Color(0xFFEF4444), // red
+      Color(0xFF06B6D4), // cyan
+      Color(0xFFEC4899), // pink
+      Color(0xFFF97316), // orange
+    ];
+    final accent = accentColors[(taskNumber - 1) % accentColors.length];
+    final labelColor = isCompleted ? const Color(0xFF22C55E) : accent;
+
     return GestureDetector(
       onTap: () => _showTaskDetail(task, isCompleted),
       child: AnimatedContainer(
@@ -10877,34 +10899,28 @@ class _ChatScreenState extends State<ChatScreen>
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Coloured top accent bar + Task #N label row
+                Container(
+                  height: 3,
+                  decoration: BoxDecoration(
+                    color: labelColor,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(12),
+                    ),
+                  ),
+                ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 8, 8, 0),
+                  padding: const EdgeInsets.fromLTRB(10, 5, 8, 0),
                   child: Row(
                     children: [
-                      InkWell(
-                        onTap: () {
-                          if (isCompleted) {
-                            _socketService.uncompleteTask(task.id);
-                          } else {
-                            _socketService.completeTask(task.id);
-                          }
-                          _refreshMessages();
-                        },
-                        borderRadius: BorderRadius.circular(999),
-                        child: SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: Center(
-                            child: Icon(
-                              isCompleted
-                                  ? Icons.check_circle
-                                  : Icons.circle_outlined,
-                              color: isCompleted
-                                  ? const Color(0xFF22C55E)
-                                  : Colors.grey[600],
-                              size: 23,
-                            ),
-                          ),
+                      // Task #N label
+                      Text(
+                        'Task #$taskNumber',
+                        style: TextStyle(
+                          color: labelColor,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.3,
                         ),
                       ),
                       const Spacer(),
@@ -10924,7 +10940,7 @@ class _ChatScreenState extends State<ChatScreen>
                         child: Icon(
                           Icons.copy,
                           color: Colors.grey[600],
-                          size: 16,
+                          size: 14,
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -10933,41 +10949,72 @@ class _ChatScreenState extends State<ChatScreen>
                         child: Icon(
                           Icons.close,
                           color: Colors.grey[600],
-                          size: 16,
+                          size: 14,
                         ),
                       ),
                     ],
                   ),
                 ),
+                // Checkbox + content
                 Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
-                    child: Column(
+                    padding: const EdgeInsets.fromLTRB(10, 4, 8, 6),
+                    child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Text(
-                            task.content,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              decoration: isCompleted
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                              decorationColor: Colors.grey[600],
-                              height: 1.3,
+                        InkWell(
+                          onTap: () {
+                            if (isCompleted) {
+                              _socketService.uncompleteTask(task.id);
+                            } else {
+                              _socketService.completeTask(task.id);
+                            }
+                            _refreshMessages();
+                          },
+                          borderRadius: BorderRadius.circular(999),
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 1, right: 6),
+                            child: Icon(
+                              isCompleted
+                                  ? Icons.check_circle
+                                  : Icons.circle_outlined,
+                              color: isCompleted
+                                  ? const Color(0xFF22C55E)
+                                  : Colors.grey[600],
+                              size: 18,
                             ),
-                            maxLines: 4,
-                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          task.formattedTime,
-                          style: TextStyle(
-                            color: Colors.grey[500],
-                            fontSize: 10,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  task.content,
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                    decoration: isCompleted
+                                        ? TextDecoration.lineThrough
+                                        : null,
+                                    decorationColor: Colors.grey[600],
+                                    height: 1.3,
+                                  ),
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                task.formattedTime,
+                                style: TextStyle(
+                                  color: Colors.grey[500],
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -10982,14 +11029,14 @@ class _ChatScreenState extends State<ChatScreen>
                 right: 6,
                 child: Container(
                   padding: const EdgeInsets.all(2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF22C55E),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF22C55E),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
                     Icons.check,
                     color: Colors.white,
-                    size: 12,
+                    size: 10,
                   ),
                 ),
               ),
