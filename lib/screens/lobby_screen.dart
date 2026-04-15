@@ -79,7 +79,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     Color(0xFFFF5722), // Deep Orange
   ];
 
-  bool get _showAiSuggestion => _searchController.text.trim().isNotEmpty;
+  bool get _showAiSuggestion => true;
 
   @override
   void initState() {
@@ -1577,7 +1577,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       } else {
         filtered = _lobbyUsers.where((user) {
           return user.fullName.toLowerCase().contains(query) ||
-              user.username.toLowerCase().contains(query);
+              user.username.toLowerCase().contains(query) ||
+              user.email.toLowerCase().contains(query) ||
+              (user.lastMessage?.toLowerCase().contains(query) ?? false);
         }).toList();
       }
 
@@ -1588,7 +1590,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       } else {
         filteredGroups = _groups.where((group) {
           return group.name.toLowerCase().contains(query) ||
-              (group.description?.toLowerCase().contains(query) ?? false);
+              (group.description?.toLowerCase().contains(query) ?? false) ||
+              (group.lastMessage?.content.toLowerCase().contains(query) ??
+                  false);
         }).toList();
       }
 
@@ -2116,10 +2120,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
         : selectedUsers.isEmpty;
 
     final query = _searchController.text.trim().toLowerCase();
+    final aiKeywords = <String>['ask ai', 'ai', 'assistant', 'ai chat'];
     final aiMatchesQuery =
-      query.isEmpty || 'ask ai ai assistant ai chat'.contains(query);
+      query.isEmpty || aiKeywords.any((keyword) => keyword.contains(query));
     final showAiChatTile =
-      _activeFilter == LobbyQuickFilter.all && _hasAiSession && aiMatchesQuery;
+      _activeFilter == LobbyQuickFilter.all && aiMatchesQuery;
     final hasVisibleResults = !isFilterEmpty || showAiChatTile;
 
     return Scaffold(
@@ -2276,27 +2281,26 @@ class _LobbyScreenState extends State<LobbyScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 // AI Chat mini FAB
-                if (_hasAiSession)
-                  FloatingActionButton.small(
-                    heroTag: 'fab_ai',
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const AiChatScreen(),
-                        ),
-                      ).then((_) {
-                        _loadAiSessionPresence();
-                        _loadLobby(useCacheFirst: false);
-                      });
-                    },
-                    backgroundColor: const Color(0xFF00D9FF),
-                    foregroundColor: Colors.white,
-                    elevation: 4,
-                    shape: const CircleBorder(),
-                    child: const Icon(Icons.smart_toy_rounded, size: 20),
-                  ),
-                if (_hasAiSession) const SizedBox(height: 12),
+                FloatingActionButton.small(
+                  heroTag: 'fab_ai',
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AiChatScreen(),
+                      ),
+                    ).then((_) {
+                      _loadAiSessionPresence();
+                      _loadLobby(useCacheFirst: false);
+                    });
+                  },
+                  backgroundColor: const Color(0xFF00D9FF),
+                  foregroundColor: Colors.white,
+                  elevation: 4,
+                  shape: const CircleBorder(),
+                  child: const Icon(Icons.smart_toy_rounded, size: 20),
+                ),
+                const SizedBox(height: 12),
                 // New Chat main FAB
                 FloatingActionButton(
                   heroTag: 'fab_chat',
