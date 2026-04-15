@@ -10232,13 +10232,12 @@ class _ChatScreenState extends State<ChatScreen>
                               final otherText =
                                   _taskFilter == 'pending' ? 'Completed' : 'Pending';
 
-                              return ListView(
-                                padding: const EdgeInsets.all(12),
+                              return Column(
                                 children: [
-                                  // Filter Header
-                                  Padding(
-                                    padding:
-                                        const EdgeInsets.fromLTRB(4, 8, 4, 12),
+                                  // ── Sticky filter header ──────────────────
+                                  Container(
+                                    color: const Color(0xFF1C1C1E),
+                                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
                                     child: Row(
                                       children: [
                                         Icon(
@@ -10336,36 +10335,45 @@ class _ChatScreenState extends State<ChatScreen>
                                       ],
                                     ),
                                   ),
-                                  // Tasks Grid
-                                  GridView.builder(
-                                    shrinkWrap: true,
-                                    physics:
-                                        const NeverScrollableScrollPhysics(),
-                                    padding: EdgeInsets.zero,
-                                    gridDelegate:
-                                        SliverGridDelegateWithFixedCrossAxisCount(
-                                          crossAxisCount:
-                                              _getCrossAxisCount(
-                                            MediaQuery.of(context)
-                                                .size
-                                                .width,
-                                          ),
-                                          crossAxisSpacing: 10,
-                                          mainAxisSpacing: 10,
-                                          childAspectRatio: 1.3,
+                                  Divider(
+                                    color: Colors.white.withValues(alpha: 0.08),
+                                    height: 1,
+                                  ),
+                                  // ── Scrollable grid ───────────────────────
+                                  Expanded(
+                                    child: ListView(
+                                      padding: const EdgeInsets.all(12),
+                                      children: [
+                                        GridView.builder(
+                                          shrinkWrap: true,
+                                          physics:
+                                              const NeverScrollableScrollPhysics(),
+                                          padding: EdgeInsets.zero,
+                                          gridDelegate:
+                                              SliverGridDelegateWithFixedCrossAxisCount(
+                                                crossAxisCount:
+                                                    _getCrossAxisCount(
+                                                  MediaQuery.of(context)
+                                                      .size
+                                                      .width,
+                                                ),
+                                                crossAxisSpacing: 10,
+                                                mainAxisSpacing: 10,
+                                                childAspectRatio: 1.3,
+                                              ),
+                                          itemCount: displayTasks.length,
+                                          itemBuilder: (context, index) {
+                                            final isCompleted =
+                                                _taskFilter == 'completed';
+                                            final taskNumber =
+                                                allTasks.indexOf(displayTasks[index]) + 1;
+                                            return _buildTaskCard(
+                                                displayTasks[index], isCompleted,
+                                                taskNumber);
+                                          },
                                         ),
-                                    itemCount: displayTasks.length,
-                                    itemBuilder: (context, index) {
-                                      final isCompleted =
-                                          _taskFilter == 'completed';
-                                      // Global task number = position in the
-                                      // full chronological allTasks list + 1
-                                      final taskNumber =
-                                          allTasks.indexOf(displayTasks[index]) + 1;
-                                      return _buildTaskCard(
-                                          displayTasks[index], isCompleted,
-                                          taskNumber);
-                                    },
+                                      ],
+                                    ),
                                   ),
                                 ],
                               );
@@ -10587,13 +10595,21 @@ class _ChatScreenState extends State<ChatScreen>
                                         ? 'Completed'
                                         : 'Pending';
 
-                                    return ListView(
-                                      padding: const EdgeInsets.all(8),
+                                    return Column(
                                       children: [
-                                        // Filter Header
-                                        Padding(
+                                        // ── Sticky filter header ─────────────
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF1A1A2B),
+                                            border: Border(
+                                              bottom: BorderSide(
+                                                color: Colors.white
+                                                    .withValues(alpha: 0.08),
+                                              ),
+                                            ),
+                                          ),
                                           padding: const EdgeInsets.fromLTRB(
-                                              4, 8, 4, 12),
+                                              12, 8, 12, 8),
                                           child: Row(
                                             children: [
                                               Icon(
@@ -10703,35 +10719,42 @@ class _ChatScreenState extends State<ChatScreen>
                                             ],
                                           ),
                                         ),
-                                        // Tasks Grid
-                                        GridView.builder(
-                                          shrinkWrap: true,
-                                          physics:
-                                              const NeverScrollableScrollPhysics(),
-                                          padding: EdgeInsets.zero,
-                                          gridDelegate:
-                                              SliverGridDelegateWithFixedCrossAxisCount(
-                                                crossAxisCount:
-                                                    _getCrossAxisCount(
-                                                  MediaQuery.of(context)
-                                                      .size
-                                                      .width,
-                                                ),
-                                                crossAxisSpacing: 8,
-                                                mainAxisSpacing: 8,
-                                                childAspectRatio: 1.3,
+                                        // ── Scrollable grid ───────────────────────────────────
+                                        Expanded(
+                                          child: ListView(
+                                            padding: const EdgeInsets.all(8),
+                                            children: [
+                                              GridView.builder(
+                                                shrinkWrap: true,
+                                                physics:
+                                                    const NeverScrollableScrollPhysics(),
+                                                padding: EdgeInsets.zero,
+                                                gridDelegate:
+                                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                                      crossAxisCount:
+                                                          _getCrossAxisCount(
+                                                        MediaQuery.of(context)
+                                                            .size
+                                                            .width,
+                                                      ),
+                                                      crossAxisSpacing: 8,
+                                                      mainAxisSpacing: 8,
+                                                      childAspectRatio: 1.3,
+                                                    ),
+                                                itemCount: displayTasks.length,
+                                                itemBuilder: (context, index) {
+                                                  final isCompleted =
+                                                      _taskFilter == 'completed';
+                                                  final taskNumber =
+                                                      allTasks.indexOf(displayTasks[index]) + 1;
+                                                  return _buildTaskCard(
+                                                      displayTasks[index],
+                                                      isCompleted,
+                                                      taskNumber);
+                                                },
                                               ),
-                                          itemCount: displayTasks.length,
-                                          itemBuilder: (context, index) {
-                                            final isCompleted =
-                                                _taskFilter == 'completed';
-                                            final taskNumber =
-                                                allTasks.indexOf(displayTasks[index]) + 1;
-                                            return _buildTaskCard(
-                                                displayTasks[index],
-                                                isCompleted,
-                                                taskNumber);
-                                          },
+                                            ],
+                                          ),
                                         ),
                                       ],
                                     );

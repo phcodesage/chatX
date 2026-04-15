@@ -7,16 +7,18 @@ LOCAL_PROPERTIES_PATH="$SCRIPT_DIR/android/local.properties"
 
 VERSION=""
 BUILD_NUMBER=""
+BUMP="minor"
 DRY_RUN=false
 
 usage() {
   cat <<'EOF'
-Usage: ./update_app_version.sh [--dry-run]
+Usage: ./update_app_version.sh [options]
 
 Options:
-  (no options)        Automatically increments patch and build number.
-  --version, -v       Optional manual version x.y.z or x.y.z+n.
-  --build-number, -b  Optional manual build number override.
+  (no options)        Automatically increments minor version and resets patch (e.g. 1.1.10 -> 1.2.0).
+  --bump, -u          Auto-increment type: major, minor (default), or patch.
+  --version, -v       Manual version override x.y.z or x.y.z+n (skips --bump).
+  --build-number, -b  Optional manual build number override (must be > current build).
   --dry-run           Print target changes without editing files.
   --help, -h          Show this help message.
 EOF
@@ -26,6 +28,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version|-v)
       VERSION="${2:-}"
+      shift 2
+      ;;
+    --bump|-u)
+      BUMP="${2:-}"
       shift 2
       ;;
     --build-number|-b)
@@ -47,6 +53,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ ! "$BUMP" =~ ^(major|minor|patch)$ ]]; then
+  echo "Error: --bump must be one of: major, minor, patch." >&2
+  exit 1
+fi
 
 if [[ ! -f "$PUBSPEC_PATH" ]]; then
   echo "Error: pubspec.yaml not found at $PUBSPEC_PATH" >&2
@@ -98,8 +109,17 @@ if [[ -n "$VERSION" ]]; then
     target_build_number=$((current_version_code + 1))
   fi
 else
-  target_patch=$((patch + 1))
-  target_version_name="${major}.${minor}.${target_patch}"
+  case "$BUMP" in
+    major)
+      target_version_name="$((major + 1)).0.0"
+      ;;
+    minor)
+      target_version_name="${major}.$((minor + 1)).0"
+      ;;
+    patch)
+      target_version_name="${major}.${minor}.$((patch + 1))"
+      ;;
+  esac
   if [[ -n "$BUILD_NUMBER" ]]; then
     if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
       echo "Error: --build-number must be a positive integer." >&2
@@ -113,6 +133,11 @@ fi
 
 if (( target_build_number < 1 )); then
   target_build_number=1
+fi
+
+if (( target_build_number <= current_version_code )); then
+  echo "Error: Target build number ($target_build_number) must be greater than current build ($current_version_code)." >&2
+  exit 1
 fi
 
 target_version="${target_version_name}+${target_build_number}"

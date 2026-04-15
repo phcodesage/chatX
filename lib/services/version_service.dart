@@ -9,6 +9,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config/api_config.dart';
 import 'storage_service.dart';
@@ -385,9 +386,13 @@ class _UpdateDialogState extends State<UpdateDialog> {
           _status = 'Installer opened.';
         });
       } else {
+        final fallbackOpened = await _openDownloadInBrowser(widget.downloadUrl);
+        final guidance = _buildInstallFailureGuidance(result.message);
         setState(() {
           _isDownloading = false;
-          _status = 'Could not open installer: ${result.message}';
+          _status = fallbackOpened
+              ? 'Could not open installer (${result.message}). Opened download page in browser. $guidance'
+              : 'Could not open installer: ${result.message}. $guidance';
         });
       }
     } catch (e) {
@@ -399,15 +404,90 @@ class _UpdateDialogState extends State<UpdateDialog> {
     }
   }
 
+  Future<bool> _openDownloadInBrowser(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    try {
+      return await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String _buildInstallFailureGuidance(String? rawMessage) {
+    final message = (rawMessage ?? '').toLowerCase();
+
+    if (message.contains('incompatible') ||
+        message.contains('update_incompatible') ||
+        message.contains('conflict')) {
+      return 'The installed app appears to use a different signing key. Uninstall the current app first, then install the new APK.';
+    }
+
+    if (message.contains('downgrade')) {
+      return 'The downloaded APK has an older build number than the installed app. Install a newer APK.';
+    }
+
+    if (message.contains('permission')) {
+      return 'Allow "Install unknown apps" for this app in Android settings and try again.';
+    }
+
+    return 'If Android shows "App not installed", uninstall the current app and install the downloaded APK manually.';
+  }
+
   @override
   Widget build(BuildContext context) {
     final canDismiss = !widget.info.forceUpdate && !_isDownloading;
+    const appBlue = Color(0xFF1E3A8A);
+    const appCard = Color(0xFF344256);
+    const appPrimary = Color(0xFF2E2A8B);
+    const appSurface = Color(0xFF223246);
+    const appText = Color(0xFFE6ECF4);
+    const appMutedText = Color(0xFF9FB0C4);
 
     return PopScope(
       canPop: canDismiss,
       child: AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: const Text('Update Available'),
+        backgroundColor: appCard,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: appBlue.withOpacity(0.55), width: 1),
+        ),
+        titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+        contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        title: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: const LinearGradient(
+                  colors: [appBlue, appPrimary],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Icon(
+                Icons.system_update_alt_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Update Available',
+                style: TextStyle(
+                  color: appText,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 19,
+                ),
+              ),
+            ),
+          ],
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -430,28 +510,53 @@ class _UpdateDialogState extends State<UpdateDialog> {
               const SizedBox(height: 12),
               Text(
                 widget.info.releaseNotes,
-                style: const TextStyle(fontSize: 13),
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: appText,
+                  height: 1.35,
+                ),
               ),
             ],
             const SizedBox(height: 10),
             Text(
               'Update source: ${_formatSourceLabel(widget.downloadUrl)}',
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              style: const TextStyle(fontSize: 12, color: appMutedText),
             ),
             if (_isDownloading || _status.isNotEmpty) ...[
               const SizedBox(height: 14),
-              LinearProgressIndicator(value: _isDownloading ? _progress : null),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: _isDownloading ? _progress : null,
+                  minHeight: 7,
+                  backgroundColor: appSurface,
+                  valueColor: const AlwaysStoppedAnimation<Color>(appBlue),
+                ),
+              ),
               const SizedBox(height: 8),
-              Text(
-                _status,
-                style: const TextStyle(fontSize: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: appSurface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: appBlue.withOpacity(0.35)),
+                ),
+                child: Text(
+                  _status,
+                  style: const TextStyle(fontSize: 12, color: appText),
+                ),
               ),
             ],
             if (widget.info.forceUpdate) ...[
               const SizedBox(height: 10),
               const Text(
                 'This update is required to continue using the app.',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: appText,
+                ),
               ),
             ],
           ],
@@ -461,10 +566,21 @@ class _UpdateDialogState extends State<UpdateDialog> {
             : [
                 if (!widget.info.forceUpdate)
                   TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: appMutedText,
+                    ),
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text('Later'),
                   ),
                 FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: appPrimary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
                   onPressed: _downloadAndInstall,
                   child: const Text('Download & Install'),
                 ),
@@ -497,19 +613,28 @@ class _VersionBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const appBlue = Color(0xFF1E3A8A);
+    const appSurface = Color(0xFF223246);
+    const appText = Color(0xFFE6ECF4);
+    const appMutedText = Color(0xFF9FB0C4);
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).colorScheme.outline),
-        borderRadius: BorderRadius.circular(8),
+        color: appSurface,
+        border: Border.all(color: appBlue.withOpacity(0.45)),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: RichText(
         text: TextSpan(
-          style: DefaultTextStyle.of(context).style,
+          style: const TextStyle(color: appText, fontSize: 12),
           children: [
             TextSpan(
               text: '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                color: appMutedText,
+              ),
             ),
             TextSpan(text: value),
           ],

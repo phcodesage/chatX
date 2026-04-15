@@ -1,6 +1,8 @@
 param(
-    [Parameter(Mandatory = $true)]
     [string]$Version,
+
+    [ValidateSet("major", "minor", "patch")]
+    [string]$Bump = "minor",
 
     [int]$BuildNumber,
 
@@ -70,7 +72,19 @@ if (-not (Test-Path $pubspecPath)) {
 
 $pubspecContent = Get-Content -Path $pubspecPath -Raw
 $currentVersion = Get-VersionFromPubspec -PubspecContent $pubspecContent
-$requested = Parse-RequestedVersion -RequestedVersion $Version
+
+if ([string]::IsNullOrEmpty($Version)) {
+    $parts = $currentVersion.VersionName -split '\.'
+    $major = [int]$parts[0]; $minor = [int]$parts[1]; $patch = [int]$parts[2]
+    $newVersionName = switch ($Bump) {
+        "major" { "$($major + 1).0.0" }
+        "minor" { "$major.$($minor + 1).0" }
+        "patch" { "$major.$minor.$($patch + 1)" }
+    }
+    $requested = @{ VersionName = $newVersionName; InlineBuild = $null }
+} else {
+    $requested = Parse-RequestedVersion -RequestedVersion $Version
+}
 
 if ($PSBoundParameters.ContainsKey("BuildNumber") -and $requested.InlineBuild -ne $null -and $BuildNumber -ne $requested.InlineBuild) {
     throw "Conflicting build numbers: -Version includes +$($requested.InlineBuild) but -BuildNumber is $BuildNumber"
@@ -88,6 +102,10 @@ else {
 
 if ($targetBuildNumber -lt 1) {
     throw "Build number must be >= 1"
+}
+
+if ($targetBuildNumber -le $currentVersion.VersionCode) {
+    throw "Target build number ($targetBuildNumber) must be greater than current build ($($currentVersion.VersionCode))."
 }
 
 $targetVersion = "$($requested.VersionName)+$targetBuildNumber"
