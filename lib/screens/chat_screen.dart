@@ -23,7 +23,9 @@ import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/lobby_user.dart';
 import '../models/message.dart';
+import '../models/common_phrase.dart';
 import '../services/lobby_service.dart';
+import '../services/common_phrases_api.dart';
 import '../services/message_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
@@ -31,6 +33,7 @@ import '../services/chat_cache_service.dart';
 import '../services/translation_service.dart';
 import '../widgets/color_picker_modal.dart';
 import '../widgets/chat_composer_shell.dart';
+import '../widgets/common_phrase_bar.dart';
 import '../services/active_chat_service.dart';
 import '../widgets/call_setup_modal.dart';
 import '../widgets/outgoing_call_modal.dart';
@@ -126,6 +129,7 @@ class _ChatScreenState extends State<ChatScreen>
   // Scroll to bottom button state
   bool _isAtBottom = true;
   int _unreadCount = 0;
+  bool _suppressNextSendAutoScroll = false;
 
   // Reply state
   Message? _replyingToMessage;
@@ -144,6 +148,11 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Translation state: { messageId: translatedText }
   final Map<int, String> _messageTranslations = {};
+
+  // Common phrases state
+  late CommonPhrasesApi _commonPhrasesApi;
+  List<CommonPhrase> _commonPhrases = const [];
+  bool _hideCommonPhrases = false;
 
   // Emoji picker state for chat input
   bool _showEmojiPicker = false;
@@ -255,6 +264,7 @@ class _ChatScreenState extends State<ChatScreen>
     ]).animate(_taskBadgeAnimController);
     _inputFocusNode.addListener(_onFocusChange);
     _scrollController.addListener(_onScroll);
+    _messageController.addListener(_syncCommonPhrasesVisibility);
 
     // Set this user as active to prevent FCM notifications
     ActiveChatService().setActiveUser(widget.otherUser.id);
@@ -551,6 +561,11 @@ class _ChatScreenState extends State<ChatScreen>
     _partnerStatus = widget.otherUser.status;
     _partnerLastSeen = widget.otherUser.lastSeen;
 
+    // Initialize common phrases API
+    _commonPhrasesApi = CommonPhrasesApi(
+      baseUrl: ApiConfig.baseUrl,
+    );
+
     // Load saved chat color for this conversation partner
     await _loadSavedChatColor();
 
@@ -559,6 +574,8 @@ class _ChatScreenState extends State<ChatScreen>
     await _loadCachedMessages();
     await _loadMessages();
     _loadPinnedExcalidrawLinks();
+    // Load common phrases in background
+    unawaited(_loadCommonPhrases());
     // Fetch all task-marked messages for this conversation in the background
     // so the task modal shows the full count, not just the loaded page.
     unawaited(_loadConversationTasks());
@@ -990,6 +1007,7 @@ class _ChatScreenState extends State<ChatScreen>
 
           if (isTyping) {
             _otherUserTyping = true;
+            _hideCommonPhrases = true;
             if (message.isNotEmpty) {
               _typingPreview = message;
             }
@@ -1000,6 +1018,7 @@ class _ChatScreenState extends State<ChatScreen>
                 setState(() {
                   _otherUserTyping = false;
                   _typingPreview = '';
+                  _syncCommonPhrasesVisibility();
                 });
               }
             });
@@ -1007,6 +1026,7 @@ class _ChatScreenState extends State<ChatScreen>
             _typingHideTimer?.cancel();
             _otherUserTyping = false;
             _typingPreview = '';
+            _syncCommonPhrasesVisibility();
           }
         });
       }
@@ -1022,6 +1042,7 @@ class _ChatScreenState extends State<ChatScreen>
         final preview = data['message'] ?? '';
         setState(() {
           _otherUserTyping = preview.isNotEmpty;
+          _hideCommonPhrases = preview.isNotEmpty;
           _typingPreview = preview;
         });
         // Reset the auto-hide timer on every preview update
@@ -1032,6 +1053,7 @@ class _ChatScreenState extends State<ChatScreen>
               setState(() {
                 _otherUserTyping = false;
                 _typingPreview = '';
+                _syncCommonPhrasesVisibility();
               });
             }
           });
@@ -2381,6 +2403,101 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// Load common phrases from server
+  Future<void> _loadCommonPhrases() async {
+    try {
+      final phrases = await _commonPhrasesApi.fetch(limit: 8);
+      final lowerPhrases = phrases
+          .map((p) => p.phrase.trim().toLowerCase())
+          .toList(growable: false);
+
+      CommonPhrase? pickByNeedle(String needle) {
+        final idx = lowerPhrases.indexWhere((p) => p.contains(needle));
+        return idx >= 0 ? phrases[idx] : null;
+      }
+
+      final selected = <CommonPhrase>[];
+      final howAreThings = pickByNeedle('how are things');
+      final canYouCheck = pickByNeedle('can you check');
+
+      if (howAreThings != null) {
+        selected.add(howAreThings);
+      }
+      if (canYouCheck != null &&
+          !selected.any((p) => p.phrase == canYouCheck.phrase)) {
+        selected.add(canYouCheck);
+      }
+
+      // Fallback: if one or both requested phrases are missing, fill from API.
+      if (selected.length < 2) {
+        for (final p in phrases) {
+          if (!selected.any((s) => s.phrase == p.phrase)) {
+            selected.add(p);
+          }
+          if (selected.length == 2) break;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _commonPhrases = selected.take(2).toList(growable: false);
+        });
+      }
+      debugPrint('📝 Loaded ${selected.length} common phrases (2-chip mode)');
+    } catch (e) {
+      debugPrint('❌ Error loading common phrases: $e');
+      // Silently fail - this is a non-critical feature
+    }
+  }
+
+  /// Sync common phrases visibility based on input text
+  void _syncCommonPhrasesVisibility() {
+    final hasText = _messageController.text.trim().isNotEmpty;
+    final shouldHide = hasText || _otherUserTyping;
+    
+    if (_hideCommonPhrases != shouldHide && mounted) {
+      setState(() {
+        _hideCommonPhrases = shouldHide;
+      });
+    }
+  }
+
+  /// Handle tapping a common phrase chip
+  Future<void> _onCommonPhraseChipTap(CommonPhrase phrase) async {
+    final phraseText = phrase.phrase.trim();
+    if (phraseText.isEmpty) return;
+
+    final wasAtBottom = _isAtBottom;
+
+    // Hide phrases and set input to phrase text
+    setState(() {
+      _hideCommonPhrases = true;
+      _messageController.text = phraseText;
+    });
+
+    // Preserve user position: only pin to bottom for chip sends when the user
+    // was already at the bottom before tapping.
+    _suppressNextSendAutoScroll = !wasAtBottom;
+
+    // Send the phrase as a message
+    await _sendMessage();
+
+    // Track usage in background
+    unawaited(_commonPhrasesApi.trackUse(phraseText));
+
+    // If user was at bottom, keep scrolling to bottom after send
+    if (wasAtBottom) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToBottom();
+      });
+      Future<void>.delayed(const Duration(milliseconds: 80), () {
+        if (mounted) {
+          _scrollToBottom();
+        }
+      });
+    }
+  }
+
   /// Load older messages (pagination) when user taps "Load more"
   Future<void> _loadMoreMessages() async {
     if (_isLoadingMore || !_hasMoreMessages || _messages.isEmpty) return;
@@ -3253,10 +3370,14 @@ class _ChatScreenState extends State<ChatScreen>
     _messageController.clear();
     _stopTyping();
 
-    // Scroll to bottom immediately after sending
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToBottom();
-    });
+    // Scroll to bottom after sending unless explicitly suppressed.
+    final shouldAutoScroll = !_suppressNextSendAutoScroll;
+    _suppressNextSendAutoScroll = false;
+    if (shouldAutoScroll) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToBottom();
+      });
+    }
 
     // Try to send message
     try {
@@ -7753,6 +7874,7 @@ class _ChatScreenState extends State<ChatScreen>
     WidgetsBinding.instance.removeObserver(this);
     _taskBadgeAnimController.dispose();
     _taskModalVersion.dispose();
+    _messageController.removeListener(_syncCommonPhrasesVisibility);
     _messageController.dispose();
     _autoCorrectionWrongController.dispose();
     _autoCorrectionCorrectController.dispose();
@@ -8291,6 +8413,13 @@ class _ChatScreenState extends State<ChatScreen>
                       child: (_otherUserTyping && _typingPreview.isNotEmpty)
                           ? RepaintBoundary(child: _buildTypingPreviewBubble())
                           : const SizedBox.shrink(),
+                    ),
+                    // Common phrases bar (outside action buttons background, single row)
+                    CommonPhraseBar(
+                      phrases: _commonPhrases,
+                      hidden: _hideCommonPhrases,
+                      onChipTap: _onCommonPhraseChipTap,
+                      scale: scale,
                     ),
                     // Message input — closing bracket of bottom bar Column added below
                     RepaintBoundary(
