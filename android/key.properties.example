@@ -1,0 +1,8 @@
+# Copy this file to android/key.properties and fill with your release keystore values.
+# Do NOT commit android/key.properties.
+# Paths are relative to the android/ folder.
+
+storeFile=app/release-keystore.jks
+storePassword=change_me
+keyAlias=release
+keyPassword=change_me

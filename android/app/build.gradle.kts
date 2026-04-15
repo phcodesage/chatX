@@ -1,4 +1,5 @@
 import java.util.Base64
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -22,6 +23,19 @@ fun dartDefines(): Map<String, String> {
 }
 
 val dartEnv: Map<String, String> = dartDefines()
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+val hasReleaseKeystore = keystorePropertiesFile.exists()
+
+if (hasReleaseKeystore) {
+    keystorePropertiesFile.inputStream().use { stream ->
+        keystoreProperties.load(stream)
+    }
+}
+
+val isReleaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
 
 android {
     namespace = "com.example.flutter_messenger_v2"
@@ -58,11 +72,33 @@ android {
         buildConfigField("String", "BASE_URL", "\"$baseUrl\"")
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                val storeFilePath = keystoreProperties["storeFile"]?.toString()?.trim()
+                if (storeFilePath.isNullOrEmpty()) {
+                    throw GradleException("android/key.properties is missing storeFile.")
+                }
+                storeFile = rootProject.file(storeFilePath)
+                storePassword = keystoreProperties["storePassword"]?.toString()
+                keyAlias = keystoreProperties["keyAlias"]?.toString()
+                keyPassword = keystoreProperties["keyPassword"]?.toString()
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                if (isReleaseTaskRequested) {
+                    throw GradleException(
+                        "Release signing is not configured. Create android/key.properties with your stable keystore to build a release APK."
+                    )
+                }
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

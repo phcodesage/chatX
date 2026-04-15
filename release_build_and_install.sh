@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_NAME="com.example.flutter_messenger_v2"
 APK_PATH="$SCRIPT_DIR/build/app/outputs/flutter-apk/app-release.apk"
+KEY_PROPERTIES_PATH="$SCRIPT_DIR/android/key.properties"
 
 SKIP_INSTALL=false
 START_LOGCAT=false
@@ -97,6 +98,12 @@ echo
 
 require_cmd flutter
 require_cmd adb
+
+if [[ ! -f "$KEY_PROPERTIES_PATH" ]]; then
+  echo "Error: Release signing is not configured." >&2
+  echo "Create $KEY_PROPERTIES_PATH with storeFile/storePassword/keyAlias/keyPassword." >&2
+  exit 1
+fi
 
 echo "Checking for connected devices..."
 initial_device_count="$(connected_device_count)"

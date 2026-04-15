@@ -2,6 +2,126 @@
 import 'package:flutter/foundation.dart';
 import '../config/api_config.dart';
 
+Map<String, dynamic> _normalizeGroupReactionsMap(dynamic value) {
+  if (value == null) return {};
+  if (value is! Map) return {};
+
+  final raw = Map<String, dynamic>.from(
+    value.map((key, entryValue) => MapEntry(key.toString(), entryValue)),
+  );
+  final normalized = <String, List<String>>{};
+
+  void addUser(String emoji, String userId) {
+    final trimmedEmoji = emoji.trim();
+    final trimmedUserId = userId.trim();
+    if (trimmedEmoji.isEmpty || trimmedUserId.isEmpty) {
+      return;
+    }
+
+    final users = normalized.putIfAbsent(trimmedEmoji, () => <String>[]);
+    if (!users.contains(trimmedUserId)) {
+      users.add(trimmedUserId);
+    }
+  }
+
+  String? normalizeUserId(dynamic userValue) {
+    if (userValue == null) return null;
+    if (userValue is Map) {
+      final userMap = Map<String, dynamic>.from(
+        userValue.map((key, entryValue) => MapEntry(key.toString(), entryValue)),
+      );
+      final candidate =
+          userMap['user_id'] ??
+          userMap['id'] ??
+          userMap['username'] ??
+          userMap['user_name'] ??
+          userMap['name'];
+      final normalizedValue = candidate?.toString().trim();
+      if (normalizedValue == null || normalizedValue.isEmpty) {
+        return null;
+      }
+      return normalizedValue;
+    }
+
+    final normalizedValue = userValue.toString().trim();
+    if (normalizedValue.isEmpty) {
+      return null;
+    }
+    return normalizedValue;
+  }
+
+  void addUsers(String emoji, List<dynamic> users) {
+    for (final user in users) {
+      final userId = normalizeUserId(user);
+      if (userId != null) {
+        addUser(emoji, userId);
+      }
+    }
+  }
+
+  final byUser = raw['by_user'];
+  if (byUser is List) {
+    for (final entry in byUser) {
+      if (entry is! Map) continue;
+      final entryMap = Map<String, dynamic>.from(
+        entry.map((key, entryValue) => MapEntry(key.toString(), entryValue)),
+      );
+      final emoji =
+          entryMap['reaction']?.toString() ?? entryMap['emoji']?.toString();
+      final userId = normalizeUserId(entryMap);
+      if (emoji != null && userId != null) {
+        addUser(emoji, userId);
+      }
+    }
+  }
+
+  raw.forEach((emoji, entryValue) {
+    if (emoji == 'counts' || emoji == 'by_user') {
+      return;
+    }
+
+    if (entryValue is List) {
+      addUsers(emoji, entryValue);
+      return;
+    }
+
+    if (entryValue is! Map) {
+      return;
+    }
+
+    final nested = Map<String, dynamic>.from(
+      entryValue.map((key, nestedValue) => MapEntry(key.toString(), nestedValue)),
+    );
+    final nestedUsers = nested['by_user'] ?? nested['users'];
+    if (nestedUsers is List) {
+      addUsers(emoji, nestedUsers);
+    }
+  });
+
+  if (normalized.isNotEmpty) {
+    return normalized;
+  }
+
+  final counts = raw['counts'];
+  if (counts is Map) {
+    final countMap = Map<String, dynamic>.from(
+      counts.map((key, entryValue) => MapEntry(key.toString(), entryValue)),
+    );
+    countMap.forEach((emoji, countValue) {
+      final count = countValue is num ? countValue.toInt() : int.tryParse('$countValue');
+      if (count == null || count <= 0) {
+        return;
+      }
+      normalized[emoji] = List<String>.generate(
+        count,
+        (index) => '__count_placeholder_${emoji}_$index',
+      );
+    });
+  }
+
+  return normalized;
+}
+
 class Group {
   final int id;
   final String name;
@@ -207,18 +327,6 @@ class GroupMessage {
   });
 
   factory GroupMessage.fromJson(Map<String, dynamic> json) {
-    // Helper to safely convert Map<dynamic, dynamic> to Map<String, dynamic>
-    Map<String, dynamic> _safeReactionsMap(dynamic value) {
-      if (value == null) return {};
-      if (value is Map<String, dynamic>) return value;
-      if (value is Map) {
-        return Map<String, dynamic>.from(
-          value.map((k, v) => MapEntry(k.toString(), v)),
-        );
-      }
-      return {};
-    }
-
     try {
       // Handle reply_preview which can be either a String or a Map
       String? replyPreviewText;
@@ -315,7 +423,7 @@ class GroupMessage {
         fileType: fileType,
         replyToId: json['reply_to_id'] as int?,
         replyPreview: replyPreviewText,
-        reactions: _safeReactionsMap(json['reactions']),
+        reactions: _normalizeGroupReactionsMap(json['reactions']),
       );
     } catch (e, stackTrace) {
       debugPrint('❌ Error parsing GroupMessage: $e');

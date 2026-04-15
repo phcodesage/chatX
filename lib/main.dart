@@ -167,17 +167,29 @@ class _MessengerAppState extends State<MessengerApp>
     with WidgetsBindingObserver {
   DateTime? _lastResumeUpdateCheck;
 
+  void _scheduleUpdateCheck({int retryCount = 0}) {
+    if (!mounted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      final checkContext = NotificationHandler.navigatorKey.currentContext ?? context;
+      VersionService().checkAndPromptUpdate(checkContext);
+
+      if (NotificationHandler.navigatorKey.currentContext == null && retryCount < 3) {
+        Future<void>.delayed(const Duration(milliseconds: 450), () {
+          _scheduleUpdateCheck(retryCount: retryCount + 1);
+        });
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final navigatorContext = NotificationHandler.navigatorKey.currentContext;
-      if (navigatorContext == null) return;
-      VersionService().checkAndPromptUpdate(navigatorContext);
-    });
+    _scheduleUpdateCheck();
   }
 
   @override
@@ -192,12 +204,7 @@ class _MessengerAppState extends State<MessengerApp>
     }
 
     _lastResumeUpdateCheck = now;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final navigatorContext = NotificationHandler.navigatorKey.currentContext;
-      if (navigatorContext == null) return;
-      VersionService().checkAndPromptUpdate(navigatorContext);
-    });
+    _scheduleUpdateCheck();
   }
 
   @override

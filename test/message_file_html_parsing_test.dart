@@ -80,5 +80,31 @@ void main() {
       expect(message.fileName, 'Archive');
       expect(message.fileSize, 122682883);
     });
+
+    test('normalizes multi-emoji reactions for the same user from by_user payload', () {
+      final message = GroupMessage.fromJson({
+        'id': 2,
+        'message_id': 2,
+        'group_id': 5,
+        'sender_id': 10,
+        'content': 'hello',
+        'message_type': 'text',
+        'timestamp': '2026-03-29T12:00:00',
+        'timestamp_ms': 0,
+        'reactions': {
+          'counts': {'😀': 1, '🔥': 1},
+          'by_user': [
+            {'user_id': 42, 'reaction': '😀'},
+            {'user_id': 42, 'reaction': '🔥'},
+          ],
+        },
+        'is_deleted': false,
+      });
+
+      expect(message.reactions, {
+        '😀': ['42'],
+        '🔥': ['42'],
+      });
+    });
   });
 }

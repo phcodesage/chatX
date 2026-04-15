@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DESTINATION_DIR="/Users/macmini/Documents/code-proj/flask-proj/flask_web_backend/app/static/downloads/android"
 OUTPUT_BASE_NAME="flask_call_app"
+KEY_PROPERTIES_PATH="$SCRIPT_DIR/android/key.properties"
 
 usage() {
   cat <<'EOF'
@@ -40,6 +41,12 @@ done
 
 if ! command -v flutter >/dev/null 2>&1; then
   echo "Error: flutter not found in PATH." >&2
+  exit 1
+fi
+
+if [[ ! -f "$KEY_PROPERTIES_PATH" ]]; then
+  echo "Error: Release signing is not configured." >&2
+  echo "Create $KEY_PROPERTIES_PATH with storeFile/storePassword/keyAlias/keyPassword." >&2
   exit 1
 fi
 
