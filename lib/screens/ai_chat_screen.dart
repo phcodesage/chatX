@@ -46,6 +46,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   bool _isAtBottom = true;
   bool _hasStreamingAssistant = false;
   bool _isInitialLoadComplete = false;
+  bool _isSettlingScroll = false;
 
   int? _sessionId;
   int? _currentUserId;
@@ -225,6 +226,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   void _handleScrollPosition() {
     if (!_scrollController.hasClients) return;
+    // While the settling loop is actively scrolling to bottom, don't let
+    // intermediate layout changes flip _isAtBottom back to false.
+    if (_isSettlingScroll) return;
     const bottomThreshold = 24.0;
     final distanceFromBottom =
         _scrollController.position.maxScrollExtent - _scrollController.offset;
@@ -530,7 +534,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
       });
       _messageController.clear();
     });
-    _scrollToBottom();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _scrollToBottom();
+    });
 
     // Persist last AI message time + preview so lobby can sort/display correctly
     if (_currentUserId != null) {
@@ -654,7 +660,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   'timestamp': DateTime.now().toIso8601String(),
                 });
               });
-              _scrollToBottom();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _scrollToBottom();
+              });
               assistantContent = tokenChunk;
             } else {
               assistantContent += tokenChunk;
@@ -667,6 +675,15 @@ class _AiChatScreenState extends State<AiChatScreen> {
                     ..._messages[idx],
                     'content': assistantContent,
                   };
+                });
+                // Auto-scroll as the response grows, but only if near bottom.
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted || !_scrollController.hasClients) return;
+                  final distance = _scrollController.position.maxScrollExtent -
+                      _scrollController.offset;
+                  if (distance < 150) {
+                    _scrollToBottom();
+                  }
                 });
               }
             }
@@ -1073,8 +1090,37 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   void _scrollToBottomButtonTap() {
     if (!_scrollController.hasClients) return;
-    // Use the settling approach so lazy-built items are accounted for.
-    _jumpToBottomWhenSettled();
+    // Immediate jump for instant visual feedback.
+    _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    setState(() => _isAtBottom = true);
+    // Then settle via timer to handle lazy-built items that grow maxExtent.
+    _settleScrollToBottom();
+  }
+
+  /// Timer-based rapid settle loop for the scroll-to-bottom button.
+  /// Unlike [_jumpToBottomWhenSettled] (post-frame based, for initial load),
+  /// this uses [Future.delayed] so it fires reliably regardless of frame
+  /// scheduling and finishes in ~50-100ms.
+  void _settleScrollToBottom([double? prev, int attempts = 8]) {
+    _isSettlingScroll = true;
+    Future.delayed(const Duration(milliseconds: 16), () {
+      if (!mounted || !_scrollController.hasClients) {
+        _isSettlingScroll = false;
+        return;
+      }
+      final max = _scrollController.position.maxScrollExtent;
+      _scrollController.jumpTo(max);
+
+      if (prev != null && (max - prev).abs() < 1.0 || attempts <= 1) {
+        // Settled — layout is stable.
+        _isSettlingScroll = false;
+        if (mounted) {
+          setState(() => _isAtBottom = true);
+        }
+        return;
+      }
+      _settleScrollToBottom(max, attempts - 1);
+    });
   }
 
   String _formatTimestamp(String? raw) {
@@ -1626,6 +1672,101 @@ class _AiChatScreenState extends State<AiChatScreen> {
     );
   }
 
+  // ── Lightweight inline-markdown → RichText ──────────────────────────────
+
+  Widget _buildFormattedContent(String text, {bool isUser = false}) {
+    final spans = _parseMarkdownSpans(text);
+    return RichText(
+      text: TextSpan(
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          height: 1.35,
+        ),
+        children: spans,
+      ),
+    );
+  }
+
+  /// Parses basic markdown patterns into [InlineSpan] children.
+  /// Supported: **bold**, *italic*, `code`, ~~strikethrough~~, __underline__.
+  List<InlineSpan> _parseMarkdownSpans(String text) {
+    // Regex captures these groups in order:
+    //  1) `code`
+    //  2) **bold**
+    //  3) ~~strikethrough~~
+    //  4) __underline__
+    //  5) *italic* (single asterisk, but not inside **)
+    final pattern = RegExp(
+      r'`([^`]+)`'                     // group 1: inline code
+      r'|\*\*(.+?)\*\*'               // group 2: bold
+      r'|~~(.+?)~~'                    // group 3: strikethrough
+      r'|__(.+?)__'                    // group 4: underline
+      r'|\*(.+?)\*',                   // group 5: italic
+    );
+
+    final spans = <InlineSpan>[];
+    int lastEnd = 0;
+
+    for (final match in pattern.allMatches(text)) {
+      // Add plain text before this match.
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
+      }
+
+      if (match.group(1) != null) {
+        // Inline code
+        spans.add(TextSpan(
+          text: match.group(1),
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 13,
+            backgroundColor: Colors.white.withOpacity(0.12),
+            color: const Color(0xFF7DD3FC),
+          ),
+        ));
+      } else if (match.group(2) != null) {
+        // Bold
+        spans.add(TextSpan(
+          text: match.group(2),
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ));
+      } else if (match.group(3) != null) {
+        // Strikethrough
+        spans.add(TextSpan(
+          text: match.group(3),
+          style: const TextStyle(decoration: TextDecoration.lineThrough),
+        ));
+      } else if (match.group(4) != null) {
+        // Underline
+        spans.add(TextSpan(
+          text: match.group(4),
+          style: const TextStyle(decoration: TextDecoration.underline),
+        ));
+      } else if (match.group(5) != null) {
+        // Italic
+        spans.add(TextSpan(
+          text: match.group(5),
+          style: const TextStyle(fontStyle: FontStyle.italic),
+        ));
+      }
+
+      lastEnd = match.end;
+    }
+
+    // Remaining plain text after the last match.
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(text: text.substring(lastEnd)));
+    }
+
+    // If nothing matched, return the raw text.
+    if (spans.isEmpty) {
+      spans.add(TextSpan(text: text));
+    }
+
+    return spans;
+  }
+
   Widget _buildMessageBubble(Map<String, String> message) {
     final isUser = message['role'] == 'user';
     final timestamp = _formatTimestamp(message['timestamp']);
@@ -1655,13 +1796,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Text(
+              child: _buildFormattedContent(
                 message['content'] ?? '',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  height: 1.35,
-                ),
+                isUser: isUser,
               ),
             ),
             if (isUser)
