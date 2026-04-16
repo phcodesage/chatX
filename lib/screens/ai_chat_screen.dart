@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
+import '../services/socket_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/reaction_picker.dart';
 import '../widgets/chat_composer_shell.dart';
@@ -30,6 +31,12 @@ class _AiChatScreenState extends State<AiChatScreen> {
       <int, Map<String, Set<String>>>{};
   OverlayEntry? _topActionBannerEntry;
   Timer? _topActionBannerTimer;
+
+  /// IDs already received via SSE stream — used to skip duplicates from socket sync.
+  final Set<int> _sseConfirmedIds = <int>{};
+
+  final SocketService _socketService = SocketService();
+  static const String _socketListenerKey = 'ai_chat_screen';
 
   bool _isLoading = true;
   bool _isSending = false;
@@ -206,6 +213,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   @override
   void dispose() {
+    _socketService.removeListener('aiChatSync', _socketListenerKey);
     _dismissTopActionBanner();
     _scrollController.removeListener(_handleScrollPosition);
     _messageController.dispose();
@@ -231,6 +239,96 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _currentUserId = await StorageService.getUserId();
     await _loadUiPreferences();
     await _initializeAiSession();
+    _setupAiChatSync();
+  }
+
+  void _setupAiChatSync() {
+    _socketService.addListener('aiChatSync', _socketListenerKey, (Map<String, dynamic> payload) {
+      if (!mounted) return;
+      final action = payload['action']?.toString() ?? '';
+      final payloadSessionId = payload['session_id'] as int?;
+
+      // Only process events for the currently open session.
+      if (payloadSessionId != null && payloadSessionId != _sessionId) return;
+
+      switch (action) {
+        case 'message_created':
+          // While we are sending, the SSE stream owns all new bubbles for this
+          // session (user message + streaming assistant tokens). Suppress socket
+          // sync additions for the entire send window to avoid duplicates caused
+          // by the race between socket delivery and SSE ID confirmation.
+          if (_isSending || _hasStreamingAssistant) break;
+
+          final raw = payload['message'];
+          if (raw is! Map) return;
+          final msg = Map<String, dynamic>.from(raw as Map);
+          final msgId = msg['id'] as int?;
+
+          // Skip if SSE stream confirmed this ID (sent from this device).
+          if (msgId != null && _sseConfirmedIds.contains(msgId)) break;
+
+          // Skip if the real ID is already in the local list.
+          if (_messages.any((m) => m['id'] == msgId?.toString())) break;
+
+          // Content-based dedup: guard against the narrow window where _isSending
+          // just flipped to false but the local bubble still has a negative ID.
+          final incomingContent = msg['content']?.toString().trim() ?? '';
+          final incomingRole   = msg['role']?.toString() ?? '';
+          if (incomingContent.isNotEmpty &&
+              _messages.any((m) =>
+                  m['role'] == incomingRole &&
+                  (m['content'] ?? '').trim() == incomingContent)) {
+            break;
+          }
+
+          setState(() {
+            _messages.add(_normalizeSocketMessage(msg));
+          });
+          _scrollToBottom();
+          break;
+
+        case 'message_updated':
+          final raw = payload['message'];
+          if (raw is! Map) return;
+          final msg = Map<String, dynamic>.from(raw as Map);
+          final msgId = msg['id']?.toString();
+          if (msgId == null) break;
+          setState(() {
+            final i = _messages.indexWhere((m) => m['id'] == msgId);
+            if (i != -1) {
+              _messages[i] = _normalizeSocketMessage(msg);
+            }
+          });
+          break;
+
+        case 'message_deleted':
+          final raw = payload['deleted_message'];
+          if (raw is! Map) return;
+          final deleted = Map<String, dynamic>.from(raw as Map);
+          final deletedId = deleted['id']?.toString();
+          if (deletedId == null) break;
+          setState(() {
+            _messages.removeWhere((m) => m['id'] == deletedId);
+          });
+          break;
+
+        case 'messages_cleared':
+          setState(() => _messages.clear());
+          break;
+
+        default:
+          break;
+      }
+    });
+  }
+
+  Map<String, String> _normalizeSocketMessage(Map<String, dynamic> msg) {
+    return <String, String>{
+      'id': (msg['id'] ?? '').toString(),
+      'role': (msg['role'] ?? '').toString(),
+      'content': (msg['content'] ?? '').toString(),
+      'timestamp': (msg['created_at'] ?? msg['timestamp'] ?? '').toString(),
+    };
   }
 
   Future<void> _loadUiPreferences() async {
@@ -521,6 +619,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
           case 'user_message_saved':
             final userMessageId = payload['id'] as int?;
             if (userMessageId != null) {
+              _sseConfirmedIds.add(userMessageId);
               _replaceMessageId(userLocalId, userMessageId.toString());
             }
             break;
@@ -563,9 +662,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
             final assistantMessageId = payload['assistant_message_id'] as int?;
 
             if (userMessageId != null) {
+              _sseConfirmedIds.add(userMessageId);
               _replaceMessageId(userLocalId, userMessageId.toString());
             }
             if (assistantLocalId != null && assistantMessageId != null) {
+              _sseConfirmedIds.add(assistantMessageId);
               _replaceMessageId(
                 assistantLocalId!,
                 assistantMessageId.toString(),

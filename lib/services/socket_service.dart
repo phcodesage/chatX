@@ -111,6 +111,9 @@ class SocketService {
       {};
   final Map<String, Function(Map<String, dynamic>)> _groupTypingListeners = {};
 
+  // AI chat realtime sync
+  final Map<String, Function(Map<String, dynamic>)> _aiChatSyncListeners = {};
+
   // ---------------------------------------------------------------------------
   // Keyed listener registration / removal helpers
   // ---------------------------------------------------------------------------
@@ -326,6 +329,9 @@ class SocketService {
       case 'groupTyping':
         _groupTypingListeners[key] = callback as Function(Map<String, dynamic>);
         break;
+      case 'aiChatSync':
+        _aiChatSyncListeners[key] = callback as Function(Map<String, dynamic>);
+        break;
       case 'test_response':
         // Add test_response listeners to group new message listeners for now
         _groupNewMessageListeners[key] =
@@ -503,6 +509,9 @@ class SocketService {
       case 'groupTyping':
         _groupTypingListeners.remove(key);
         break;
+      case 'aiChatSync':
+        _aiChatSyncListeners.remove(key);
+        break;
       case 'test_response':
         // Remove from group new message listeners
         _groupNewMessageListeners.remove(key);
@@ -568,6 +577,8 @@ class SocketService {
     _groupDeletedListeners.remove(key);
     _groupMemberAddedListeners.remove(key);
     _groupTypingListeners.remove(key);
+    // AI chat sync
+    _aiChatSyncListeners.remove(key);
   }
 
   // Broadcast helpers
@@ -1364,6 +1375,14 @@ class SocketService {
     _socket!.on('group_user_typing', (data) {
       debugPrint('⌨️ Group user typing: $data');
       _broadcast(_groupTypingListeners, data as Map<String, dynamic>);
+    });
+
+    // AI chat realtime sync
+    _socket!.on('ai_chat_sync', (data) {
+      if (data is! Map) return;
+      final payload = Map<String, dynamic>.from(data as Map);
+      debugPrint('🤖 [AI SYNC] ai_chat_sync received: action=${payload['action']}');
+      _broadcast(_aiChatSyncListeners, payload);
     });
 
     // Debug: Test response event - handle it properly
