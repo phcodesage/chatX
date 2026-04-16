@@ -383,7 +383,11 @@ class _UpdateDialogState extends State<UpdateDialog> {
 
       if (result.type == ResultType.done) {
         setState(() {
-          _status = 'Installer opened.';
+          _isDownloading = false;
+          _status =
+              'Installer opened. If you see "App not installed" or a conflict error, '
+              'uninstall the current version first (Settings → Apps → this app → Uninstall), '
+              'then tap "Download & Install" again.';
         });
       } else {
         final fallbackOpened = await _openDownloadInBrowser(widget.downloadUrl);

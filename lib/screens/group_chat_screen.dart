@@ -4115,7 +4115,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF4D4D4D),
+                      color: const Color(0xFF2A2F3A),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
@@ -4140,14 +4140,17 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                             key: const ValueKey('message_input'),
                             controller: _messageController,
                             focusNode: _inputFocusNode,
+                            cursorColor: const Color(0xFFCB6CFF),
+                            cursorWidth: 2.2,
+                            cursorRadius: const Radius.circular(2),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 14,
                             ),
                             decoration: InputDecoration(
                               hintText: 'Type a message...',
-                              hintStyle: TextStyle(
-                                color: Colors.grey[600],
+                              hintStyle: const TextStyle(
+                                color: Color(0xFFD7B7FF),
                                 fontSize: 14,
                               ),
                               border: InputBorder.none,

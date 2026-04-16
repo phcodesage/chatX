@@ -222,6 +222,11 @@ class _MessengerAppState extends State<MessengerApp>
       ),
       useMaterial3: true,
       scaffoldBackgroundColor: Colors.transparent,
+      textSelectionTheme: const TextSelectionThemeData(
+        cursorColor: Color(0xFFCB6CFF),
+        selectionColor: Color(0x668B5CF6),
+        selectionHandleColor: Color(0xFFCB6CFF),
+      ),
       inputDecorationTheme: const InputDecorationTheme(
         filled: true,
         fillColor: Color(0xFFEFF6FF),

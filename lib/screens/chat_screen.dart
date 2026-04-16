@@ -8493,7 +8493,7 @@ class _ChatScreenState extends State<ChatScreen>
                                             minHeight: 44 * scale,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFF4D4D4D),
+                                            color: const Color(0xFF1E2430),
                                             borderRadius: BorderRadius.circular(
                                               24,
                                             ),
@@ -8535,11 +8535,11 @@ class _ChatScreenState extends State<ChatScreen>
                                                     textSelectionTheme:
                                                         const TextSelectionThemeData(
                                                           cursorColor:
-                                                              sendButtonColor,
+                                                              Color(0xFF25D366),
                                                           selectionHandleColor:
-                                                              sendButtonColor,
+                                                              Color(0xFF25D366),
                                                           selectionColor: Color(
-                                                            0x596D28D9,
+                                                            0x6637D67A,
                                                           ),
                                                         ),
                                                   ),
@@ -8565,7 +8565,7 @@ class _ChatScreenState extends State<ChatScreen>
                                                       selectionControls:
                                                           _compactSelectionControls,
                                                       cursorColor:
-                                                          sendButtonColor,
+                                                          const Color(0xFF25D366),
                                                         cursorHeight: 26 * scale,
                                                         cursorWidth: 2.6,
                                                       scrollPadding:
@@ -13053,7 +13053,7 @@ class _CompactTextSelectionControls extends MaterialTextSelectionControls {
     final handle = super.buildHandle(context, type, textLineHeight, onTap);
     return ColorFiltered(
       colorFilter: const ColorFilter.mode(
-        Color(0xFF6D28D9),
+        Color(0xFF25D366),
         BlendMode.srcIn,
       ),
       child: handle,
