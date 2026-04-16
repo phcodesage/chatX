@@ -45,6 +45,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   bool _autoCorrectionEnabled = true;
   bool _isAtBottom = true;
   bool _hasStreamingAssistant = false;
+  bool _isInitialLoadComplete = false;
 
   int? _sessionId;
   int? _currentUserId;
@@ -284,7 +285,16 @@ class _AiChatScreenState extends State<AiChatScreen> {
           setState(() {
             _messages.add(_normalizeSocketMessage(msg));
           });
-          _scrollToBottom();
+          // Auto-scroll during initial load, or if user is near bottom
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!_scrollController.hasClients) return;
+            final distanceFromBottom =
+                _scrollController.position.maxScrollExtent - _scrollController.offset;
+            // Always scroll during initial load, or if user is near bottom
+            if (!_isInitialLoadComplete || distanceFromBottom < 100) {
+              _scrollToBottom();
+            }
+          });
           break;
 
         case 'message_updated':
@@ -371,6 +381,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
         _isLoading = false;
       });
 
+      // Scroll to bottom after the list has had time to lay out all items.
+      if (_messages.isNotEmpty) {
+        _jumpToBottomWhenSettled();
+      }
+
       final initialPrompt = widget.initialPrompt?.trim();
       if (initialPrompt != null && initialPrompt.isNotEmpty) {
         _messageController.text = initialPrompt;
@@ -428,7 +443,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
           ..clear()
           ..addAll(parsed);
       });
-      _scrollToBottom();
       return true;
     } catch (_) {
       return false;
@@ -1001,18 +1015,66 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
 
   void _scrollToBottom() {
+    if (!_scrollController.hasClients) return;
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    _scrollController.jumpTo(maxExtent);
+    if (mounted) {
+      setState(() {
+        _isAtBottom = true;
+      });
+    }
+  }
+
+  /// Polls across frames until [maxScrollExtent] stabilises, then jumps.
+  /// This is essential because [ListView.builder] lazily lays out items, so
+  /// the extent grows as more off-screen children get built when we scroll down.
+  void _jumpToBottomWhenSettled([double? previousExtent, int attempts = 12]) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-      );
+      if (!mounted) return;
+      if (!_scrollController.hasClients) {
+        if (attempts > 1) {
+          _jumpToBottomWhenSettled(previousExtent, attempts - 1);
+        }
+        return;
+      }
+
+      // Jump to current max first — this forces the ListView to build the
+      // children that are now in the viewport, which may increase maxExtent.
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      _scrollController.jumpTo(maxExtent);
+
+      // If the extent didn't change since last frame, layout is stable.
+      if (previousExtent != null && (maxExtent - previousExtent).abs() < 1.0) {
+        if (mounted) {
+          setState(() {
+            _isAtBottom = true;
+            _isInitialLoadComplete = true;
+          });
+        }
+        return;
+      }
+
+      if (attempts > 1) {
+        _jumpToBottomWhenSettled(maxExtent, attempts - 1);
+      } else {
+        // Final attempt — force jump to whatever the extent is now.
+        _scrollController.jumpTo(
+          _scrollController.position.maxScrollExtent,
+        );
+        if (mounted) {
+          setState(() {
+            _isAtBottom = true;
+            _isInitialLoadComplete = true;
+          });
+        }
+      }
     });
   }
 
   void _scrollToBottomButtonTap() {
-    _scrollToBottom();
+    if (!_scrollController.hasClients) return;
+    // Use the settling approach so lazy-built items are accounted for.
+    _jumpToBottomWhenSettled();
   }
 
   String _formatTimestamp(String? raw) {
