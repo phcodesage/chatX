@@ -102,6 +102,11 @@ class _ChatScreenState extends State<ChatScreen>
   DateTime? _lastTypingUpdate;
   Color _headerColor = const Color(0xFF121212); // Default chat surface color
   bool _showResetButton = false;
+  bool _callInProgressOnOtherDevice = false;
+  Timer? _callInProgressOnOtherDeviceTimer;
+  Route<dynamic>? _activeIncomingCallRoute;
+  int? _activeIncomingCallId;
+  String? _activeIncomingCallRoomId;
 
   // Timestamp visibility toggle (hidden by default like web)
   bool _showTimestamps = false;
@@ -1399,6 +1404,35 @@ class _ChatScreenState extends State<ChatScreen>
       _handleIncomingCallInChat(data);
     });
 
+    // If this account answers on another device, suppress/close the local
+    // incoming modal and show a short header indicator.
+    _socketService.addListener('callAnswered', key, (
+      Map<String, dynamic> data,
+    ) {
+      if (!_isCallAnsweredByCurrentUserForActiveChat(data)) return;
+      if (PresenceService().isCallInProgress) return;
+
+      final matchesActiveIncoming = _isCallAnsweredForActiveIncomingModal(data);
+      if (!matchesActiveIncoming && !PresenceService().isHandlingIncomingCall) {
+        return;
+      }
+
+      _dismissIncomingCallModalIfOpen();
+      PresenceService().isHandlingIncomingCall = false;
+      _showCallInProgressOnOtherDeviceIndicator();
+    });
+
+    // Primary cross-device offer sync: if this account accepted on another
+    // session, close the local incoming modal immediately.
+    _socketService.addListener('callOfferStateSync', key, (
+      Map<String, dynamic> data,
+    ) {
+      if (!_isAcceptedOnOtherDeviceForActiveIncoming(data)) return;
+      _dismissIncomingCallModalIfOpen();
+      PresenceService().isHandlingIncomingCall = false;
+      _showCallInProgressOnOtherDeviceIndicator();
+    });
+
     // FALLBACK: Also listen for crossRoomCallOffer in case backend only sends this event
     // This handles cases where web clients call mobile and backend doesn't send 'incomingCall'
     _socketService.addListener('crossRoomCallOffer', key, (
@@ -1617,6 +1651,13 @@ class _ChatScreenState extends State<ChatScreen>
     // Set up signal handler IMMEDIATELY - before handleIncomingCall
     // This ensures we capture any signals that arrive while setting up
     _socketService.onSignal = (signalData) {
+      if (_isAcceptedOnOtherDeviceCancelSignalForActiveIncoming(signalData)) {
+        debugPrint('📴 Dismissing incoming call modal (accepted on other device via signal)');
+        _dismissIncomingCallModalIfOpen();
+        PresenceService().isHandlingIncomingCall = false;
+        _showCallInProgressOnOtherDeviceIndicator();
+        return;
+      }
       debugPrint('ðŸ“¡ Signal received for cross-room call: $signalData');
       callService.handleSignal(signalData);
     };
@@ -1715,6 +1756,13 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _handleIncomingCallInChat(Map<String, dynamic> data) async {
     if (!mounted) return;
 
+    if (_callInProgressOnOtherDevice) {
+      debugPrint(
+        '⚠️ Ignoring incoming_call — already active on another device',
+      );
+      return;
+    }
+
     // Guard: ignore if already in an active call
     if (PresenceService().isCallInProgress) {
       debugPrint(
@@ -1770,6 +1818,13 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Set up signal handler for WebRTC
     _socketService.onSignal = (signalData) {
+      if (_isAcceptedOnOtherDeviceCancelSignalForActiveIncoming(signalData)) {
+        debugPrint('📴 Dismissing incoming call modal (accepted on other device via signal)');
+        _dismissIncomingCallModalIfOpen();
+        PresenceService().isHandlingIncomingCall = false;
+        _showCallInProgressOnOtherDeviceIndicator();
+        return;
+      }
       debugPrint('ðŸ“¡ Signal received for incoming call: $signalData');
       callService.handleSignal(signalData);
     };
@@ -1791,28 +1846,44 @@ class _ChatScreenState extends State<ChatScreen>
     });
 
     // Show incoming call setup modal with device selection
+    if (_callInProgressOnOtherDevice) {
+      debugPrint('⚠️ Skipping incoming call modal — active on another device');
+      PresenceService().isHandlingIncomingCall = false;
+      return;
+    }
+
+    final route = MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (context) => IncomingCallSetupModal(
+        callerName: callerName,
+        callerId: callerId,
+        callType: callType,
+        callService: callService,
+        onDecline: () {
+          debugPrint('ðŸ“ž Call declined by user');
+          // Clean up listeners
+          _socketService.removeListener('callEnded', callListenerKey);
+          _socketService.removeListener('callDeclined', callListenerKey);
+        },
+      ),
+    );
+
+    _activeIncomingCallRoute = route;
+    _activeIncomingCallId = callId;
+    _activeIncomingCallRoomId = callRoomId;
+
     Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (context) => IncomingCallSetupModal(
-              callerName: callerName,
-              callerId: callerId,
-              callType: callType,
-              callService: callService,
-              onDecline: () {
-                debugPrint('ðŸ“ž Call declined by user');
-                // Clean up listeners
-                _socketService.removeListener('callEnded', callListenerKey);
-                _socketService.removeListener('callDeclined', callListenerKey);
-              },
-            ),
-          ),
-        )
+        .push(route)
         .then((result) {
           // Clean up listeners when modal closes
           _socketService.removeListener('callEnded', callListenerKey);
           _socketService.removeListener('callDeclined', callListenerKey);
+
+          if (identical(_activeIncomingCallRoute, route)) {
+            _activeIncomingCallRoute = null;
+            _activeIncomingCallId = null;
+            _activeIncomingCallRoomId = null;
+          }
 
           if (!mounted) {
             PresenceService().isHandlingIncomingCall = false;
@@ -4933,6 +5004,10 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   String _getHeaderStatusLabel() {
+    if (_callInProgressOnOtherDevice) {
+      return 'In call on another device';
+    }
+
     if (_otherUserTyping) {
       return 'typing...';
     }
@@ -4959,6 +5034,10 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Color _getHeaderStatusColor() {
+    if (_callInProgressOnOtherDevice) {
+      return const Color(0xFFF59E0B);
+    }
+
     final effective = _getEffectivePartnerStatus();
     if (_otherUserTyping || effective == 'online') {
       return const Color(0xFF22C55E);
@@ -5018,6 +5097,102 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ],
       ),
+    );
+  }
+
+  bool _isCallAnsweredByCurrentUserForActiveChat(Map<String, dynamic> data) {
+    final currentUserId = _currentUserId;
+    if (currentUserId == null) return false;
+
+    final callerId = _toInt(data['caller_id']);
+    final calleeId = _toInt(data['callee_id']);
+
+    return callerId == widget.otherUser.id && calleeId == currentUserId;
+  }
+
+  bool _isCallAnsweredForActiveIncomingModal(Map<String, dynamic> data) {
+    final answeredCallId = _toInt(data['call_id'] ?? data['id']);
+    final answeredRoomId = data['call_room_id']?.toString() ?? data['room']?.toString();
+
+    if (_activeIncomingCallId != null && answeredCallId != null) {
+      return _activeIncomingCallId == answeredCallId;
+    }
+
+    if (_activeIncomingCallRoomId != null &&
+        answeredRoomId != null &&
+        answeredRoomId.isNotEmpty) {
+      return _activeIncomingCallRoomId == answeredRoomId;
+    }
+
+    return _activeIncomingCallRoute != null;
+  }
+
+  bool _isAcceptedOnOtherDeviceForActiveIncoming(Map<String, dynamic> data) {
+    final currentUserId = _currentUserId;
+    if (currentUserId == null) return false;
+    if (PresenceService().isCallInProgress) return false;
+
+    final state = (data['state']?.toString() ?? '').toLowerCase();
+    if (state != 'accepted') return false;
+
+    final actorUserId = _toInt(data['actor_user_id']);
+    if (actorUserId != currentUserId) return false;
+
+    return _isCallAnsweredForActiveIncomingModal(data);
+  }
+
+  bool _isAcceptedOnOtherDeviceCancelSignalForActiveIncoming(
+    Map<String, dynamic> signalData,
+  ) {
+    if (PresenceService().isCallInProgress) return false;
+
+    final nestedSignal = signalData['signal'];
+    if (nestedSignal is! Map) return false;
+
+    final type = (nestedSignal['type']?.toString() ?? '').toLowerCase();
+    if (type != 'call-cancelled' && type != 'call_cancelled') return false;
+
+    final acceptedOnOtherDevice = nestedSignal['accepted_on_other_device'] == true;
+    final reason = (nestedSignal['reason']?.toString() ?? '').toLowerCase();
+    if (!acceptedOnOtherDevice && reason != 'accepted_on_other_device') {
+      return false;
+    }
+
+    final payload = <String, dynamic>{
+      'call_room_id': nestedSignal['room'] ?? signalData['room'],
+      'call_id': nestedSignal['call_id'] ?? signalData['call_id'],
+      'id': nestedSignal['id'] ?? signalData['id'],
+    };
+    return _isCallAnsweredForActiveIncomingModal(payload);
+  }
+
+  void _dismissIncomingCallModalIfOpen() {
+    final route = _activeIncomingCallRoute;
+    if (route == null || !mounted) return;
+
+    final navigator = Navigator.of(context);
+    navigator.removeRoute(route);
+    _activeIncomingCallRoute = null;
+    _activeIncomingCallId = null;
+    _activeIncomingCallRoomId = null;
+  }
+
+  void _showCallInProgressOnOtherDeviceIndicator() {
+    _callInProgressOnOtherDeviceTimer?.cancel();
+    if (!mounted) return;
+
+    setState(() {
+      _callInProgressOnOtherDevice = true;
+    });
+
+    _callInProgressOnOtherDeviceTimer = Timer(
+      const Duration(seconds: 12),
+      () {
+        if (!mounted) return;
+        setState(() {
+          _callInProgressOnOtherDevice = false;
+        });
+      },
     );
   }
 
@@ -7891,6 +8066,7 @@ class _ChatScreenState extends State<ChatScreen>
     _typingHideTimer?.cancel();
     _typingUpdateThrottle?.cancel();
     _lastSeenRefreshTimer?.cancel();
+    _callInProgressOnOtherDeviceTimer?.cancel();
 
     // Send typing stop without setState (widget is being disposed)
     _socketService.stopTyping(widget.otherUser.id);

@@ -71,6 +71,8 @@ class SocketService {
   final Map<String, Function(Map<String, dynamic>)> _callInitiatedListeners =
       {};
   final Map<String, Function(Map<String, dynamic>)> _callAnsweredListeners = {};
+  final Map<String, Function(Map<String, dynamic>)>
+  _callOfferStateSyncListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _callDeclinedListeners = {};
   final Map<String, Function(Map<String, dynamic>)> _callEndedListeners = {};
   final Map<String, Function(Map<String, dynamic>)>
@@ -244,6 +246,10 @@ class SocketService {
         break;
       case 'callAnswered':
         _callAnsweredListeners[key] =
+            callback as Function(Map<String, dynamic>);
+        break;
+      case 'callOfferStateSync':
+        _callOfferStateSyncListeners[key] =
             callback as Function(Map<String, dynamic>);
         break;
       case 'callDeclined':
@@ -444,6 +450,9 @@ class SocketService {
       case 'callAnswered':
         _callAnsweredListeners.remove(key);
         break;
+      case 'callOfferStateSync':
+        _callOfferStateSyncListeners.remove(key);
+        break;
       case 'callDeclined':
         _callDeclinedListeners.remove(key);
         break;
@@ -554,6 +563,7 @@ class SocketService {
     _crossRoomCallOfferListeners.remove(key);
     _callInitiatedListeners.remove(key);
     _callAnsweredListeners.remove(key);
+    _callOfferStateSyncListeners.remove(key);
     _callDeclinedListeners.remove(key);
     _callEndedListeners.remove(key);
     _connectionChangedListeners.remove(key);
@@ -735,6 +745,9 @@ class SocketService {
   set onCallAnswered(Function(Map<String, dynamic>)? cb) => cb != null
       ? _callAnsweredListeners[_dk] = cb
       : _callAnsweredListeners.remove(_dk);
+    set onCallOfferStateSync(Function(Map<String, dynamic>)? cb) => cb != null
+      ? _callOfferStateSyncListeners[_dk] = cb
+      : _callOfferStateSyncListeners.remove(_dk);
   set onCallDeclined(Function(Map<String, dynamic>)? cb) => cb != null
       ? _callDeclinedListeners[_dk] = cb
       : _callDeclinedListeners.remove(_dk);
@@ -1227,6 +1240,12 @@ class SocketService {
     _socket!.on('call_answered', (data) {
       debugPrint('✅ Call answered: $data');
       _broadcast(_callAnsweredListeners, data as Map<String, dynamic>);
+    });
+
+    // Cross-device call offer state sync (accepted/declined/ended)
+    _socket!.on('call_offer_state_sync', (data) {
+      debugPrint('🔁 Call offer state sync: $data');
+      _broadcast(_callOfferStateSyncListeners, data as Map<String, dynamic>);
     });
 
     // Call declined

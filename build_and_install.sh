@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_NAME="com.example.flutter_messenger_v2"
-APK_PATH="$SCRIPT_DIR/build/app/outputs/flutter-apk/app-debug.apk"
+APK_PATH="$SCRIPT_DIR/build/app/outputs/flutter-apk/app-release.apk"
 SKIP_INSTALL=false
 START_LOGCAT=false
 
@@ -42,7 +42,7 @@ done
 
 print_header() {
   printf '========================================\n'
-  printf 'Flutter Debug Build and Install Script\n'
+  printf 'Flutter Release Build and Install Script\n'
   printf '========================================\n\n'
 }
 
@@ -118,11 +118,11 @@ flutter pub get
 
 echo
 echo "========================================"
-echo "Building Debug APK..."
+echo "Building Release APK..."
 echo "========================================"
 
 SECONDS=0
-flutter build apk --debug
+flutter build apk --release
 build_time="$SECONDS"
 
 if [[ ! -f "$APK_PATH" ]]; then
@@ -172,7 +172,7 @@ echo
 echo "========================================"
 echo "SUCCESS"
 echo "========================================"
-echo "Debug APK built successfully."
+echo "Release APK built successfully."
 echo "APK location: $APK_PATH"
 echo "Size: ${apk_size_mb} MB"
 echo "Build time: ${build_time} seconds"

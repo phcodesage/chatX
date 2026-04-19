@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
@@ -55,12 +56,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Timer? _searchDebounceTimer;
   StreamSubscription<List<SharedMediaItem>>? _shareIntentSubscription;
   StreamSubscription<int>? _shortcutLaunchSubscription;
+  StreamSubscription<RemoteMessage>? _fcmForegroundSubscription;
   Future<int?> _currentUserId = StorageService.getUserId();
   bool _isSharePickerOpen = false;
   bool _hasAiSession = false;
   String? _aiLastMessageTime;
   String? _aiLastMessagePreview;
+  final Map<String, DateTime> _recentRealtimeEventKeys = {};
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
+  Route<dynamic>? _activeIncomingCallRoute;
+  int? _activeIncomingCallId;
+  String? _activeIncomingCallRoomId;
 
   // Typing indicator: maps userId → auto-clear timer
   final Map<int, Timer> _typingUsers = {};
@@ -89,6 +95,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _loadAdminStatus();
     _searchController.addListener(_onSearchQueryChanged);
     _setupRealtimeListeners();
+    _setupFcmForegroundListener();
     _setupShareIntentListener();
     _setupShortcutLaunchListener();
     // Periodically refresh "last seen" relative labels (like the web app does)
@@ -192,6 +199,24 @@ class _LobbyScreenState extends State<LobbyScreen> {
       Map<String, dynamic> data,
     ) {
       _handleIncomingCall(data);
+    });
+
+    // If this account answers on another device/session, close incoming modal.
+    _socketService.addListener('callAnswered', key, (
+      Map<String, dynamic> data,
+    ) {
+      if (!_isAcceptedOnOtherDeviceForActiveIncoming(data)) return;
+      _dismissIncomingCallModalIfOpen();
+      PresenceService().isHandlingIncomingCall = false;
+    });
+
+    // Primary cross-device sync event for offer dismissal.
+    _socketService.addListener('callOfferStateSync', key, (
+      Map<String, dynamic> data,
+    ) {
+      if (!_isAcceptedOnOtherDeviceForActiveIncoming(data)) return;
+      _dismissIncomingCallModalIfOpen();
+      PresenceService().isHandlingIncomingCall = false;
     });
 
     // FALLBACK: Also listen for crossRoomCallOffer in case backend only sends this event
@@ -496,6 +521,40 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
   }
 
+  void _setupFcmForegroundListener() {
+    _fcmForegroundSubscription?.cancel();
+    _fcmForegroundSubscription = FirebaseMessaging.onMessage.listen((
+      RemoteMessage message,
+    ) {
+      if (!mounted) return;
+
+      final data = message.data;
+      if (data.isEmpty) return;
+
+      final type = data['type']?.toString().toLowerCase();
+      if (type == 'call' || type == 'color_change') {
+        return;
+      }
+
+      if (type == 'doorbell') {
+        _handleDoorbellRing(data);
+        return;
+      }
+
+      if (data['file_name'] != null || type == 'file') {
+        _handleFileMessage(data);
+        return;
+      }
+
+      if (data['duration'] != null || type == 'voice') {
+        _handleVoiceMessage(data);
+        return;
+      }
+
+      _handleNewMessage(data);
+    });
+  }
+
   void _setupShareIntentListener() {
     _shareIntentSubscription?.cancel();
     _shareIntentSubscription = ShareIntentService.instance.sharedItemsStream
@@ -642,6 +701,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // Set up signal handler IMMEDIATELY - before handleIncomingCall
     // This ensures we capture any signals that arrive while setting up
     _socketService.onSignal = (signalData) {
+      if (_isAcceptedOnOtherDeviceCancelSignalForActiveIncoming(signalData)) {
+        debugPrint('📴 Dismissing incoming call modal (accepted on other device via signal)');
+        _dismissIncomingCallModalIfOpen();
+        PresenceService().isHandlingIncomingCall = false;
+        return;
+      }
       debugPrint('📡 Signal received for cross-room call: $signalData');
       callService.handleSignal(signalData);
     };
@@ -679,34 +744,44 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
 
     // Show incoming call setup modal with device selection
+    final route = MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (context) => IncomingCallSetupModal(
+        callerName: callerUsername,
+        callerId: callerId,
+        callType: callType,
+        callService: callService,
+        onDecline: () {
+          debugPrint('📞 Call declined by user');
+          _socketService.stopSignalBuffering();
+          _socketService.removeListener(
+            'callEnded',
+            crossRoomListenerKey,
+          );
+          _socketService.removeListener(
+            'callDeclined',
+            crossRoomListenerKey,
+          );
+        },
+      ),
+    );
+
+    _activeIncomingCallRoute = route;
+    _activeIncomingCallId = syntheticCallData['id'] as int?;
+    _activeIncomingCallRoomId = room;
+
     Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (context) => IncomingCallSetupModal(
-              callerName: callerUsername,
-              callerId: callerId,
-              callType: callType,
-              callService: callService,
-              onDecline: () {
-                debugPrint('📞 Call declined by user');
-                _socketService.stopSignalBuffering();
-                _socketService.removeListener(
-                  'callEnded',
-                  crossRoomListenerKey,
-                );
-                _socketService.removeListener(
-                  'callDeclined',
-                  crossRoomListenerKey,
-                );
-              },
-            ),
-          ),
-        )
+        .push(route)
         .then((result) {
           // Clean up listeners when modal closes
           _socketService.removeListener('callEnded', crossRoomListenerKey);
           _socketService.removeListener('callDeclined', crossRoomListenerKey);
+
+          if (identical(_activeIncomingCallRoute, route)) {
+            _activeIncomingCallRoute = null;
+            _activeIncomingCallId = null;
+            _activeIncomingCallRoomId = null;
+          }
 
           if (result is Map &&
               (result['result'] == 'accepted' ||
@@ -790,6 +865,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     // Set up signal handler for WebRTC — buffered signals are replayed immediately
     _socketService.onSignal = (signalData) {
+      if (_isAcceptedOnOtherDeviceCancelSignalForActiveIncoming(signalData)) {
+        debugPrint('📴 Dismissing incoming call modal (accepted on other device via signal)');
+        _dismissIncomingCallModalIfOpen();
+        PresenceService().isHandlingIncomingCall = false;
+        return;
+      }
       debugPrint('📡 Signal received for incoming call: $signalData');
       callService.handleSignal(signalData);
     };
@@ -811,28 +892,38 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
 
     // Show incoming call setup modal with device selection
+    final route = MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (context) => IncomingCallSetupModal(
+        callerName: callerName,
+        callerId: callerId,
+        callType: callType,
+        callService: callService,
+        onDecline: () {
+          debugPrint('📞 Call declined by user');
+          // Clean up listeners
+          _socketService.removeListener('callEnded', callListenerKey);
+          _socketService.removeListener('callDeclined', callListenerKey);
+        },
+      ),
+    );
+
+    _activeIncomingCallRoute = route;
+    _activeIncomingCallId = callId;
+    _activeIncomingCallRoomId = callRoomId;
+
     Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (context) => IncomingCallSetupModal(
-              callerName: callerName,
-              callerId: callerId,
-              callType: callType,
-              callService: callService,
-              onDecline: () {
-                debugPrint('📞 Call declined by user');
-                // Clean up listeners
-                _socketService.removeListener('callEnded', callListenerKey);
-                _socketService.removeListener('callDeclined', callListenerKey);
-              },
-            ),
-          ),
-        )
+        .push(route)
         .then((result) {
           // Clean up listeners when modal closes
           _socketService.removeListener('callEnded', callListenerKey);
           _socketService.removeListener('callDeclined', callListenerKey);
+
+          if (identical(_activeIncomingCallRoute, route)) {
+            _activeIncomingCallRoute = null;
+            _activeIncomingCallId = null;
+            _activeIncomingCallRoomId = null;
+          }
 
           if (result is Map &&
               (result['result'] == 'accepted' ||
@@ -860,10 +951,175 @@ class _LobbyScreenState extends State<LobbyScreen> {
         });
   }
 
+  bool _isCallAnsweredForActiveIncomingModal(Map<String, dynamic> data) {
+    final answeredCallId = _toInt(data['call_id'] ?? data['id']);
+    final answeredRoomId =
+        data['call_room_id']?.toString() ?? data['room']?.toString();
+
+    if (_activeIncomingCallId != null && answeredCallId != null) {
+      return _activeIncomingCallId == answeredCallId;
+    }
+
+    if (_activeIncomingCallRoomId != null &&
+        answeredRoomId != null &&
+        answeredRoomId.isNotEmpty) {
+      return _activeIncomingCallRoomId == answeredRoomId;
+    }
+
+    return _activeIncomingCallRoute != null;
+  }
+
+  bool _isAcceptedOnOtherDeviceForActiveIncoming(Map<String, dynamic> data) {
+    final currentUserId = _socketService.currentUserId;
+    if (currentUserId == null) return false;
+    if (PresenceService().isCallInProgress) return false;
+
+    final state = (data['state']?.toString() ?? '').toLowerCase();
+    if (state.isNotEmpty && state != 'accepted') return false;
+
+    final actorUserId = _toInt(data['actor_user_id']);
+    if (actorUserId != null && actorUserId != currentUserId) return false;
+
+    final calleeId = _toInt(data['callee_id']);
+    if (calleeId != null && calleeId != currentUserId) return false;
+
+    return _isCallAnsweredForActiveIncomingModal(data);
+  }
+
+  bool _isAcceptedOnOtherDeviceCancelSignalForActiveIncoming(
+    Map<String, dynamic> signalData,
+  ) {
+    if (PresenceService().isCallInProgress) return false;
+
+    final nestedSignal = signalData['signal'];
+    if (nestedSignal is! Map) return false;
+
+    final type = (nestedSignal['type']?.toString() ?? '').toLowerCase();
+    if (type != 'call-cancelled' && type != 'call_cancelled') return false;
+
+    final acceptedOnOtherDevice =
+        nestedSignal['accepted_on_other_device'] == true;
+    final reason = (nestedSignal['reason']?.toString() ?? '').toLowerCase();
+    if (!acceptedOnOtherDevice && reason != 'accepted_on_other_device') {
+      return false;
+    }
+
+    final payload = <String, dynamic>{
+      'call_room_id': nestedSignal['room'] ?? signalData['room'],
+      'call_id': nestedSignal['call_id'] ?? signalData['call_id'],
+      'id': nestedSignal['id'] ?? signalData['id'],
+    };
+    return _isCallAnsweredForActiveIncomingModal(payload);
+  }
+
+  void _dismissIncomingCallModalIfOpen() {
+    final route = _activeIncomingCallRoute;
+    if (route == null || !mounted) return;
+
+    final navigator = Navigator.of(context);
+    navigator.removeRoute(route);
+    _activeIncomingCallRoute = null;
+    _activeIncomingCallId = null;
+    _activeIncomingCallRoomId = null;
+  }
+
   void _handleDoorbellRing(Map<String, dynamic> data) {
     // Doorbell ring sound is already played via the socket service
     // No modal needed - the notification sound is sufficient
+    if (_isDuplicateRealtimeEvent(data)) return;
+
+    final senderId = _toInt(data['sender_id']);
+    if (senderId == null) return;
+
+    final createdAt = _extractEventTimestamp(data) ?? DateTime.now().toIso8601String();
+    const doorbellPreview = 'sent a notification';
+
+    setState(() {
+      final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
+      if (userIndex == -1) return;
+
+      final user = _lobbyUsers[userIndex];
+      final updatedUser = LobbyUser(
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        fullName: user.fullName,
+        avatarUrl: user.avatarUrl,
+        bio: user.bio,
+        status: user.status,
+        statusMessage: user.statusMessage,
+        lastSeen: user.lastSeen,
+        isOnline: user.isOnline,
+        isAdmin: user.isAdmin,
+        timezone: user.timezone,
+        unreadCount: user.unreadCount + 1,
+        isContact: user.isContact,
+        isAdminUser: user.isAdminUser,
+        lastMessage: doorbellPreview,
+        lastMessageTime: createdAt,
+        lastMessageIsFromMe: false,
+      );
+
+      _lobbyUsers[userIndex] = updatedUser;
+      _lobbyUsers.removeAt(userIndex);
+      _lobbyUsers.insert(0, updatedUser);
+      _filterUsers();
+    });
+
     debugPrint('Doorbell ring received from ${data['sender_name']}');
+  }
+
+  bool _isDuplicateRealtimeEvent(Map<String, dynamic> data) {
+    final now = DateTime.now();
+    _recentRealtimeEventKeys.removeWhere(
+      (_, seenAt) => now.difference(seenAt) > const Duration(seconds: 30),
+    );
+
+    final key = _buildRealtimeEventKey(data);
+    if (key == null) {
+      return false;
+    }
+
+    if (_recentRealtimeEventKeys.containsKey(key)) {
+      return true;
+    }
+
+    _recentRealtimeEventKeys[key] = now;
+    return false;
+  }
+
+  String? _buildRealtimeEventKey(Map<String, dynamic> data) {
+    final explicitId =
+        data['message_id'] ?? data['id'] ?? data['event_id'] ?? data['notification_id'];
+    final normalizedType = _normalizedRealtimeType(data);
+
+    if (explicitId != null) {
+      return '$normalizedType:$explicitId';
+    }
+
+    final senderId = data['sender_id']?.toString() ?? data['user_id']?.toString() ?? '';
+    final groupId = data['group_id']?.toString() ?? '';
+    final timestamp = _extractEventTimestamp(data) ?? '';
+    final content =
+        data['content']?.toString() ?? data['file_name']?.toString() ?? data['duration']?.toString() ?? '';
+
+    if (senderId.isEmpty && groupId.isEmpty && timestamp.isEmpty && content.isEmpty) {
+      return null;
+    }
+
+    return '$normalizedType:$senderId:$groupId:$timestamp:$content';
+  }
+
+  String _normalizedRealtimeType(Map<String, dynamic> data) {
+    final type = data['type']?.toString().toLowerCase();
+    if (type != null && type.isNotEmpty) {
+      return type;
+    }
+    if (data['file_name'] != null) return 'file';
+    if (data['duration'] != null) return 'voice';
+    return 'message';
   }
 
   int? _toInt(dynamic value) {
@@ -917,6 +1173,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _handleNewMessage(Map<String, dynamic> data) {
+    if (_isDuplicateRealtimeEvent(data)) return;
+
     final senderId = _toInt(data['sender_id']);
     if (senderId == null) return;
     final content = data['content'] as String?;
@@ -966,6 +1224,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _handleSentMessage(Map<String, dynamic> data) {
+    if (_isDuplicateRealtimeEvent(data)) return;
+
     final senderId = _toInt(data['sender_id']);
     final currentUserId = _socketService.currentUserId;
     final recipientId =
@@ -1022,6 +1282,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _handleFileMessage(Map<String, dynamic> data) {
+    if (_isDuplicateRealtimeEvent(data)) return;
+
     final senderId = _toInt(data['sender_id']);
     if (senderId == null) return;
     final fileName = data['file_name'] as String?;
@@ -1066,6 +1328,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _handleVoiceMessage(Map<String, dynamic> data) {
+    if (_isDuplicateRealtimeEvent(data)) return;
+
     final senderId = _toInt(data['sender_id']);
     if (senderId == null) return;
     final duration = data['duration'] as int?;
@@ -1210,6 +1474,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _typingUsers.clear();
     _shareIntentSubscription?.cancel();
     _shortcutLaunchSubscription?.cancel();
+    _fcmForegroundSubscription?.cancel();
     // Clear all lobby socket listeners to prevent memory leaks
     _socketService.removeListenersForKey('lobby');
     super.dispose();

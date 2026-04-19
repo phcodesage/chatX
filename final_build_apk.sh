@@ -86,6 +86,14 @@ printf 'Version: %s\n' "$raw_version"
 printf 'Target file: %s\n' "$target_file_name"
 printf 'Destination: %s\n\n' "$DESTINATION_DIR"
 
+echo "Updating API config to production URL..."
+CONFIG_FILE="$SCRIPT_DIR/lib/config/api_config.dart"
+if [[ -f "$CONFIG_FILE" ]]; then
+  sed -i '' -E "s|^([[:space:]]*)defaultValue:.*|\1defaultValue: 'https://web.flask-call-app.site/',|g" "$CONFIG_FILE"
+else
+  echo "Warning: lib/config/api_config.dart not found."
+fi
+
 echo "Running Flutter release build..."
 flutter clean
 flutter pub get

@@ -1,10 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
@@ -806,20 +811,234 @@ class _AiChatScreenState extends State<AiChatScreen> {
     );
   }
 
+  final FlutterLocalNotificationsPlugin _localNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+  bool _localNotificationsReady = false;
+
   Future<void> _exportChat() async {
     if (_messages.isEmpty) {
       _showInfo('No AI messages to export yet.');
       return;
     }
 
-    final transcript = _messages.map((m) {
-      final role = m['role'] == 'user' ? 'You' : 'AI';
-      final ts = _formatTimestamp(m['timestamp']);
-      return '[$ts] $role: ${m['content'] ?? ''}';
-    }).join('\n\n');
+    try {
+      final hasStorageAccess = await _requestStorageAccessForFileOps();
+      if (!hasStorageAccess) return;
 
-    await Clipboard.setData(ClipboardData(text: transcript));
-    _showInfo('AI chat copied to clipboard.');
+      // Show loading indicator
+      _showInfo('Preparing AI chat export...');
+
+      // Build the export content
+      final buffer = StringBuffer();
+
+      buffer.writeln('AI Chat Export');
+      buffer.writeln('Exported on: ${DateTime.now().toString()}');
+      buffer.writeln('=' * 50);
+      buffer.writeln();
+
+      String? lastDate;
+      for (final message in _messages) {
+        // Add date separator if day changed
+        final messageDate = _formatExportDate(message['timestamp'] ?? '');
+        if (messageDate != lastDate && messageDate.isNotEmpty) {
+          buffer.writeln();
+          buffer.writeln('--- $messageDate ---');
+          buffer.writeln();
+          lastDate = messageDate;
+        }
+
+        final role = message['role'] == 'user' ? 'You' : 'AI';
+        final time = _formatExportTime(message['timestamp'] ?? '');
+        final content = message['content'] ?? '';
+
+        buffer.writeln('[$time] $role: $content');
+      }
+
+      buffer.writeln();
+      buffer.writeln('=' * 50);
+      buffer.writeln('End of export - ${_messages.length} messages');
+
+      // Choose folder first, then filename.
+      final defaultFileName =
+          'ai_chat_${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year}.txt';
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Select folder for AI chat export',
+      );
+
+      if (selectedDirectory == null || selectedDirectory.isEmpty) {
+        _showInfo('Export cancelled');
+        return;
+      }
+
+      final normalizedFileName = _normalizeTextFileName(defaultFileName);
+      final savePath =
+          '$selectedDirectory${Platform.pathSeparator}$normalizedFileName';
+
+      final exportContent = buffer.toString();
+      String savedFileName = normalizedFileName;
+
+      try {
+        final exportFile = File(savePath);
+        await exportFile.writeAsString(exportContent, flush: true);
+      } on FileSystemException catch (e) {
+        debugPrint('Direct export write failed, using save dialog fallback: $e');
+
+        final fallbackPath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save AI Chat Export',
+          fileName: normalizedFileName,
+          type: FileType.custom,
+          allowedExtensions: ['txt'],
+          bytes: Uint8List.fromList(exportContent.codeUnits),
+        );
+
+        if (fallbackPath == null) {
+          _showInfo('Export cancelled');
+          return;
+        }
+
+        final fallbackName = fallbackPath.split(Platform.pathSeparator).last;
+        if (fallbackName.isNotEmpty) {
+          savedFileName = fallbackName;
+        }
+      }
+
+      await _showLocalFileOperationNotification(
+        title: 'AI Chat Export Saved',
+        body: savedFileName,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Chat saved to: $savedFileName'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(
+              top: 10,
+              left: 16,
+              right: 16,
+              bottom: MediaQuery.of(context).size.height - 150,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error exporting AI chat: $e');
+      _showError('Failed to export chat: $e');
+    }
+  }
+
+  String _normalizeTextFileName(String value) {
+    final sanitized = value
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final fallback = sanitized.isEmpty ? 'ai_chat_export' : sanitized;
+    return fallback.toLowerCase().endsWith('.txt') ? fallback : '$fallback.txt';
+  }
+
+  Future<bool> _requestStorageAccessForFileOps() async {
+    final storageStatus = await Permission.storage.request();
+    if (storageStatus.isGranted) return true;
+
+    final manageStatus = await Permission.manageExternalStorage.request();
+    if (manageStatus.isGranted) return true;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Storage permission required to save files'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            top: 10,
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.of(context).size.height - 150,
+          ),
+        ),
+      );
+    }
+    return false;
+  }
+
+  Future<void> _ensureLocalNotificationsReady() async {
+    if (_localNotificationsReady) return;
+
+    const androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosSettings = DarwinInitializationSettings();
+    const settings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+
+    await _localNotificationsPlugin.initialize(settings);
+    _localNotificationsReady = true;
+  }
+
+  Future<void> _showLocalFileOperationNotification({
+    required String title,
+    required String body,
+  }) async {
+    try {
+      await _ensureLocalNotificationsReady();
+      const androidDetails = AndroidNotificationDetails(
+        'ai_chat_file_ops',
+        'AI Chat File Operations',
+        channelDescription: 'Notifications for AI chat exports',
+        importance: Importance.high,
+        priority: Priority.high,
+      );
+      const iosDetails = DarwinNotificationDetails();
+      const details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      await _localNotificationsPlugin.show(
+        DateTime.now().millisecondsSinceEpoch % 100000,
+        title,
+        body,
+        details,
+      );
+    } catch (e) {
+      debugPrint('Error showing local file-operation notification: $e');
+    }
+  }
+
+  /// Format date for export separator
+  String _formatExportDate(String raw) {
+    if (raw.isEmpty) return '';
+    try {
+      final date = DateTime.parse(raw).toLocal();
+      const weekdays = [
+        'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+        'Friday', 'Saturday', 'Sunday',
+      ];
+      const months = [
+        'January', 'February', 'March', 'April',
+        'May', 'June', 'July', 'August',
+        'September', 'October', 'November', 'December',
+      ];
+      return '${weekdays[date.weekday - 1]}, ${months[date.month - 1]} ${date.day}, ${date.year}';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Format time for export message
+  String _formatExportTime(String raw) {
+    if (raw.isEmpty) return '';
+    try {
+      final date = DateTime.parse(raw).toLocal();
+      final hour = date.hour.toString().padLeft(2, '0');
+      final minute = date.minute.toString().padLeft(2, '0');
+      return '$hour:$minute';
+    } catch (_) {
+      return '';
+    }
   }
 
   Future<void> _deleteMessages() async {
@@ -916,6 +1135,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(
+          top: 10,
+          left: 16,
+          right: 16,
+          bottom: MediaQuery.of(context).size.height - 150,
+        ),
       ),
     );
   }
@@ -926,6 +1152,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
       SnackBar(
         content: Text(message),
         backgroundColor: const Color(0xFF252542),
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(
+          top: 10,
+          left: 16,
+          right: 16,
+          bottom: MediaQuery.of(context).size.height - 150,
+        ),
       ),
     );
   }
