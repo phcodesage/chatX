@@ -117,6 +117,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       '🎨 [INIT] Starting initialization for group ${widget.group.id}',
     );
     _currentUserId = await StorageService.getUserId();
+    _currentUserIsAdmin = await StorageService.getIsAdmin();
     debugPrint('🎨 [INIT] Current user ID: $_currentUserId');
     await _loadMessages();
     await _loadSavedGroupChatColor(); // Load saved color
@@ -538,7 +539,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     if (mounted) {
       setState(() {
-        _messages.removeWhere((m) => m.id == messageId);
+        if (_currentUserIsAdmin) {
+          _messages.removeWhere((m) => m.id == messageId);
+        } else {
+          final index = _messages.indexWhere((m) => m.id == messageId);
+          if (index != -1) {
+            _messages[index] = GroupMessage.fromJson({
+              ..._messages[index].toJson(),
+              'is_deleted': true,
+              'content': 'This message was deleted',
+              'file_url': null,
+              'file_name': null,
+            });
+          }
+        }
       });
     }
   }
@@ -1222,7 +1236,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
       if (mounted) {
         setState(() {
-          _messages.removeWhere((m) => m.id == message.id);
+          if (_currentUserIsAdmin) {
+            _messages.removeWhere((m) => m.id == message.id);
+          } else {
+            final index = _messages.indexWhere((m) => m.id == message.id);
+            if (index != -1) {
+              _messages[index] = GroupMessage.fromJson({
+                ..._messages[index].toJson(),
+                'is_deleted': true,
+                'content': 'This message was deleted',
+                'file_url': null,
+                'file_name': null,
+              });
+            }
+          }
         });
       }
     } catch (e) {
@@ -1528,9 +1555,37 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   Widget _buildMessageBubble(GroupMessage message) {
-    // Deleted messages leave no trace
+    // Deleted messages: admins see nothing, normal users see a placeholder
     if (message.isDeleted) {
-      return const SizedBox.shrink();
+      if (_currentUserIsAdmin) {
+        return const SizedBox.shrink();
+      }
+      final isSentByMe = message.senderId == _currentUserId;
+      return Align(
+        alignment:
+            isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E293B),
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(16),
+              topRight: const Radius.circular(16),
+              bottomLeft: Radius.circular(isSentByMe ? 16 : 4),
+              bottomRight: Radius.circular(isSentByMe ? 4 : 16),
+            ),
+          ),
+          child: const Text(
+            'This message was deleted',
+            style: TextStyle(
+              color: Colors.white54,
+              fontStyle: FontStyle.italic,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      );
     }
 
     // Handle system messages (doorbell notifications from others, etc.)

@@ -68,6 +68,8 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   // Call duration
   Timer? _durationTimer;
   int _callDuration = 0;
+  DateTime? _connectedAtUtc;
+  late DateTime _durationFallbackStartUtc;
 
   // Prevent multiple pops
   bool _isEnding = false;
@@ -119,6 +121,8 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   void initState() {
     super.initState();
     _initTime = DateTime.now();
+    _durationFallbackStartUtc = DateTime.now().toUtc();
+    _connectedAtUtc = widget.callService.connectedAt?.toUtc();
     debugPrint(
       '📞 ConnectedCallScreen: initState called for ${widget.callType} call with ${widget.remoteName}',
     );
@@ -433,11 +437,27 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         debugPrint(
           '📞 ConnectedCallScreen: Call state is connected - screen should stay visible',
         );
+        if (_connectedAtUtc == null) {
+          final fromService = widget.callService.connectedAt?.toUtc();
+          if (fromService != null && mounted) {
+            setState(() {
+              _connectedAtUtc = fromService;
+            });
+          }
+        }
       } else {
         debugPrint(
           '📞 ConnectedCallScreen: Call state changed to $state - monitoring',
         );
       }
+    };
+
+    widget.callService.onConnectedAtChanged = (connectedAt) {
+      final utc = connectedAt?.toUtc();
+      if (!mounted || utc == null) return;
+      setState(() {
+        _connectedAtUtc = utc;
+      });
     };
 
     // Listen for screen share changes (local or remote)
@@ -615,8 +635,11 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   void _startCallDurationTimer() {
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
+        final baseline = _connectedAtUtc ?? widget.callService.connectedAt?.toUtc();
+        final start = baseline ?? _durationFallbackStartUtc;
+        final elapsedSeconds = DateTime.now().toUtc().difference(start).inSeconds;
         setState(() {
-          _callDuration++;
+          _callDuration = elapsedSeconds < 0 ? 0 : elapsedSeconds;
         });
       }
     });
@@ -955,6 +978,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     socketService.removeListener('callEnded', _listenerKey);
     socketService.removeListener('callDeclined', _listenerKey);
     widget.callService.onDataChannelMessage = null;
+    widget.callService.onConnectedAtChanged = null;
 
     _localRenderer.dispose();
     _remoteRenderer.dispose();

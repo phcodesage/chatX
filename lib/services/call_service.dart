@@ -57,6 +57,8 @@ class CallService {
   int? _remoteUserId;
   String? _callRoomId;
   String? _callType; // 'video' or 'audio'
+  DateTime? _connectedAt;
+  int? _connectedAtMs;
 
   // Callbacks
   Function(CallState state)? onCallStateChanged;
@@ -67,6 +69,7 @@ class CallService {
   Function(bool isSharing)? onScreenShareChanged;
   Function(MediaStream stream)? onRemoteScreenShare;
   Function(String message)? onDataChannelMessage;
+  Function(DateTime? connectedAt)? onConnectedAtChanged;
 
   // ICE servers
   List<Map<String, dynamic>> _iceServers = [];
@@ -88,6 +91,8 @@ class CallService {
   MediaStream? get remoteStream => _remoteStream;
   bool get isScreenSharing => _isScreenSharing;
   MediaStream? get screenStream => _screenStream;
+  DateTime? get connectedAt => _connectedAt;
+  int? get connectedAtMs => _connectedAtMs;
 
   /// Initialize the call service and set up socket listeners
   Future<void> initialize() async {
@@ -227,6 +232,94 @@ class CallService {
       }
       onScreenShareChanged?.call(false);
     });
+
+    socket.addListener('callAnswered', 'call_service_call_answered', (
+      Map<String, dynamic> data,
+    ) {
+      if (!_isEventForCurrentCall(data)) return;
+      _consumeConnectedTimestamp(data, source: 'callAnswered');
+    });
+
+    socket.addListener('callSessionState', 'call_service_call_session_state', (
+      Map<String, dynamic> data,
+    ) {
+      if (!_isEventForCurrentCall(data)) return;
+
+      final state =
+          (data['state']?.toString() ?? data['status']?.toString() ?? '')
+              .toLowerCase();
+      if (state == 'accepted' || state == 'connected') {
+        _consumeConnectedTimestamp(data, source: 'callSessionState:$state');
+      }
+    });
+  }
+
+  bool _isEventForCurrentCall(Map<String, dynamic> data) {
+    final eventCallId = _toInt(data['call_id'] ?? data['id']);
+    if (_callId != null && eventCallId != null) {
+      return _callId == eventCallId;
+    }
+
+    final eventRoom =
+        data['call_room_id']?.toString() ?? data['room']?.toString();
+    if (_callRoomId != null &&
+        _callRoomId!.isNotEmpty &&
+        eventRoom != null &&
+        eventRoom.isNotEmpty) {
+      return _callRoomId == eventRoom;
+    }
+
+    // If neither call_id nor room is present, accept while this service owns an active call.
+    return _callState == CallState.connecting || _callState == CallState.connected;
+  }
+
+  int? _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  DateTime? _parseConnectedIso(dynamic value) {
+    final raw = value?.toString().trim();
+    if (raw == null || raw.isEmpty || raw.toLowerCase() == 'null') {
+      return null;
+    }
+    return DateTime.tryParse(raw)?.toUtc();
+  }
+
+  void _setConnectedAt(DateTime connectedAtUtc, {required String source}) {
+    final ms = connectedAtUtc.millisecondsSinceEpoch;
+    final didChange = _connectedAtMs == null || (_connectedAtMs! - ms).abs() > 999;
+
+    _connectedAt = connectedAtUtc;
+    _connectedAtMs = ms;
+
+    if (didChange) {
+      debugPrint('⏱️ Central call connectedAt set from $source: $_connectedAt');
+      onConnectedAtChanged?.call(_connectedAt);
+    }
+  }
+
+  void _consumeConnectedTimestamp(
+    Map<String, dynamic> data, {
+    required String source,
+  }) {
+    final connectedAtMs =
+        _toInt(data['connected_at_ms'] ?? data['connectedAtMs'] ?? data['call_start_time']);
+    if (connectedAtMs != null && connectedAtMs > 0) {
+      _setConnectedAt(
+        DateTime.fromMillisecondsSinceEpoch(connectedAtMs, isUtc: true),
+        source: '$source(ms)',
+      );
+      return;
+    }
+
+    final connectedAtIso =
+        _parseConnectedIso(data['connected_at'] ?? data['connectedAt'] ?? data['call_connected_at']);
+    if (connectedAtIso != null) {
+      _setConnectedAt(connectedAtIso, source: '$source(iso)');
+    }
   }
 
   bool _isScreenShareEventForCurrentCall(Map<String, dynamic> data) {
@@ -389,6 +482,9 @@ class CallService {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
         _callState = CallState.connected;
         onCallStateChanged?.call(_callState);
+        if (_connectedAt == null) {
+          _setConnectedAt(DateTime.now().toUtc(), source: 'ice-connected-fallback');
+        }
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
         debugPrint('❌ ICE connection failed — ending call');
         _callState = CallState.failed;
@@ -651,6 +747,11 @@ class CallService {
       case 'call_cancelled':
         debugPrint('📴 Received call termination signal: $type');
         handleCallEnded();
+        break;
+      case 'call-connected':
+      case 'call_connected':
+        debugPrint('✅ Received call connected signal: $signal');
+        _consumeConnectedTimestamp(signal, source: 'signal:$type');
         break;
       case 'screen-share-started':
         debugPrint('🖥️ Remote user started screen sharing');
@@ -1186,6 +1287,11 @@ class CallService {
       'screenShareStopped',
       _screenShareListenerKey,
     );
+    _socketService.removeListener('callAnswered', 'call_service_call_answered');
+    _socketService.removeListener(
+      'callSessionState',
+      'call_service_call_session_state',
+    );
 
     // Close data channel
     _dataChannel?.close();
@@ -1212,6 +1318,8 @@ class CallService {
     _remoteUserId = null;
     _callRoomId = null;
     _callType = null;
+    _connectedAt = null;
+    _connectedAtMs = null;
 
     // Reset ICE candidate queuing state
     _remoteDescriptionSet = false;
@@ -1233,6 +1341,11 @@ class CallService {
     _socketService.removeListener(
       'screenShareStopped',
       _screenShareListenerKey,
+    );
+    _socketService.removeListener('callAnswered', 'call_service_call_answered');
+    _socketService.removeListener(
+      'callSessionState',
+      'call_service_call_session_state',
     );
 
     // DON'T clear onCallStateChanged here - let the UI handle the state change first
@@ -1294,6 +1407,8 @@ class CallService {
     _remoteUserId = null;
     _callRoomId = null;
     _callType = null;
+    _connectedAt = null;
+    _connectedAtMs = null;
 
     // Reset ICE candidate queuing state
     _remoteDescriptionSet = false;

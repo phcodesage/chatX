@@ -9824,35 +9824,39 @@ class _ChatScreenState extends State<ChatScreen>
   void _deleteMessage(Message message) {
     _socketService.deleteMessage(message.id);
 
-    // Optimistically update the message locally (mark as deleted)
+    // Admins leave no trace; regular users see a deleted placeholder
     setState(() {
       final index = _messages.indexWhere((m) => m.id == message.id);
       if (index != -1) {
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: 'This message was deleted',
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: message.fileUrl,
-          fileName: message.fileName,
-          fileSize: message.fileSize,
-          fileType: message.fileType,
-          isDeleted: true,
-        );
-        _messages[index] = updatedMessage;
+        if (_currentUserIsAdmin) {
+          _messages.removeAt(index);
+        } else {
+          final updatedMessage = Message(
+            id: message.id,
+            senderId: message.senderId,
+            recipientId: message.recipientId,
+            content: 'This message was deleted',
+            messageType: message.messageType,
+            timestamp: message.timestamp,
+            timestampMs: message.timestampMs,
+            isRead: message.isRead,
+            readAt: message.readAt,
+            readAtMs: message.readAtMs,
+            deliveredAt: message.deliveredAt,
+            deliveredAtMs: message.deliveredAtMs,
+            status: message.status,
+            threadId: message.threadId,
+            replyToId: message.replyToId,
+            replyPreview: message.replyPreview,
+            reactions: message.reactions,
+            fileUrl: message.fileUrl,
+            fileName: message.fileName,
+            fileSize: message.fileSize,
+            fileType: message.fileType,
+            isDeleted: true,
+          );
+          _messages[index] = updatedMessage;
+        }
       }
     });
 
@@ -9873,32 +9877,36 @@ class _ChatScreenState extends State<ChatScreen>
     setState(() {
       final index = _messages.indexWhere((m) => m.id == messageId);
       if (index != -1) {
-        final message = _messages[index];
-        final updatedMessage = Message(
-          id: message.id,
-          senderId: message.senderId,
-          recipientId: message.recipientId,
-          content: 'This message was deleted',
-          messageType: message.messageType,
-          timestamp: message.timestamp,
-          timestampMs: message.timestampMs,
-          isRead: message.isRead,
-          readAt: message.readAt,
-          readAtMs: message.readAtMs,
-          deliveredAt: message.deliveredAt,
-          deliveredAtMs: message.deliveredAtMs,
-          status: message.status,
-          threadId: message.threadId,
-          replyToId: message.replyToId,
-          replyPreview: message.replyPreview,
-          reactions: message.reactions,
-          fileUrl: null,
-          fileName: null,
-          fileSize: null,
-          fileType: null,
-          isDeleted: true,
-        );
-        _messages[index] = updatedMessage;
+        if (_currentUserIsAdmin) {
+          _messages.removeAt(index);
+        } else {
+          final message = _messages[index];
+          final updatedMessage = Message(
+            id: message.id,
+            senderId: message.senderId,
+            recipientId: message.recipientId,
+            content: 'This message was deleted',
+            messageType: message.messageType,
+            timestamp: message.timestamp,
+            timestampMs: message.timestampMs,
+            isRead: message.isRead,
+            readAt: message.readAt,
+            readAtMs: message.readAtMs,
+            deliveredAt: message.deliveredAt,
+            deliveredAtMs: message.deliveredAtMs,
+            status: message.status,
+            threadId: message.threadId,
+            replyToId: message.replyToId,
+            replyPreview: message.replyPreview,
+            reactions: message.reactions,
+            fileUrl: null,
+            fileName: null,
+            fileSize: null,
+            fileType: null,
+            isDeleted: true,
+          );
+          _messages[index] = updatedMessage;
+        }
       }
     });
   }

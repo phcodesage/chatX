@@ -794,6 +794,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
               (result['result'] == 'accepted' ||
                   result['result'] == 'connected')) {
             final localStream = result['localStream'];
+            final callerUser = _lobbyUsers.firstWhere(
+              (u) => u.id == callerId,
+              orElse: () => LobbyUser(
+                id: callerId,
+                username: callerUsername,
+                email: '',
+                firstName: callerUsername,
+                lastName: '',
+                fullName: callerUsername,
+                status: 'online',
+                isOnline: true,
+                isAdmin: false,
+                timezone: '',
+              ),
+            );
             Navigator.of(context)
                 .push(
                   MaterialPageRoute(
@@ -803,6 +818,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       callType: callType,
                       callService: callService,
                       localStream: localStream ?? callService.localStream,
+                      onChatPressed: () {
+                        Navigator.of(context).pop();
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => ChatScreen(otherUser: callerUser),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 )
@@ -937,6 +960,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   result['result'] == 'connected')) {
             // Navigate to connected call screen with the local stream from setup
             final localStream = result['localStream'];
+            final callerUser = _lobbyUsers.firstWhere(
+              (u) => u.id == callerId,
+              orElse: () => LobbyUser(
+                id: callerId,
+                username: callerName,
+                email: '',
+                firstName: callerName,
+                lastName: '',
+                fullName: callerName,
+                status: 'online',
+                isOnline: true,
+                isAdmin: false,
+                timezone: '',
+              ),
+            );
             Navigator.of(context)
                 .push(
                   MaterialPageRoute(
@@ -946,6 +984,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       callType: callType,
                       callService: callService,
                       localStream: localStream ?? callService.localStream,
+                      onChatPressed: () {
+                        Navigator.of(context).pop();
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => ChatScreen(otherUser: callerUser),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 )
@@ -1266,8 +1312,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
           isOnline: user.isOnline,
           isAdmin: user.isAdmin,
           timezone: user.timezone,
-          unreadCount:
-              0, // Reset unread count since we're in the conversation context
+            // Keep unread count unchanged; read state should only change via
+            // explicit read sync (socket/API), not local UI assumptions.
+            unreadCount: user.unreadCount,
           isContact: user.isContact,
           isAdminUser: user.isAdminUser,
           // 🆕 NEW: Update last message info (sent by current user)
@@ -2909,37 +2956,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: () {
-            // Clear unread count locally before navigating
-            setState(() {
-              final userIndex = _lobbyUsers.indexWhere((u) => u.id == user.id);
-              if (userIndex != -1) {
-                final updatedUser = LobbyUser(
-                  id: user.id,
-                  username: user.username,
-                  email: user.email,
-                  firstName: user.firstName,
-                  lastName: user.lastName,
-                  fullName: user.fullName,
-                  avatarUrl: user.avatarUrl,
-                  bio: user.bio,
-                  status: user.status,
-                  statusMessage: user.statusMessage,
-                  lastSeen: user.lastSeen,
-                  isOnline: user.isOnline,
-                  isAdmin: user.isAdmin,
-                  timezone: user.timezone,
-                  unreadCount: 0,
-                  isContact: user.isContact,
-                  isAdminUser: user.isAdminUser,
-                  lastMessage: user.lastMessage,
-                  lastMessageTime: user.lastMessageTime,
-                  lastMessageIsFromMe: user.lastMessageIsFromMe,
-                );
-                _lobbyUsers[userIndex] = updatedUser;
-                _filterUsers();
-              }
-            });
-
             // Navigate to chat screen
             Navigator.push(
               context,
