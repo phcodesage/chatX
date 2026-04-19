@@ -1528,6 +1528,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   Widget _buildMessageBubble(GroupMessage message) {
+    // Deleted messages leave no trace
+    if (message.isDeleted) {
+      return const SizedBox.shrink();
+    }
+
     // Handle system messages (doorbell notifications from others, etc.)
     if (message.messageType == 'system') {
       return Center(

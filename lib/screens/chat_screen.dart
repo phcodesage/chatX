@@ -104,6 +104,8 @@ class _ChatScreenState extends State<ChatScreen>
   bool _showResetButton = false;
   bool _callInProgressOnOtherDevice = false;
   Timer? _callInProgressOnOtherDeviceTimer;
+  String? _crossDeviceActiveCallRoomId;
+  int? _crossDeviceActivePeerId;
   Route<dynamic>? _activeIncomingCallRoute;
   int? _activeIncomingCallId;
   String? _activeIncomingCallRoomId;
@@ -1420,6 +1422,13 @@ class _ChatScreenState extends State<ChatScreen>
       _dismissIncomingCallModalIfOpen();
       PresenceService().isHandlingIncomingCall = false;
       _showCallInProgressOnOtherDeviceIndicator();
+    });
+
+    // Canonical cross-device call state for persistent indicator syncing.
+    _socketService.addListener('callSessionState', key, (
+      Map<String, dynamic> data,
+    ) {
+      _handleCallSessionStateForChat(data);
     });
 
     // Primary cross-device offer sync: if this account accepted on another
@@ -5185,6 +5194,11 @@ class _ChatScreenState extends State<ChatScreen>
       _callInProgressOnOtherDevice = true;
     });
 
+    // If canonical session state already marked this as active, do not auto-hide.
+    if (_crossDeviceActiveCallRoomId != null) {
+      return;
+    }
+
     _callInProgressOnOtherDeviceTimer = Timer(
       const Duration(seconds: 12),
       () {
@@ -5194,6 +5208,91 @@ class _ChatScreenState extends State<ChatScreen>
         });
       },
     );
+  }
+
+  void _handleCallSessionStateForChat(Map<String, dynamic> data) {
+    if (!mounted) return;
+
+    final currentUserId = _currentUserId;
+    if (currentUserId == null) return;
+
+    final state = (data['state']?.toString() ?? data['status']?.toString() ?? '')
+        .toLowerCase();
+    if (state.isEmpty) return;
+
+    final roomId = data['call_room_id']?.toString() ?? data['room']?.toString();
+    final actorUserId = _toInt(data['actor_user_id']);
+    final otherUserId = _extractOtherParticipantIdFromSessionState(data);
+
+    final isTerminal = state == 'ended' || state == 'declined' || state == 'cancelled';
+    final isAcceptedByCurrentUserElsewhere =
+        state == 'accepted' &&
+        actorUserId == currentUserId &&
+        otherUserId == widget.otherUser.id &&
+        !PresenceService().isCallInProgress;
+
+    if (isAcceptedByCurrentUserElsewhere) {
+      _callInProgressOnOtherDeviceTimer?.cancel();
+      setState(() {
+        _crossDeviceActiveCallRoomId = roomId;
+        _crossDeviceActivePeerId = otherUserId;
+        _callInProgressOnOtherDevice = true;
+      });
+      return;
+    }
+
+    if (isTerminal) {
+      final matchesTrackedRoom =
+          roomId != null &&
+          _crossDeviceActiveCallRoomId != null &&
+          roomId == _crossDeviceActiveCallRoomId;
+      final matchesTrackedPeer =
+          otherUserId != null &&
+          _crossDeviceActivePeerId != null &&
+          otherUserId == _crossDeviceActivePeerId;
+
+      if (matchesTrackedRoom || matchesTrackedPeer) {
+        _callInProgressOnOtherDeviceTimer?.cancel();
+        setState(() {
+          _crossDeviceActiveCallRoomId = null;
+          _crossDeviceActivePeerId = null;
+          _callInProgressOnOtherDevice = false;
+        });
+      }
+    }
+  }
+
+  int? _extractOtherParticipantIdFromSessionState(Map<String, dynamic> data) {
+    final currentUserId = _currentUserId;
+    if (currentUserId == null) return null;
+
+    final callerId = _toInt(data['caller_id']);
+    final calleeId = _toInt(data['callee_id']);
+
+    if (callerId == currentUserId && calleeId != null) return calleeId;
+    if (calleeId == currentUserId && callerId != null) return callerId;
+
+    final participantIds = data['participant_ids'];
+    if (participantIds is List) {
+      for (final pid in participantIds) {
+        final parsed = _toInt(pid);
+        if (parsed != null && parsed != currentUserId) {
+          return parsed;
+        }
+      }
+    }
+
+    final room = data['call_room_id']?.toString() ?? data['room']?.toString() ?? '';
+    if (room.isNotEmpty) {
+      for (final part in room.split('_')) {
+        final parsed = int.tryParse(part);
+        if (parsed != null && parsed != currentUserId) {
+          return parsed;
+        }
+      }
+    }
+
+    return null;
   }
 
   Future<void> _runActionSheetAction(FutureOr<void> Function() action) async {
@@ -8364,6 +8463,12 @@ class _ChatScreenState extends State<ChatScreen>
                                   }
 
                                   final message = _messages[index];
+
+                                  // Deleted messages leave no trace
+                                  if (message.isDeleted) {
+                                    return const SizedBox.shrink();
+                                  }
+
                                   final isSentByMe =
                                       message.senderId == _currentUserId;
 

@@ -67,6 +67,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Route<dynamic>? _activeIncomingCallRoute;
   int? _activeIncomingCallId;
   String? _activeIncomingCallRoomId;
+  final Map<int, String> _crossDeviceActiveCallRoomByUserId = {};
 
   // Typing indicator: maps userId → auto-clear timer
   final Map<int, Timer> _typingUsers = {};
@@ -217,6 +218,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
       if (!_isAcceptedOnOtherDeviceForActiveIncoming(data)) return;
       _dismissIncomingCallModalIfOpen();
       PresenceService().isHandlingIncomingCall = false;
+    });
+
+    _socketService.addListener('callSessionState', key, (
+      Map<String, dynamic> data,
+    ) {
+      _handleCallSessionStateForLobby(data);
     });
 
     // FALLBACK: Also listen for crossRoomCallOffer in case backend only sends this event
@@ -2678,6 +2685,94 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
+  void _handleCallSessionStateForLobby(Map<String, dynamic> data) {
+    final currentUserId = _socketService.currentUserId;
+    if (currentUserId == null || !mounted) return;
+
+    final state = (data['state']?.toString() ?? data['status']?.toString() ?? '')
+        .toLowerCase();
+    if (state.isEmpty) return;
+
+    final roomId = data['call_room_id']?.toString() ?? data['room']?.toString() ?? '';
+    final actorUserId = _toInt(data['actor_user_id']);
+    final otherUserId = _extractOtherParticipantIdFromSessionState(data);
+
+    final isTerminal = state == 'ended' || state == 'declined' || state == 'cancelled';
+    final isAcceptedByCurrentUserElsewhere =
+        state == 'accepted' &&
+        actorUserId == currentUserId &&
+        otherUserId != null &&
+        !PresenceService().isCallInProgress;
+
+    if (isAcceptedByCurrentUserElsewhere) {
+      setState(() {
+        _crossDeviceActiveCallRoomByUserId[otherUserId] = roomId;
+      });
+      return;
+    }
+
+    if (isTerminal) {
+      if (otherUserId != null && _crossDeviceActiveCallRoomByUserId.containsKey(otherUserId)) {
+        final trackedRoom = _crossDeviceActiveCallRoomByUserId[otherUserId];
+        if (trackedRoom == null || trackedRoom == roomId || roomId.isEmpty) {
+          setState(() {
+            _crossDeviceActiveCallRoomByUserId.remove(otherUserId);
+          });
+          return;
+        }
+      }
+
+      if (roomId.isNotEmpty) {
+        final toRemove = <int>[];
+        _crossDeviceActiveCallRoomByUserId.forEach((uid, trackedRoom) {
+          if (trackedRoom == roomId) {
+            toRemove.add(uid);
+          }
+        });
+        if (toRemove.isNotEmpty) {
+          setState(() {
+            for (final uid in toRemove) {
+              _crossDeviceActiveCallRoomByUserId.remove(uid);
+            }
+          });
+        }
+      }
+    }
+  }
+
+  int? _extractOtherParticipantIdFromSessionState(Map<String, dynamic> data) {
+    final currentUserId = _socketService.currentUserId;
+    if (currentUserId == null) return null;
+
+    final callerId = _toInt(data['caller_id']);
+    final calleeId = _toInt(data['callee_id']);
+
+    if (callerId == currentUserId && calleeId != null) return calleeId;
+    if (calleeId == currentUserId && callerId != null) return callerId;
+
+    final participantIds = data['participant_ids'];
+    if (participantIds is List) {
+      for (final pid in participantIds) {
+        final parsed = _toInt(pid);
+        if (parsed != null && parsed != currentUserId) {
+          return parsed;
+        }
+      }
+    }
+
+    final room = data['call_room_id']?.toString() ?? data['room']?.toString() ?? '';
+    if (room.isNotEmpty) {
+      for (final part in room.split('_')) {
+        final parsed = int.tryParse(part);
+        if (parsed != null && parsed != currentUserId) {
+          return parsed;
+        }
+      }
+    }
+
+    return null;
+  }
+
   Widget _buildGroupTile(Group group) {
     final lastMessageText = group.lastMessage?.content ?? 'No messages yet';
     final lastMessageTime = group.lastMessage?.formattedTime ?? '';
@@ -2786,6 +2881,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   Widget _buildUserTile(LobbyUser user, {bool isOnlineSection = false}) {
     final avatarColor = _getAvatarColor(user.avatarColorIndex);
     final effectiveStatus = _getEffectiveStatus(user);
+    final hasCrossDeviceCall = _crossDeviceActiveCallRoomByUserId.containsKey(user.id);
     final isSelfChatTile = user.id == _socketService.currentUserId;
     final displayUnreadCount = isSelfChatTile ? 0 : user.unreadCount;
 
@@ -2924,7 +3020,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         width: 12,
                         height: 12,
                         decoration: BoxDecoration(
-                          color: _getStatusDotColor(effectiveStatus),
+                          color: hasCrossDeviceCall
+                              ? const Color(0xFFF59E0B)
+                              : _getStatusDotColor(effectiveStatus),
                           shape: BoxShape.circle,
                           border: Border.all(
                             color: const Color(0xFF252542),
@@ -2964,17 +3062,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       const SizedBox(height: 2),
                       // Online/Away/Offline status with relative time
                       Text(
-                        effectiveStatus == 'online'
+                        hasCrossDeviceCall
+                          ? 'In call on another device'
+                          : effectiveStatus == 'online'
                             ? 'Online'
-                            : effectiveStatus == 'away'
-                            ? _formatRelativeTime(user.lastSeen)
                             : _formatRelativeTime(user.lastSeen),
                         style: TextStyle(
-                          color: effectiveStatus == 'online'
+                          color: hasCrossDeviceCall
+                            ? const Color(0xFFF59E0B)
+                            : effectiveStatus == 'online'
                               ? const Color(0xFF00E676)
                               : effectiveStatus == 'away'
-                              ? const Color(0xFFFFC107)
-                              : Colors.grey[500],
+                                ? const Color(0xFFFFC107)
+                                : Colors.grey[500],
                           fontSize: 13,
                         ),
                       ),
