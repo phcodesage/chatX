@@ -41,6 +41,7 @@ import '../widgets/incoming_call_setup_modal.dart';
 import '../widgets/reaction_picker.dart';
 import '../services/call_service.dart';
 import '../services/presence_service.dart';
+import '../services/firebase_messaging_service.dart';
 import '../config/api_config.dart';
 import 'connected_call_screen.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
@@ -49,8 +50,13 @@ import '../utils/contact_utils.dart';
 /// Chat screen for messaging with a specific user
 class ChatScreen extends StatefulWidget {
   final LobbyUser otherUser;
+  final bool initialCallInProgressOnOtherDevice;
 
-  const ChatScreen({super.key, required this.otherUser});
+  const ChatScreen({
+    super.key,
+    required this.otherUser,
+    this.initialCallInProgressOnOtherDevice = false,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -563,6 +569,13 @@ class _ChatScreenState extends State<ChatScreen>
     _currentUserId = await StorageService.getUserId();
     _currentUserIsAdmin = await StorageService.getIsAdmin();
 
+    if (widget.initialCallInProgressOnOtherDevice) {
+      _callInProgressOnOtherDevice = true;
+      _crossDeviceActivePeerId = widget.otherUser.id;
+    }
+
+    unawaited(_clearIncomingCallNotificationsForCurrentChat());
+
     // Initialize presence state from widget
     _partnerIsOnline = widget.otherUser.isOnline;
     _partnerStatus = widget.otherUser.status;
@@ -588,6 +601,21 @@ class _ChatScreenState extends State<ChatScreen>
     unawaited(_loadConversationTasks());
     _joinChatRoom();
     _setupRealtimeListeners();
+  }
+
+  Future<void> _clearIncomingCallNotificationsForCurrentChat() async {
+    try {
+      await _ensureLocalNotificationsReady();
+      // Background incoming-call notification uses fixed ID 999.
+      await _localNotificationsPlugin.cancel(999);
+
+      // Foreground call notifications use direct-chat hash IDs.
+      final directCallNotificationId =
+          'direct:${widget.otherUser.id}'.hashCode & 0x7FFFFFFF;
+      await _localNotificationsPlugin.cancel(directCallNotificationId);
+    } catch (e) {
+      debugPrint('Error clearing incoming call notifications: $e');
+    }
   }
 
   /// Load persisted chat color from SharedPreferences
@@ -1422,6 +1450,9 @@ class _ChatScreenState extends State<ChatScreen>
       _dismissIncomingCallModalIfOpen();
       PresenceService().isHandlingIncomingCall = false;
       _showCallInProgressOnOtherDeviceIndicator();
+      _clearIncomingCallNotificationsForPeer(
+        callRoomId: data['call_room_id']?.toString() ?? data['room']?.toString(),
+      );
     });
 
     // Canonical cross-device call state for persistent indicator syncing.
@@ -1440,6 +1471,9 @@ class _ChatScreenState extends State<ChatScreen>
       _dismissIncomingCallModalIfOpen();
       PresenceService().isHandlingIncomingCall = false;
       _showCallInProgressOnOtherDeviceIndicator();
+      _clearIncomingCallNotificationsForPeer(
+        callRoomId: data['call_room_id']?.toString() ?? data['room']?.toString(),
+      );
     });
 
     // FALLBACK: Also listen for crossRoomCallOffer in case backend only sends this event
@@ -5013,10 +5047,6 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   String _getHeaderStatusLabel() {
-    if (_callInProgressOnOtherDevice) {
-      return 'In call on another device';
-    }
-
     if (_otherUserTyping) {
       return 'typing...';
     }
@@ -5043,10 +5073,6 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Color _getHeaderStatusColor() {
-    if (_callInProgressOnOtherDevice) {
-      return const Color(0xFFF59E0B);
-    }
-
     final effective = _getEffectivePartnerStatus();
     if (_otherUserTyping || effective == 'online') {
       return const Color(0xFF22C55E);
@@ -5070,41 +5096,58 @@ class _ChatScreenState extends State<ChatScreen>
     final statusColor = _getHeaderStatusColor();
     final scale = _uiScale(context);
 
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: 10 * scale,
-        vertical: 4 * scale,
-      ),
-      decoration: BoxDecoration(
-        color: statusColor.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: statusColor.withValues(alpha: 0.32)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 8 * scale,
-            height: 8 * scale,
-            decoration: BoxDecoration(
-              color: statusColor,
-              shape: BoxShape.circle,
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth.isFinite && constraints.maxWidth < 72 * scale) {
+          return const SizedBox.shrink();
+        }
+
+        return Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: 10 * scale,
+            vertical: 4 * scale,
           ),
-          SizedBox(width: 6 * scale),
-          Flexible(
-            child: Text(
-              _getHeaderStatusLabel(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: statusColor,
-                fontSize: 11 * scale,
-                fontWeight: FontWeight.w600,
+          decoration: BoxDecoration(
+            color: statusColor.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: statusColor.withValues(alpha: 0.32)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8 * scale,
+                height: 8 * scale,
+                decoration: BoxDecoration(
+                  color: statusColor,
+                  shape: BoxShape.circle,
+                ),
               ),
-            ),
+              SizedBox(width: 6 * scale),
+              Flexible(
+                child: Text(
+                  _getHeaderStatusLabel(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 11 * scale,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        );
+      },
+    );
+  }
+
+  void _clearIncomingCallNotificationsForPeer({String? callRoomId}) {
+    unawaited(
+      FirebaseMessagingService.instance.clearIncomingCallNotifications(
+        otherUserId: widget.otherUser.id,
+        callRoomId: callRoomId,
       ),
     );
   }
@@ -5179,8 +5222,12 @@ class _ChatScreenState extends State<ChatScreen>
     final route = _activeIncomingCallRoute;
     if (route == null || !mounted) return;
 
-    final navigator = Navigator.of(context);
-    navigator.removeRoute(route);
+    final navigator = route.navigator;
+    // Only pop when our tracked incoming modal is truly the top active route.
+    // Force-removing stale/non-current routes can leave the UI on a black frame.
+    if (navigator != null && route.isActive && route.isCurrent) {
+      navigator.pop();
+    }
     _activeIncomingCallRoute = null;
     _activeIncomingCallId = null;
     _activeIncomingCallRoomId = null;
@@ -5238,6 +5285,7 @@ class _ChatScreenState extends State<ChatScreen>
         _crossDeviceActivePeerId = otherUserId;
         _callInProgressOnOtherDevice = true;
       });
+      _clearIncomingCallNotificationsForPeer(callRoomId: roomId);
       return;
     }
 
@@ -8248,20 +8296,54 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
         actions: [
-          if (!_isSelfChat)
-            // Video call button
-            IconButton(
-              icon: Icon(Icons.videocam, color: Colors.white, size: 24 * scale),
-              onPressed: () => _showCallSetupModal(CallType.video),
-              tooltip: 'Video Call',
-            ),
-          if (!_isSelfChat)
-            // Audio call button
-            IconButton(
-              icon: Icon(Icons.call, color: Colors.white, size: 24 * scale),
-              onPressed: () => _showCallSetupModal(CallType.audio),
-              tooltip: 'Audio Call',
-            ),
+          if (!_isSelfChat && _callInProgressOnOtherDevice)
+            Padding(
+              padding: EdgeInsets.only(right: 6 * scale),
+              child: Center(
+                child: Container(
+                  constraints: BoxConstraints(maxWidth: 180 * scale),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 10 * scale,
+                    vertical: 6 * scale,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: const Color(0xFFF59E0B).withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Text(
+                    'Call in progress on other device',
+                    maxLines: 2,
+                    softWrap: true,
+                    overflow: TextOverflow.fade,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: const Color(0xFFF59E0B),
+                      fontSize: 11 * scale,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            )
+          else ...[
+            if (!_isSelfChat)
+              // Video call button
+              IconButton(
+                icon: Icon(Icons.videocam, color: Colors.white, size: 24 * scale),
+                onPressed: () => _showCallSetupModal(CallType.video),
+                tooltip: 'Video Call',
+              ),
+            if (!_isSelfChat)
+              // Audio call button
+              IconButton(
+                icon: Icon(Icons.call, color: Colors.white, size: 24 * scale),
+                onPressed: () => _showCallSetupModal(CallType.audio),
+                tooltip: 'Audio Call',
+              ),
+          ],
           // Dedicated task button with animated count badge
           Stack(
             clipBehavior: Clip.none,

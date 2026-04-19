@@ -472,6 +472,7 @@ class FirebaseMessagingService {
   final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
+  bool _localNotificationsInitialized = false;
 
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
@@ -582,6 +583,8 @@ class FirebaseMessagingService {
 
   /// Initialize local notifications plugin
   Future<void> _initializeLocalNotifications() async {
+    if (_localNotificationsInitialized) return;
+
     const AndroidInitializationSettings androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
@@ -672,6 +675,35 @@ class FirebaseMessagingService {
           AndroidFlutterLocalNotificationsPlugin
         >()
         ?.createNotificationChannel(incomingCallsChannel);
+
+    _localNotificationsInitialized = true;
+  }
+
+  Future<void> clearIncomingCallNotifications({
+    int? otherUserId,
+    String? callRoomId,
+  }) async {
+    try {
+      await _initializeLocalNotifications();
+
+      // Background incoming-call notification uses fixed ID.
+      await _localNotifications.cancel(999);
+
+      // Foreground direct-call notification uses sender hash.
+      if (otherUserId != null) {
+        final directCallNotificationId =
+            'direct:$otherUserId'.hashCode & 0x7FFFFFFF;
+        await _localNotifications.cancel(directCallNotificationId);
+      }
+
+      // Some payloads may use room-scoped IDs.
+      if (callRoomId != null && callRoomId.isNotEmpty) {
+        final roomCallNotificationId = callRoomId.hashCode & 0x7FFFFFFF;
+        await _localNotifications.cancel(roomCallNotificationId);
+      }
+    } catch (e) {
+      debugPrint('❌ Error clearing incoming call notifications: $e');
+    }
   }
 
   /// Show notification using local notifications plugin

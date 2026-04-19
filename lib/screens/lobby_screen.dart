@@ -13,6 +13,7 @@ import '../services/lobby_service.dart';
 import '../services/group_service.dart';
 import '../services/auth_service.dart';
 import '../services/socket_service.dart';
+import '../services/firebase_messaging_service.dart';
 import '../widgets/app_version_text.dart';
 import '../services/call_service.dart';
 import '../widgets/incoming_call_setup_modal.dart';
@@ -209,6 +210,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       if (!_isAcceptedOnOtherDeviceForActiveIncoming(data)) return;
       _dismissIncomingCallModalIfOpen();
       PresenceService().isHandlingIncomingCall = false;
+      _clearIncomingCallNotificationsForEvent(data);
     });
 
     // Primary cross-device sync event for offer dismissal.
@@ -218,6 +220,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       if (!_isAcceptedOnOtherDeviceForActiveIncoming(data)) return;
       _dismissIncomingCallModalIfOpen();
       PresenceService().isHandlingIncomingCall = false;
+      _clearIncomingCallNotificationsForEvent(data);
     });
 
     _socketService.addListener('callSessionState', key, (
@@ -610,8 +613,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     if (!mounted || targetUser == null) return;
 
+    final hasCrossDeviceCall = _crossDeviceActiveCallRoomByUserId.containsKey(
+      targetUser.id,
+    );
+
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => ChatScreen(otherUser: targetUser!)),
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          otherUser: targetUser!,
+          initialCallInProgressOnOtherDevice: hasCrossDeviceCall,
+        ),
+      ),
     );
   }
 
@@ -822,7 +834,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         Navigator.of(context).pop();
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => ChatScreen(otherUser: callerUser),
+                            builder: (_) => ChatScreen(
+                              otherUser: callerUser,
+                              initialCallInProgressOnOtherDevice:
+                                  _crossDeviceActiveCallRoomByUserId
+                                      .containsKey(callerUser.id),
+                            ),
                           ),
                         );
                       },
@@ -988,7 +1005,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         Navigator.of(context).pop();
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => ChatScreen(otherUser: callerUser),
+                            builder: (_) => ChatScreen(
+                              otherUser: callerUser,
+                              initialCallInProgressOnOtherDevice:
+                                  _crossDeviceActiveCallRoomByUserId
+                                      .containsKey(callerUser.id),
+                            ),
                           ),
                         );
                       },
@@ -1065,12 +1087,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return _isCallAnsweredForActiveIncomingModal(payload);
   }
 
+  void _clearIncomingCallNotificationsForEvent(Map<String, dynamic> data) {
+    final otherUserId =
+        _extractOtherParticipantIdFromSessionState(data) ??
+        _toInt(data['caller_id']) ??
+        _toInt(data['sender_id']);
+    final roomId = data['call_room_id']?.toString() ?? data['room']?.toString();
+
+    unawaited(
+      FirebaseMessagingService.instance.clearIncomingCallNotifications(
+        otherUserId: otherUserId,
+        callRoomId: roomId,
+      ),
+    );
+  }
+
   void _dismissIncomingCallModalIfOpen() {
     final route = _activeIncomingCallRoute;
     if (route == null || !mounted) return;
 
-    final navigator = Navigator.of(context);
-    navigator.removeRoute(route);
+    final navigator = route.navigator;
+    // Only pop when our tracked incoming modal is truly the top active route.
+    // Force-removing stale/non-current routes can leave the UI on a black frame.
+    if (navigator != null && route.isActive && route.isCurrent) {
+      navigator.pop();
+    }
     _activeIncomingCallRoute = null;
     _activeIncomingCallId = null;
     _activeIncomingCallRoomId = null;
@@ -2104,7 +2145,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => ChatScreen(otherUser: user),
+                                    builder: (_) => ChatScreen(
+                                      otherUser: user,
+                                      initialCallInProgressOnOtherDevice:
+                                          _crossDeviceActiveCallRoomByUserId
+                                              .containsKey(user.id),
+                                    ),
                                   ),
                                 ).then((_) {
                                   _loadLobby(useCacheFirst: false);
@@ -2755,6 +2801,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       setState(() {
         _crossDeviceActiveCallRoomByUserId[otherUserId] = roomId;
       });
+      _clearIncomingCallNotificationsForEvent(data);
       return;
     }
 
@@ -2960,7 +3007,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => ChatScreen(otherUser: user),
+                builder: (context) => ChatScreen(
+                  otherUser: user,
+                  initialCallInProgressOnOtherDevice:
+                      _crossDeviceActiveCallRoomByUserId.containsKey(user.id),
+                ),
               ),
             ).then((_) async {
               // Mark messages from this user as read via REST (fallback for any

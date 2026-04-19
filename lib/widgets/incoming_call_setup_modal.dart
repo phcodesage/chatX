@@ -51,6 +51,7 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
   bool _hasPermissions = false;
   String? _errorMessage;
   bool _isAnswering = false;
+  bool _isClosing = false;
   bool _isDisposed = false;
   bool _streamHandedOff = false;
 
@@ -100,17 +101,29 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
 
   void _handleSocketCallEnded(Map<String, dynamic> data) {
     debugPrint('📴 IncomingCallSetupModal received call end event: $data');
-    if (!mounted) return;
-    widget.callService.handleCallEnded();
-    Navigator.of(context).pop('ended');
+    _closeOnce('ended');
   }
 
   void _handleCallStateChanged(CallState state) {
     if (!mounted) return;
 
     if (state == CallState.ended || state == CallState.failed) {
-      Navigator.of(context).pop('ended');
+      _closeOnce('ended');
     }
+  }
+
+  void _closeOnce(dynamic result) {
+    if (!mounted || _isClosing) return;
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent || !route.isActive) {
+      debugPrint(
+        '📴 IncomingCallSetupModal skip close: route current=${route?.isCurrent}, active=${route?.isActive}',
+      );
+      return;
+    }
+    _isClosing = true;
+    debugPrint('📴 IncomingCallSetupModal closing with result: $result');
+    Navigator.of(context).pop(result);
   }
 
   Future<void> _initializeDevices() async {
@@ -238,9 +251,7 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
       await widget.callService.answerCall(localStream: _localStream!);
 
       if (mounted) {
-        Navigator.of(
-          context,
-        ).pop({'result': 'accepted', 'localStream': _localStream});
+        _closeOnce({'result': 'accepted', 'localStream': _localStream});
       }
     } catch (e) {
       debugPrint('❌ Error answering call: $e');
@@ -261,17 +272,19 @@ class _IncomingCallSetupModalState extends State<IncomingCallSetupModal> {
   }
 
   void _handleDecline() {
+    if (_isClosing) return;
     widget.callService.declineCall();
     widget.onDecline?.call();
 
     if (mounted) {
-      Navigator.of(context).pop({'result': 'declined'});
+      _closeOnce({'result': 'declined'});
     }
   }
 
   @override
   void dispose() {
     _isDisposed = true;
+    widget.callService.onCallStateChanged = null;
     // Remove socket listeners
     _socketService.removeListener('callEnded', _listenerKey);
     _socketService.removeListener('callDeclined', _listenerKey);
