@@ -77,47 +77,23 @@ int _buildChatNotificationId(Map<String, dynamic> data) {
   return DateTime.now().millisecondsSinceEpoch ~/ 1000;
 }
 
+Map<String, String> _extractNotificationText(Map<String, dynamic> data) {
+  final title = (data['title'] ?? '').toString().trim();
+  final body = (data['body'] ?? '').toString().trim();
+  final content = (data['content'] ?? '').toString().trim();
+
+  return {
+    'title': title.isNotEmpty ? title : 'New message',
+    'body': body.isNotEmpty ? body : content,
+  };
+}
+
 String? _resolveNotificationTitle(Map<String, dynamic> data) {
-  final title = data['title']?.toString();
-  if (title != null && title.trim().isNotEmpty) {
-    return title.trim();
-  }
-
-  if (!_isChatQuickReplyEligible(data)) {
-    return null;
-  }
-
-  final senderName = data['sender_name']?.toString().trim();
-  final groupName = data['group_name']?.toString().trim();
-  final isGroup =
-      data['conversation_type']?.toString().toLowerCase() == 'group' ||
-      data['group_id'] != null;
-
-  if (senderName == null || senderName.isEmpty) {
-    return isGroup && groupName != null && groupName.isNotEmpty
-        ? '💬 $groupName'
-        : 'New message';
-  }
-
-  if (isGroup && groupName != null && groupName.isNotEmpty) {
-    return '💬 $senderName ($groupName)';
-  }
-
-  return '💬 $senderName';
+  return _extractNotificationText(data)['title'];
 }
 
 String? _resolveNotificationBody(Map<String, dynamic> data) {
-  final body = data['body']?.toString();
-  if (body != null && body.trim().isNotEmpty) {
-    return body.trim();
-  }
-
-  final content = data['content']?.toString();
-  if (content != null && content.trim().isNotEmpty) {
-    return content.trim();
-  }
-
-  return null;
+  return _extractNotificationText(data)['body'];
 }
 
 StyleInformation? _buildMessagingStyle(

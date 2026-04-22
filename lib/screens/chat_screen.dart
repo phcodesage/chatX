@@ -124,6 +124,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Auto-correction UI state (voice/input replacement dictionary)
   bool _autoCorrectionEnabled = true;
+  bool _stampEnabled = false;
   final Map<String, String> _manualAutoCorrectionMappings = {
     'rush': 'rech',
     'rache': 'rech',
@@ -134,6 +135,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   static const String _autoCorrectionEnabledPrefKey =
       'autoCorrectionEnabled';
+  static const String _stampEnabledPrefKey = 'stampEnabled';
   static const String _autoCorrectionManualPrefKey =
       'autoCorrectionManualMappings';
   static const String _autoCorrectionLearnedPrefKey =
@@ -591,6 +593,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     await _loadTimestampPreference();
     await _loadAutoCorrectionPreferences();
+    await _loadStampPreference();
     await _loadCachedMessages();
     await _loadMessages();
     _loadPinnedExcalidrawLinks();
@@ -778,6 +781,89 @@ class _ChatScreenState extends State<ChatScreen>
       _autoCorrectionLearnedPrefKey,
       jsonEncode(_learnedAutoCorrectionMappings),
     );
+  }
+
+  Future<void> _loadStampPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getBool('${_stampEnabledPrefKey}_${widget.otherUser.id}');
+    if (!mounted || saved == null) return;
+
+    setState(() {
+      _stampEnabled = saved;
+    });
+
+    if (_stampEnabled) {
+      _seedStampPrefixInInput();
+    }
+  }
+
+  Future<void> _saveStampPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('${_stampEnabledPrefKey}_${widget.otherUser.id}', _stampEnabled);
+  }
+
+  String get _stampMentionTag {
+    final username = widget.otherUser.username.trim();
+    if (username.isEmpty) {
+      return '@${widget.otherUser.fullName.trim().replaceAll(' ', '').toLowerCase()}';
+    }
+    return '@$username';
+  }
+
+  bool _hasStampPrefix(String text) {
+    final trimmed = text.trim();
+    final tag = _stampMentionTag.toLowerCase();
+    final lower = trimmed.toLowerCase();
+    if (lower == tag) return true;
+    return RegExp(
+      '(^|\\s)' + RegExp.escape(tag) + r'(?=\s|$)',
+      caseSensitive: false,
+    ).hasMatch(lower);
+  }
+
+  bool _isStampOnlyDraft(String text) {
+    if (!_stampEnabled) return false;
+    return text.trim().toLowerCase() == _stampMentionTag.toLowerCase();
+  }
+
+  String _withStampPrefix(String text) {
+    final trimmed = text.trim();
+    if (!_stampEnabled) return trimmed;
+    if (trimmed.isEmpty) return _stampMentionTag;
+    if (_hasStampPrefix(trimmed)) return trimmed;
+    return '$trimmed $_stampMentionTag';
+  }
+
+  String _removeStampTagFromText(String text) {
+    final pattern = RegExp(
+      '(^|\\s)' + RegExp.escape(_stampMentionTag) + r'(?=\s|$)',
+      caseSensitive: false,
+    );
+
+    final withoutFirst = text.replaceFirstMapped(pattern, (match) {
+      return match.group(1) ?? '';
+    });
+
+    return withoutFirst.replaceAll(RegExp(r'\s{2,}'), ' ').trimLeft();
+  }
+
+  void _seedStampPrefixInInput() {
+    if (!_stampEnabled || !mounted) return;
+
+    final current = _messageController.text;
+    if (_hasStampPrefix(current)) return;
+
+    final stamped = current.trim().isEmpty
+        ? '$_stampMentionTag '
+      : '${current.trimRight()} $_stampMentionTag';
+    final normalized = _normalizeTextForEmojiCompatibility(stamped);
+    final selection = TextSelection.collapsed(offset: normalized.length);
+    _messageController.value = TextEditingValue(
+      text: normalized,
+      selection: selection,
+      composing: TextRange.empty,
+    );
+    _savedInputSelection = selection;
   }
 
   void _showTopBanner(
@@ -2566,7 +2652,9 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Sync common phrases visibility based on input text
   void _syncCommonPhrasesVisibility() {
-    final hasText = _messageController.text.trim().isNotEmpty;
+    final hasText =
+        _messageController.text.trim().isNotEmpty &&
+        !_isStampOnlyDraft(_messageController.text);
     final shouldHide = hasText || _otherUserTyping;
     
     if (_hideCommonPhrases != shouldHide && mounted) {
@@ -2586,7 +2674,7 @@ class _ChatScreenState extends State<ChatScreen>
     // Hide phrases and set input to phrase text
     setState(() {
       _hideCommonPhrases = true;
-      _messageController.text = phraseText;
+      _messageController.text = _withStampPrefix(phraseText);
     });
 
     // Preserve user position: only pin to bottom for chip sends when the user
@@ -3401,12 +3489,12 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _sendMessage() async {
-    final rawContent = _messageController.text.trim();
+    final rawContent = _withStampPrefix(_messageController.text);
     final content = _applyAutoCorrectionOnSend(rawContent);
     if (rawContent != content) {
       debugPrint('[AutoCorrect:send] Corrected before send: "$rawContent" -> "$content"');
     }
-    if (content.isEmpty) return;
+    if (content.isEmpty || _isStampOnlyDraft(content)) return;
     final markAsTask = _markNextMessageAsTask;
 
     // Capture reply info before clearing
@@ -3483,6 +3571,9 @@ class _ChatScreenState extends State<ChatScreen>
 
     _messageController.clear();
     _stopTyping();
+    if (_stampEnabled) {
+      _seedStampPrefixInInput();
+    }
 
     // Scroll to bottom after sending unless explicitly suppressed.
     final shouldAutoScroll = !_suppressNextSendAutoScroll;
@@ -4192,7 +4283,7 @@ class _ChatScreenState extends State<ChatScreen>
     return ValueListenableBuilder<TextEditingValue>(
       valueListenable: _messageController,
       builder: (context, value, _) {
-        if (value.text.trim().isEmpty) {
+        if (value.text.trim().isEmpty || _isStampOnlyDraft(value.text)) {
           return const SizedBox.shrink();
         }
 
@@ -4302,6 +4393,25 @@ class _ChatScreenState extends State<ChatScreen>
         label: 'Auto Correction',
         backgroundColor: const Color(0xFFF59E0B),
         onPressed: _showAutoCorrectionDictionaryModal,
+      ),
+      _buildCompressedActionChip(
+        label: _stampEnabled ? 'Stamp On' : 'Stamp Off',
+        backgroundColor: _stampEnabled
+            ? const Color(0xFF0F766E)
+            : const Color(0xFF0E7490),
+        onPressed: () {
+          setState(() {
+            _stampEnabled = !_stampEnabled;
+          });
+          unawaited(_saveStampPreference());
+
+          if (_stampEnabled) {
+            _seedStampPrefixInInput();
+          } else if (_hasStampPrefix(_messageController.text)) {
+            final withoutStamp = _removeStampTagFromText(_messageController.text);
+            _replaceInputTextWithSanitized(withoutStamp);
+          }
+        },
       ),
       _buildCompressedActionChip(
         label: 'Change Color',
@@ -4674,6 +4784,18 @@ class _ChatScreenState extends State<ChatScreen>
     required Color backgroundColor,
     required VoidCallback onPressed,
   }) {
+    String formatLabel(String source) {
+      final trimmed = source.trim();
+      if (trimmed.isEmpty || trimmed.contains('\n')) return trimmed;
+
+      final words = trimmed.split(RegExp(r'\s+'));
+      if (words.length == 1) return trimmed;
+      if (words.length == 2) return '${words.first}\n${words.last}';
+
+      final splitIndex = (words.length / 2).ceil();
+      return '${words.take(splitIndex).join(' ')}\n${words.skip(splitIndex).join(' ')}';
+    }
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -4686,7 +4808,7 @@ class _ChatScreenState extends State<ChatScreen>
         borderRadius: BorderRadius.circular(12),
         child: Container(
           constraints: const BoxConstraints(minHeight: 36, minWidth: 58),
-          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: backgroundColor,
@@ -4698,7 +4820,7 @@ class _ChatScreenState extends State<ChatScreen>
           ),
           child: Center(
             child: Text(
-              label,
+              formatLabel(label),
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10,
@@ -4723,7 +4845,7 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
 
-    if (text.isEmpty) {
+    if (text.isEmpty || _isStampOnlyDraft(text)) {
       if (_isTyping) {
         _stopTyping();
       }
@@ -8817,7 +8939,8 @@ class _ChatScreenState extends State<ChatScreen>
                                   height: 1.12,
                                 );
                                 final hasDraftText =
-                                    value.text.trim().isNotEmpty;
+                                  value.text.trim().isNotEmpty &&
+                                  !_isStampOnlyDraft(value.text);
 
                                 return RepaintBoundary(
                                   child: LayoutBuilder(
@@ -12181,15 +12304,46 @@ class _ChatScreenState extends State<ChatScreen>
       decoration: TextDecoration.underline,
       decorationColor: const Color(0xFF93C5FD),
     );
+    final mentionStyle = baseStyle.copyWith(
+      color: const Color(0xFF7DD3FC),
+      fontWeight: FontWeight.w600,
+    );
+    final mentionRegex = RegExp(r'(^|\s)(@[A-Za-z0-9._-]+)');
+
+    void appendMentionAwareText(List<InlineSpan> target, String segment) {
+      if (segment.isEmpty) return;
+
+      var localCursor = 0;
+      for (final mention in mentionRegex.allMatches(segment)) {
+        final prefix = mention.group(1) ?? '';
+        final token = mention.group(2) ?? '';
+        final mentionStart = mention.start + prefix.length;
+        final mentionEnd = mentionStart + token.length;
+
+        if (mentionStart > localCursor) {
+          target.add(
+            TextSpan(
+              text: segment.substring(localCursor, mentionStart),
+              style: baseStyle,
+            ),
+          );
+        }
+
+        target.add(TextSpan(text: token, style: mentionStyle));
+        localCursor = mentionEnd;
+      }
+
+      if (localCursor < segment.length) {
+        target.add(TextSpan(text: segment.substring(localCursor), style: baseStyle));
+      }
+    }
 
     final spans = <InlineSpan>[];
     var cursor = 0;
 
     for (final match in _messageUrlRegex.allMatches(text)) {
       if (match.start > cursor) {
-        spans.add(
-          TextSpan(text: text.substring(cursor, match.start), style: baseStyle),
-        );
+        appendMentionAwareText(spans, text.substring(cursor, match.start));
       }
 
       final matchedText = match.group(0) ?? '';
@@ -12210,18 +12364,18 @@ class _ChatScreenState extends State<ChatScreen>
       }
 
       if (trailing.isNotEmpty) {
-        spans.add(TextSpan(text: trailing, style: baseStyle));
+        appendMentionAwareText(spans, trailing);
       }
 
       cursor = match.end;
     }
 
     if (cursor < text.length) {
-      spans.add(TextSpan(text: text.substring(cursor), style: baseStyle));
+      appendMentionAwareText(spans, text.substring(cursor));
     }
 
     if (spans.isEmpty) {
-      spans.add(TextSpan(text: text, style: baseStyle));
+      appendMentionAwareText(spans, text);
     }
 
     return spans;
