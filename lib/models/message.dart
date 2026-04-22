@@ -1,4 +1,6 @@
 /// Message model for chat messages
+import '../services/storage_service.dart';
+
 class Message {
   final int id;
   final int senderId;
@@ -411,11 +413,17 @@ class Message {
 
       if (difference.inDays == 0) {
         // Today - show time
-        final hour = dateTime.hour;
-        final minute = dateTime.minute.toString().padLeft(2, '0');
-        final period = hour >= 12 ? 'PM' : 'AM';
-        final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-        return '$displayHour:$minute $period';
+        if (StorageService.useMilitaryTime) {
+          final hour = dateTime.hour.toString().padLeft(2, '0');
+          final minute = dateTime.minute.toString().padLeft(2, '0');
+          return '$hour:$minute';
+        } else {
+          final hour = dateTime.hour;
+          final minute = dateTime.minute.toString().padLeft(2, '0');
+          final period = hour >= 12 ? 'PM' : 'AM';
+          final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+          return '$displayHour:$minute $period';
+        }
       } else if (difference.inDays == 1) {
         return 'Yesterday';
       } else if (difference.inDays < 7) {
@@ -439,17 +447,23 @@ class Message {
       final day = dateTime.day.toString().padLeft(2, '0');
       final year = dateTime.year;
 
-      // Format time parts
-      final hour = dateTime.hour.toString().padLeft(2, '0');
-      final minute = dateTime.minute.toString().padLeft(2, '0');
-      final second = dateTime.second.toString().padLeft(2, '0');
-
       // Get timezone offset
       final offset = dateTime.timeZoneOffset;
       final offsetHours = offset.inHours.abs();
       final offsetSign = offset.isNegative ? '-' : '+';
+      final second = dateTime.second.toString().padLeft(2, '0');
 
-      return '[$month/$day/$year, $hour:$minute:$second GMT$offsetSign$offsetHours]';
+      if (StorageService.useMilitaryTime) {
+        final hour = dateTime.hour.toString().padLeft(2, '0');
+        final minute = dateTime.minute.toString().padLeft(2, '0');
+        return '[$month/$day/$year, $hour:$minute:$second GMT$offsetSign$offsetHours]';
+      } else {
+        final hour = dateTime.hour;
+        final minute = dateTime.minute.toString().padLeft(2, '0');
+        final period = hour >= 12 ? 'PM' : 'AM';
+        final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+        return '[$month/$day/$year, $displayHour:$minute:$second $period GMT$offsetSign$offsetHours]';
+      }
     } catch (e) {
       return '';
     }

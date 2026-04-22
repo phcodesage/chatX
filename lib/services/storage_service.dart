@@ -14,6 +14,9 @@ class StorageService {
   static const String _rememberMeKey = 'remember_me';
   static const String _rememberedUsernameKey = 'remembered_username';
   static const String _rememberedPasswordKey = 'remembered_password';
+  static const String _useMilitaryTimeKey = 'use_military_time';
+
+  static bool useMilitaryTime = false;
 
   static SharedPreferences? _prefs;
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
@@ -31,6 +34,7 @@ class StorageService {
   static Future<void> init() async {
     try {
       _prefs ??= await SharedPreferences.getInstance();
+      useMilitaryTime = _prefs!.getBool(_useMilitaryTimeKey) ?? false;
     } catch (e) {
       debugPrint('Error initializing storage: $e');
     }
@@ -300,6 +304,17 @@ class StorageService {
   /// Get SharedPreferences instance for direct access
   static Future<SharedPreferences> getPreferences() async {
     return await _getPrefs();
+  }
+
+  /// Save timestamp format preference
+  static Future<void> saveUseMilitaryTime(bool value) async {
+    try {
+      useMilitaryTime = value;
+      final prefs = await _getPrefs();
+      await prefs.setBool(_useMilitaryTimeKey, value);
+    } catch (e) {
+      debugPrint('Error saving useMilitaryTime: $e');
+    }
   }
 }
 

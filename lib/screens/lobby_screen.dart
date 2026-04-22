@@ -15,6 +15,7 @@ import '../services/auth_service.dart';
 import '../services/socket_service.dart';
 import '../services/firebase_messaging_service.dart';
 import '../widgets/app_version_text.dart';
+import '../widgets/settings_modal.dart';
 import '../services/call_service.dart';
 import '../widgets/incoming_call_setup_modal.dart';
 import 'chat_screen.dart' show ChatScreen;
@@ -2501,17 +2502,41 @@ class _LobbyScreenState extends State<LobbyScreen> {
         title: const AppVersionText(),
         actions: [
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white70),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16.0),
+              child: Center(
+                child: Text(
+                  'Settings',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
             color: const Color(0xFF252542),
-            onSelected: (value) {
-              if (value == 'logout') {
+            onSelected: (value) async {
+              if (value == 'settings') {
+                final result = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => const SettingsModal(),
+                );
+                if (result == true && mounted) {
+                  setState(() {});
+                }
+              } else if (value == 'logout') {
                 _handleLogout();
               }
             },
             itemBuilder: (context) => const [
               PopupMenuItem<String>(
+                value: 'settings',
+                child: Text('Settings', style: TextStyle(color: Colors.white)),
+              ),
+              PopupMenuItem<String>(
                 value: 'logout',
-                child: Text('Logout', style: TextStyle(color: Colors.white)),
+                child: Text('Logout', style: TextStyle(color: Colors.red)),
               ),
             ],
           ),
