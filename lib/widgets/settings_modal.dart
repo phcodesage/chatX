@@ -29,39 +29,41 @@ class _SettingsModalState extends State<SettingsModal> {
     required bool isSelected,
     required VoidCallback onTap,
   }) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-          decoration: BoxDecoration(
-            color: const Color(0xFF111827), // Darker inner box
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isSelected ? const Color(0xFF6366F1) : const Color(0xFF374151),
-              width: 1,
-            ),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 140, maxWidth: 220),
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF111827), // Darker inner box
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF6366F1) : const Color(0xFF374151),
+            width: 1,
           ),
-          child: Row(
-            children: [
-              Icon(
-                isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                color: isSelected ? const Color(0xFFA78BFA) : Colors.white70,
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              color: isSelected ? const Color(0xFFA78BFA) : Colors.white70,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                softWrap: true,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -129,16 +131,17 @@ class _SettingsModalState extends State<SettingsModal> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  Row(
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
                     children: [
                       _buildOptionBox(
                         title: 'AM/PM (default)',
                         isSelected: !_useMilitaryTime,
                         onTap: () => setState(() => _useMilitaryTime = false),
                       ),
-                      const SizedBox(width: 12),
                       _buildOptionBox(
-                        title: 'Military (24-hour)',
+                        title: 'Military (24‑hour)',
                         isSelected: _useMilitaryTime,
                         onTap: () => setState(() => _useMilitaryTime = true),
                       ),

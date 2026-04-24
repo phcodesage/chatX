@@ -7,8 +7,8 @@ class ApiConfig {
   // The default keeps plain `flutter run` (without --dart-define-from-file) working.
   static const String baseUrl = String.fromEnvironment(
     'BASE_URL',
-    defaultValue: 'https://check.flask-meet.site/',
     //defaultValue: 'https://web.flask-call-app.site/',
+    defaultValue: 'https://check.flask-meet.site/',
   );
 
   // API endpoints
@@ -16,26 +16,26 @@ class ApiConfig {
   static const String mobilePrefix = '/api/mobile';
 
   // Auth endpoints
-  static String get registerUrl => '$baseUrl$authPrefix/register';
-  static String get loginUrl => '$baseUrl$authPrefix/login';
-  static String get logoutUrl => '$baseUrl$authPrefix/logout';
-  static String get meUrl => '$baseUrl$authPrefix/me';
-  static String get forgotPasswordUrl => '$baseUrl$authPrefix/forgot-password';
-  static String get resetPasswordUrl => '$baseUrl$authPrefix/reset-password';
+  static const String registerUrl = '$baseUrl$authPrefix/register';
+  static const String loginUrl = '$baseUrl$authPrefix/login';
+  static const String logoutUrl = '$baseUrl$authPrefix/logout';
+  static const String meUrl = '$baseUrl$authPrefix/me';
+  static const String forgotPasswordUrl = '$baseUrl$authPrefix/forgot-password';
+  static const String resetPasswordUrl = '$baseUrl$authPrefix/reset-password';
 
   // Mobile endpoints
-  static String get lobbyUrl => '$baseUrl$mobilePrefix/lobby';
-  static String get usersUrl => '$baseUrl$mobilePrefix/users';
-  static String get contactsUrl => '$baseUrl$mobilePrefix/contacts';
-  static String get conversationsUrl =>
+  static const String lobbyUrl = '$baseUrl$mobilePrefix/lobby';
+  static const String usersUrl = '$baseUrl$mobilePrefix/users';
+  static const String contactsUrl = '$baseUrl$mobilePrefix/contacts';
+  static const String conversationsUrl =
       '$baseUrl$mobilePrefix/messages/conversations';
-  static String get sendMessageUrl => '$baseUrl$mobilePrefix/messages/send';
-  static String get sendManyMessagesUrl =>
+  static const String sendMessageUrl = '$baseUrl$mobilePrefix/messages/send';
+  static const String sendManyMessagesUrl =
       '$baseUrl$mobilePrefix/messages/send-many';
-  static String get markReadUrl => '$baseUrl$mobilePrefix/messages/mark-read';
-  static String get presenceStatusUrl =>
+  static const String markReadUrl = '$baseUrl$mobilePrefix/messages/mark-read';
+  static const String presenceStatusUrl =
       '$baseUrl$mobilePrefix/presence/status';
-  static String get heartbeatUrl => '$baseUrl$mobilePrefix/presence/heartbeat';
+  static const String heartbeatUrl = '$baseUrl$mobilePrefix/presence/heartbeat';
 
   // Timeouts
   static const Duration connectionTimeout = Duration(seconds: 30);
@@ -43,12 +43,12 @@ class ApiConfig {
   static const Duration forgotPasswordTimeout = Duration(seconds: 60);
 
   // App update endpoints
-  static String get appVersionUrl => '$baseUrl$mobilePrefix/app-version';
-  static String get appDownloadUrl => '$baseUrl$mobilePrefix/app-download';
+  static const String appVersionUrl = '$baseUrl$mobilePrefix/app-version';
+  static const String appDownloadUrl = '$baseUrl$mobilePrefix/app-download';
 
   // Task endpoints
-  static String get tasksUrl => '$baseUrl$mobilePrefix/tasks';
-  static String get chatTasksUrl => '$baseUrl$mobilePrefix/tasks/chat';
+  static const String tasksUrl = '$baseUrl$mobilePrefix/tasks';
+  static const String chatTasksUrl = '$baseUrl$mobilePrefix/tasks/chat';
   static String getChatTasksForUserUrl(int otherUserId) =>
       '$baseUrl$mobilePrefix/tasks/chat?other_user_id=$otherUserId';
   static String getTaskUrl(int taskId) => '$baseUrl$mobilePrefix/tasks/$taskId';
@@ -64,13 +64,13 @@ class ApiConfig {
       '$baseUrl$mobilePrefix/messages/excalidraw/unpin/$messageId';
 
   // Legacy Excalidraw board endpoints (kept for backward compatibility)
-  static String get excalidrawBoardsUrl =>
+  static const String excalidrawBoardsUrl =
       '$baseUrl$mobilePrefix/excalidraw/boards';
   static String getExcalidrawBoardUrl(String boardId) =>
       '$baseUrl$mobilePrefix/excalidraw/boards/$boardId';
 
   // Group endpoints
-  static String get groupsUrl => '$baseUrl$mobilePrefix/groups';
+  static const String groupsUrl = '$baseUrl$mobilePrefix/groups';
   static String getGroupUrl(int groupId) =>
       '$baseUrl$mobilePrefix/groups/$groupId';
   static String getGroupMembersUrl(int groupId) =>
@@ -95,6 +95,6 @@ class ApiConfig {
       '$baseUrl$mobilePrefix/groups/$groupId/doorbell';
 
   // Translation endpoints
-  static String get translateMessageUrl =>
-      '$baseUrl/api/mobile/translate_message';
+  static const String translateMessageUrl =
+      '$baseUrl$mobilePrefix/translate_message';
 }
