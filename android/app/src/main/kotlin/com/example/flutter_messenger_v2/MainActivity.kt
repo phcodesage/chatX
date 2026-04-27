@@ -103,6 +103,10 @@ class MainActivity : FlutterActivity() {
         pendingShortcutTargetUserId = extractShortcutTargetUserId(intent)
         pendingNotificationPayload = intent?.getStringExtra("notification_payload")
         Log.d("ShareDebug", "onCreate result: items=${pendingSharedItems.size}, sharedTarget=$pendingSharedTargetUserId, shortcutTarget=$pendingShortcutTargetUserId")
+
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            Log.e(TAG, "Uncaught exception in thread ${thread.name}: ${throwable.message}", throwable)
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -386,6 +390,31 @@ class MainActivity : FlutterActivity() {
         shortcutMethodChannel = null
         notificationPayloadChannel = null
         super.onDestroy()
+    }
+
+    /**
+     * Forward activity results to the FragmentManager so that
+     * ScreenRequestPermissionsFragment (used by flutter_webrtc's getDisplayMedia)
+     * receives the screen-capture permission result.
+     *
+     * FlutterActivity.onActivityResult() does NOT call super (Activity.onActivityResult),
+     * so android.app.Fragments added via getFragmentManager() never receive their results.
+     * We find the fragment by tag and dispatch directly.
+     */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        Log.d(TAG, "onActivityResult: requestCode=0x${requestCode.toString(16)} resultCode=$resultCode")
+        // Screen capture permission result from ScreenRequestPermissionsFragment.
+        // The fragment is added with tag = its fully-qualified class name.
+        val screenFragTag =
+            "com.cloudwebrtc.webrtc.GetUserMediaImpl\$ScreenRequestPermissionsFragment"
+        val screenFrag = fragmentManager.findFragmentByTag(screenFragTag)
+        if (screenFrag != null) {
+            Log.d(TAG, "Dispatching activity result to ScreenRequestPermissionsFragment")
+            // Strip the high-16-bit fragment-index encoding added by startActivityFromFragment()
+            screenFrag.onActivityResult(requestCode and 0xffff, resultCode, data)
+        }
+        // Always let FlutterActivity / the engine handle it too.
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onNewIntent(intent: Intent) {

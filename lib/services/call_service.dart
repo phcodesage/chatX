@@ -1566,6 +1566,7 @@ class CallService {
 
     try {
       debugPrint('🖥️ Starting screen share...');
+      debugPrint('🖥️ Preparing native Android screen share flow');
 
       // On Android, we need to start the foreground service first
       // This is required for media projection on Android 10+
@@ -1573,33 +1574,42 @@ class CallService {
         const channel = MethodChannel(
           'com.example.flutter_messenger_v2/screen_share',
         );
-        await channel.invokeMethod('startForegroundService', {
+        debugPrint('🖥️ Invoking startForegroundService via MethodChannel');
+        final result = await channel.invokeMethod('startForegroundService', {
           'notificationTitle': 'Screen Sharing',
           'notificationText': 'You are sharing your screen',
         });
-        debugPrint('🖥️ Foreground service started');
-      } catch (e) {
+        debugPrint('🖥️ Foreground service started, result: $result');
+      } catch (e, stack) {
         debugPrint(
           '⚠️ Could not start foreground service (may not be needed on this platform): $e',
         );
+        debugPrint(stack.toString().split('\n').take(5).join('\n'));
       }
 
-      // Get screen capture stream
-      _screenStream = await navigator.mediaDevices.getDisplayMedia({
-        'video': {
-          'width': {'ideal': 1920, 'max': 1920},
-          'height': {'ideal': 1080, 'max': 1080},
-          'frameRate': {'ideal': 30, 'max': 30},
-        },
-        // Keep the existing microphone track for call audio.
-        // Capturing system audio on Android is less reliable and can hurt FPS.
-        'audio': false,
-      });
+      debugPrint('🖥️ Requesting display media (native screen prompt should appear now)');
+      try {
+        _screenStream = await navigator.mediaDevices.getDisplayMedia({
+          'video': {
+            'width': {'ideal': 1920, 'max': 1920},
+            'height': {'ideal': 1080, 'max': 1080},
+            'frameRate': {'ideal': 30, 'max': 30},
+          },
+          // Keep the existing microphone track for call audio.
+          // Capturing system audio on Android is less reliable and can hurt FPS.
+          'audio': false,
+        });
+      } catch (e, stack) {
+        debugPrint('❌ getDisplayMedia failed: $e');
+        debugPrint(stack.toString().split('\n').take(10).join('\n'));
+        rethrow;
+      }
 
       if (_screenStream == null) {
         debugPrint('❌ Failed to get screen stream');
         return false;
       }
+      debugPrint('🖥️ Display media stream obtained: ${_screenStream!.id}, tracks: ${_screenStream!.getTracks().map((t) => '${t.kind}:${t.id}').join(', ')}');
 
       // Get the screen video track
       final screenTrack = _screenStream!.getVideoTracks().firstOrNull;
@@ -1609,6 +1619,7 @@ class CallService {
         _screenStream = null;
         return false;
       }
+      debugPrint('🖥️ Screen track obtained: ${screenTrack.id}, kind=${screenTrack.kind}');
 
       await _applyScreenTrackConstraints(screenTrack);
 
@@ -1726,8 +1737,9 @@ class CallService {
       // Also send the normal signal path above for backward compatibility.
       debugPrint('✅ Screen sharing started');
       return true;
-    } catch (e) {
+    } catch (e, stack) {
       debugPrint('❌ Error starting screen share: $e');
+      debugPrint(stack.toString().split('\n').take(10).join('\n'));
       return false;
     }
   }

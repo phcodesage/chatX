@@ -37,8 +37,19 @@ public class FlutterWebRTCForegroundService extends Service {
         Notification notification = buildNotification(title, text);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+            try {
+                startForeground(NOTIFICATION_ID, notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+            } catch (SecurityException e) {
+                // On Android 14+ targeting API 34+, startForeground with
+                // FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION may throw if the
+                // system considers the precondition unmet.  Fall back to a
+                // plain foreground notification so the service doesn't crash
+                // the process; screen-sharing will still be attempted.
+                android.util.Log.w("FlutterWebRTCFGS",
+                        "startForeground(mediaProjection) failed, using plain foreground: " + e);
+                startForeground(NOTIFICATION_ID, notification);
+            }
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }

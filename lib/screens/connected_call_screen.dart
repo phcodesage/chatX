@@ -61,7 +61,8 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   bool _showControls = true;
   bool _isSpeakerOn = true;
   bool _isScreenSharing = false;
-  bool _remoteIsScreenSharing = false;
+  bool _isRemoteScreenSharing = false;
+  bool _isScreenShareTransitioning = false;
   bool _remoteCameraEnabled = true;
   bool _isNoiseFilterEnabled = false;
 
@@ -304,7 +305,17 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
       // Set local stream - handle gracefully if not available
       try {
-        if (widget.localStream != null) {
+        final isLocalScreenShare = widget.callService.isScreenSharing;
+        debugPrint(
+          '📞 ConnectedCallScreen: Renderer local stream status: isLocalShare=$isLocalScreenShare, localStream=${widget.localStream?.id}, callService.localStream=${widget.callService.localStream?.id}, screenStream=${widget.callService.screenStream?.id}',
+        );
+        if (isLocalScreenShare && widget.callService.screenStream != null) {
+          debugPrint(
+            '📞 ConnectedCallScreen: Setting local screen share stream',
+          );
+          _localRenderer.srcObject = widget.callService.screenStream;
+          _isScreenSharing = true;
+        } else if (widget.localStream != null) {
           debugPrint(
             '📞 ConnectedCallScreen: Setting local stream from widget',
           );
@@ -365,6 +376,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
       debugPrint(
         '🎥 Connected call screen received remote stream (callType: ${widget.callType})',
       );
+      debugPrint('🎥 Remote stream id: ${stream.id}, tracks: ${stream.getTracks().map((t) => '${t.kind}:${t.id}').join(', ')}');
       if (mounted) {
         try {
           final remoteVideoTracks = stream.getVideoTracks();
@@ -373,7 +385,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
           // Keep UI in sync when remote video is toggled off/on.
           for (final track in remoteVideoTracks) {
             track.onMute = () {
-              if (!mounted || _remoteIsScreenSharing) return;
+              if (!mounted || _isRemoteScreenSharing) return;
               setState(() => _remoteCameraEnabled = false);
               debugPrint('🎥 Remote video muted (track event)');
             };
@@ -385,7 +397,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
           }
 
           setState(() {
-            if (widget.callType == 'video' && !_remoteIsScreenSharing) {
+            if (widget.callType == 'video' && !_isRemoteScreenSharing) {
               _remoteCameraEnabled = remoteVideoTracks.any(
                 (track) => track.enabled,
               );
@@ -465,15 +477,24 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
       debugPrint(
         '🖥️ Screen share changed: $isSharing (callType: ${widget.callType})',
       );
-      if (mounted) {
-        setState(() {
-          // If we're not sharing, it means remote started/stopped
-          if (!_isScreenSharing) {
-            _remoteIsScreenSharing = isSharing;
-            debugPrint('🖥️ Remote screen sharing: $_remoteIsScreenSharing');
-          }
-        });
-      }
+      if (!mounted) return;
+
+      setState(() {
+        final isLocalShare = widget.callService.isScreenSharing;
+        if (isLocalShare) {
+          _isScreenSharing = true;
+          _isRemoteScreenSharing = false;
+          _localRenderer.srcObject = widget.callService.screenStream ??
+              widget.callService.localStream;
+          debugPrint('🖥️ Local screen sharing started');
+        } else {
+          _isScreenSharing = false;
+          _isRemoteScreenSharing = isSharing;
+          _localRenderer.srcObject = widget.localStream ??
+              widget.callService.localStream;
+          debugPrint('🖥️ Remote screen sharing: $_isRemoteScreenSharing');
+        }
+      });
     };
 
     // Parse remote data-channel payloads (from web/mobile peer) to keep UI state in sync.
@@ -534,7 +555,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         if (mounted) {
           setState(() {
             if (!_isScreenSharing) {
-              _remoteIsScreenSharing = true;
+              _isRemoteScreenSharing = true;
               _remoteCameraEnabled = true;
             }
           });
@@ -542,7 +563,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
       } else if (rawMessage.contains('screen-share-stopped')) {
         if (mounted) {
           setState(() {
-            _remoteIsScreenSharing = false;
+            _isRemoteScreenSharing = false;
           });
         }
       }
@@ -555,7 +576,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     switch (type) {
       case 'cam-state':
         final enabled = _coerceBool(payload['enabled']);
-        if (enabled != null && mounted && !_remoteIsScreenSharing) {
+        if (enabled != null && mounted && !_isRemoteScreenSharing) {
           setState(() => _remoteCameraEnabled = enabled);
         }
         break;
@@ -565,7 +586,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
           if (mounted) {
             setState(() {
               if (!_isScreenSharing) {
-                _remoteIsScreenSharing = true;
+                _isRemoteScreenSharing = true;
                 _remoteCameraEnabled = true;
               }
             });
@@ -573,7 +594,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         } else if (phase == 'ended' || phase == 'stopped' || phase == 'stop') {
           if (mounted) {
             setState(() {
-              _remoteIsScreenSharing = false;
+              _isRemoteScreenSharing = false;
             });
           }
         }
@@ -726,30 +747,61 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   }
 
   Future<void> _toggleScreenShare() async {
-    // Send planning phase before starting
-    if (!_isScreenSharing) {
-      _sendDataChannelMessage({
-        'type': 'screen-share',
-        'phase': 'planning',
-        if (_localUserName.isNotEmpty) 'from': _localUserName,
-      });
+    if (_isScreenShareTransitioning) {
+      debugPrint('🖥️ Screen share toggle already in progress, ignoring duplicate request');
+      return;
     }
 
-    final result = await widget.callService.toggleScreenShare();
+    debugPrint(
+      '🖥️ Toggling screen share (current localShare=$_isScreenSharing, remoteShare=$_isRemoteScreenSharing, transitioning=$_isScreenShareTransitioning)',
+    );
     setState(() {
-      _isScreenSharing = result;
-      // Clear remote screen sharing indicator when we start sharing
-      if (_isScreenSharing) {
-        _remoteIsScreenSharing = false;
-      }
+      _isScreenShareTransitioning = true;
     });
 
-    // Send appropriate phase message
-    _sendDataChannelMessage({
-      'type': 'screen-share',
-      'phase': result ? 'started' : 'ended',
-      if (_localUserName.isNotEmpty) 'from': _localUserName,
-    });
+    try {
+      // Send planning phase before starting
+      if (!_isScreenSharing) {
+        _sendDataChannelMessage({
+          'type': 'screen-share',
+          'phase': 'planning',
+          if (_localUserName.isNotEmpty) 'from': _localUserName,
+        });
+      }
+
+      final result = await widget.callService.toggleScreenShare();
+      debugPrint('🖥️ toggleScreenShare result: $result');
+      if (!mounted) {
+        debugPrint('🖥️ toggleScreenShare returning after unmounted');
+        return;
+      }
+
+      setState(() {
+        _isScreenSharing = result;
+        _isRemoteScreenSharing = false;
+        // Clear remote screen sharing indicator when we start sharing
+        if (_isScreenSharing) {
+          _isRemoteScreenSharing = false;
+        }
+      });
+
+      // Send appropriate phase message
+      _sendDataChannelMessage({
+        'type': 'screen-share',
+        'phase': result ? 'started' : 'ended',
+        if (_localUserName.isNotEmpty) 'from': _localUserName,
+      });
+    } catch (e, stack) {
+      debugPrint('❌ ConnectedCallScreen: _toggleScreenShare failed: $e');
+      debugPrint(stack.toString().split('\n').take(5).join('\n'));
+      rethrow;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isScreenShareTransitioning = false;
+        });
+      }
+    }
   }
 
   void _sendDataChannelMessage(Map<String, dynamic> message) {
@@ -999,7 +1051,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
   @override
   Widget build(BuildContext context) {
     debugPrint(
-      '📞 ConnectedCallScreen: build() called for ${widget.callType} call (mounted: $mounted)',
+      '📞 ConnectedCallScreen: build() called for ${widget.callType} call (mounted: $mounted, showControls: $_showControls, inPip: $_isInPipMode, localShare: $_isScreenSharing, remoteShare: $_isRemoteScreenSharing, remoteCameraEnabled: $_remoteCameraEnabled)',
     );
 
     return PopScope(
@@ -1026,6 +1078,10 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
                     // Top bar with call info - hide in PiP mode
                     if (_showControls && !_isInPipMode) _buildTopBar(),
+
+                    // Quick minimize control centered at the top.
+                    if (_showControls && !_isInPipMode)
+                      _buildTopCenterMinimizeButton(),
                   ],
                 ),
               ),
@@ -1044,9 +1100,9 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
 
     // Show avatar view when there is no remote video feed to display.
     final shouldShowAvatar =
-        (widget.callType == 'audio' && !_remoteIsScreenSharing) ||
+        (widget.callType == 'audio' && !_isRemoteScreenSharing) ||
         (widget.callType == 'video' &&
-            !_remoteIsScreenSharing &&
+            !_isRemoteScreenSharing &&
             !_remoteCameraEnabled);
 
     if (shouldShowAvatar) {
@@ -1115,7 +1171,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
             ),
           ),
           // Screen share indicator
-          if (_remoteIsScreenSharing)
+          if (_isRemoteScreenSharing)
             Positioned(
               top: MediaQuery.of(context).padding.top + 60,
               left: 0,
@@ -1267,6 +1323,45 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     );
   }
 
+  Widget _buildTopCenterMinimizeButton() {
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 4,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: GestureDetector(
+          onTap: _minimizeToOverlay,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.52),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.2),
+                width: 1,
+              ),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white),
+                SizedBox(width: 4),
+                Text(
+                  'Minimize',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomControls() {
     final controls = <Widget>[
       _buildControlButton(
@@ -1302,6 +1397,7 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
         label: _isScreenSharing ? 'Stop sharing' : 'Share screen',
         backgroundColor: const Color(0xFF8B5CF6),
         onTap: _toggleScreenShare,
+        enabled: !_isScreenShareTransitioning,
       ),
       _buildControlButton(
         label: _isNoiseFilterEnabled ? 'Noise filter ON' : 'Noise reduction',
@@ -1367,27 +1463,31 @@ class _ConnectedCallScreenState extends State<ConnectedCallScreen>
     VoidCallback? onLongPress,
     Color backgroundColor = const Color(0xFF22C55E),
     Color textColor = Colors.white,
+    bool enabled = true,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      child: Container(
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            height: 1.1,
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.5,
+      child: GestureDetector(
+        onTap: enabled ? onTap : null,
+        onLongPress: enabled ? onLongPress : null,
+        child: Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: BoxDecoration(
+            color: enabled ? backgroundColor : Colors.grey.shade700,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              height: 1.1,
+            ),
           ),
         ),
       ),

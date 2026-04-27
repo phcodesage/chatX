@@ -34,6 +34,7 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
   late AnimationController _pulseController;
   bool _hasBeenConnected = false; // Track if call was ever connected
   final AudioPlayer _ringingPlayer = AudioPlayer();
+  bool _hasStoppedRinging = false;
 
   static const Duration noAnswerTimeout = Duration(seconds: 45);
 
@@ -95,10 +96,15 @@ class _OutgoingCallModalState extends State<OutgoingCallModal>
   }
 
   /// Stop the ringing sound
-  void _stopRingingSound() {
+  Future<void> _stopRingingSound() async {
+    if (_hasStoppedRinging) {
+      return;
+    }
+
+    _hasStoppedRinging = true;
     try {
-      _ringingPlayer.stop();
-      _ringingPlayer.dispose();
+      await _ringingPlayer.stop();
+      await _ringingPlayer.dispose();
       debugPrint('🔇 Ringing sound stopped');
     } catch (e) {
       debugPrint('Error stopping ringing sound: $e');
