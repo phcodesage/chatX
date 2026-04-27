@@ -19,9 +19,18 @@ class _SettingsModalState extends State<SettingsModal> {
 
   void _handleSave() async {
     await StorageService.saveUseMilitaryTime(_useMilitaryTime);
-    if (mounted) {
-      Navigator.pop(context, true);
-    }
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Timestamp format saved successfully'),
+        backgroundColor: Color(0xFF22C55E),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    Navigator.pop(context, true);
   }
 
   Widget _buildOptionBox({

@@ -2532,7 +2532,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
             itemBuilder: (context) => const [
               PopupMenuItem<String>(
                 value: 'settings',
-                child: Text('Settings', style: TextStyle(color: Colors.white)),
+                child: Text('Timestamp settings', style: TextStyle(color: Colors.white)),
               ),
               PopupMenuItem<String>(
                 value: 'logout',

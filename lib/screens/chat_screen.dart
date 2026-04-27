@@ -62,6 +62,100 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
+class LiveChatTimestampHeader extends StatefulWidget {
+  final double scale;
+
+  const LiveChatTimestampHeader({
+    super.key,
+    required this.scale,
+  });
+
+  @override
+  State<LiveChatTimestampHeader> createState() => _LiveChatTimestampHeaderState();
+}
+
+class _LiveChatTimestampHeaderState extends State<LiveChatTimestampHeader> {
+  late DateTime _currentDateTime;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentDateTime = DateTime.now();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {
+        _currentDateTime = DateTime.now();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String _formattedTimestamp() {
+    final now = _currentDateTime;
+    const weekdays = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+
+    final date = '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final hour12 = now.hour % 12 == 0 ? 12 : now.hour % 12;
+    final minute = now.minute.toString().padLeft(2, '0');
+    final second = now.second.toString().padLeft(2, '0');
+    final period = now.hour >= 12 ? 'PM' : 'AM';
+    final timezone = now.timeZoneName;
+    final weekday = weekdays[now.weekday - 1];
+    final month = months[now.month - 1];
+
+    return '$date $hour12:$minute:$second $period $timezone - $weekday, $month ${now.day}, ${now.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: 16 * widget.scale,
+        vertical: 8 * widget.scale,
+      ),
+      color: const Color(0xFF1F1F1F),
+      child: Text(
+        _formattedTimestamp(),
+        style: TextStyle(
+          color: Colors.grey[300],
+          fontSize: 13 * widget.scale,
+          fontWeight: FontWeight.w500,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+}
+
 class _ChatScreenState extends State<ChatScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final SocketService _socketService = SocketService();
@@ -8578,6 +8672,7 @@ class _ChatScreenState extends State<ChatScreen>
           children: [
             Column(
               children: [
+                LiveChatTimestampHeader(scale: scale),
                 // Messages list
                 Expanded(
                   child: _isLoading
