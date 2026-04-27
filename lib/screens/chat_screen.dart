@@ -11854,19 +11854,144 @@ class _ChatScreenState extends State<ChatScreen>
     return parsed.toLocal();
   }
 
-  /// Format last seen timestamp as relative time
+  /// Format last seen timestamp as relative time for header/profile labels.
+  /// Examples: today, 8 hours ago, yesterday, 3 days ago
   String _formatLastSeen(String timestamp) {
     try {
       final DateTime lastSeen = _parseUtcTimestamp(timestamp);
       final DateTime now = DateTime.now();
       final Duration difference = now.difference(lastSeen);
+      final DateTime todayStart = DateTime(now.year, now.month, now.day);
+      final DateTime yesterdayStart = todayStart.subtract(
+        const Duration(days: 1),
+      );
 
-      if (difference.inMinutes < 1) {
-        return 'just now';
-      } else if (difference.inMinutes < 60) {
-        final mins = difference.inMinutes;
-        return '$mins ${mins == 1 ? "minute" : "minutes"} ago';
-      } else if (difference.inHours < 24) {
+      if (!lastSeen.isBefore(todayStart)) {
+        if (difference.inHours >= 1) {
+          final hours = difference.inHours;
+          return '$hours ${hours == 1 ? "hour" : "hours"} ago';
+        }
+        return 'today';
+      }
+
+      if (!lastSeen.isBefore(yesterdayStart)) {
+        return 'yesterday';
+      }
+
+      if (difference.inDays < 7) {
+        final days = difference.inDays;
+        return '$days ${days == 1 ? "day" : "days"} ago';
+      }
+
+      if (difference.inDays < 30) {
+        final weeks = (difference.inDays / 7).floor();
+        return '$weeks ${weeks == 1 ? "week" : "weeks"} ago';
+      }
+
+      if (difference.inDays < 365) {
+        final months = (difference.inDays / 30).floor();
+        return '$months ${months == 1 ? "month" : "months"} ago';
+      }
+
+      final years = (difference.inDays / 365).floor();
+      return '$years ${years == 1 ? "year" : "years"} ago';
+    } catch (e) {
+      debugPrint('Error parsing last seen: $e');
+      return 'recently';
+    }
+  }
+
+  String? _formattedPartnerLastSeen() {
+    final raw = _partnerLastSeen;
+    if (raw == null || raw.isEmpty) return null;
+    return _formatLastSeen(raw);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = _uiScale(context);
+    final keyboardInset = _effectiveKeyboardInset(context);
+    final emojiPanelHeight = _emojiPanelHeight(keyboardInset);
+    final stablePanelHeight =
+        _isSwitchingInputMode && _lockedInputPanelHeight > 0
+        ? _lockedInputPanelHeight
+        : (_showEmojiPicker ? emojiPanelHeight : keyboardInset);
+    final actionPanelInset = (_isActionsPanelOpen && _actionsPanelFromKeyboard)
+      ? _actionsPanelInset
+      : 0.0;
+    final composerInset = _showEmojiPicker
+      ? 0.0
+      : math.max(stablePanelHeight, actionPanelInset);
+    return Scaffold(
+      resizeToAvoidBottomInset: false,
+      backgroundColor: const Color(0xFF2C2C2C),
+      appBar: ChatHeader(
+        otherUser: widget.otherUser,
+        headerColor: _headerColor,
+        isSelfChat: _isSelfChat,
+        callInProgressOnOtherDevice: _callInProgressOnOtherDevice,
+        partnerStatus: _partnerStatus,
+        partnerLastSeen: _formattedPartnerLastSeen(),
+        taskCount: _taskMessages.where((m) => m.isTask).length,
+        excalidrawCount: _pinnedExcalidrawLinks.length,
+        scale: scale,
+        onBack: () => Navigator.pop(context),
+        onUserProfile: _showUserProfile,
+        onShowTasks: _showTasksModal,
+        onShowExcalidraw: _showExcalidrawModal,
+        onCallAudio: () => _showCallSetupModal(CallType.audio),
+        onCallVideo: () => _showCallSetupModal(CallType.video),
+      ),
+      body: GestureDetector(
+        // Tap outside the modal to dismiss it
+        behavior: HitTestBehavior.translucent,
+        child: Stack(
+          children: [
+            Column(
+              children: [
+                LiveChatTimestampHeader(scale: scale),
+                // Messages list
+                Expanded(
+                  child: ChatMessageList(
+                    scale: scale,
+                    controller: _scrollController,
+                    isLoading: _isLoading,
+                    messages: _messages,
+                    hasMoreMessages: _hasMoreMessages,
+                    isLoadingMore: _isLoadingMore,
+                    onLoadMoreMessages: _loadMoreMessages,
+                    loadingWidgetBuilder: (_) => _buildChatShimmer(),
+                    itemBuilder: (context, index) {
+                      // "Load more" button is handled inside ChatMessageList.
+                      final message = _messages[index];
+
+                      if (message.isDeleted) {
+                        return const SizedBox.shrink();
+                      }
+
+                      final isSentByMe =
+                          message.senderId.toString() == _currentUserId.toString();
+
+                      return ChatMessageItem(
+                        scale: scale,
+                        message: message,
+                        isSentByMe: isSentByMe,
+                        showDateSeparator: _shouldShowDateSeparator(index),
+                        dateSeparatorBuilder: () => ChatDateSeparator(
+                          dateLabel: message.formattedDate,
+                          scale: scale,
+                        ),
+                        swipeableBuilder: (child) => SwipeableMessage(
+                          scale: scale,
+                          onReply: () => _setReplyMessage(message),
+                          child: child,
+                        ),
+                        bubbleBuilder: () => _buildMessageBubble(message, isSentByMe),
+                      );
+                    },
+                  ),
+                ),
+*** End Patch
         final hours = difference.inHours;
         return '$hours ${hours == 1 ? "hour" : "hours"} ago';
       } else if (difference.inDays == 1) {

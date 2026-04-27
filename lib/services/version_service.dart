@@ -71,7 +71,7 @@ class ApkDownloader {
     final tempDir = await getTemporaryDirectory();
     final safeVersion = version.replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '_');
     final buildSuffix = buildNumber > 0 ? '_build$buildNumber' : '';
-    final outputPath = '$tempDir.path/flask_call_app_$safeVersion$buildSuffix.apk';
+    final outputPath = '${tempDir.path}/flask_call_app_$safeVersion$buildSuffix.apk';
 
     final headers = <String, String>{
       'Accept': 'application/vnd.android.package-archive,application/octet-stream,*/*',
@@ -115,6 +115,11 @@ class ApkDownloader {
   }
 
   Future<OpenResult> launchInstaller(String apkPath) {
+    final apkFile = File(apkPath);
+    if (!apkFile.existsSync()) {
+      throw Exception('APK file not found at path: $apkPath');
+    }
+
     return OpenFilex.open(
       apkPath,
       type: 'application/vnd.android.package-archive',

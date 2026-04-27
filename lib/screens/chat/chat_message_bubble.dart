@@ -159,7 +159,9 @@ class ChatMessageBubble extends StatelessWidget {
             else if (isMedia || isAudio)
               const SizedBox(height: 8),
             if (isSentByMe)
-              _buildSentStatusRow(message, scale),
+              _buildSentStatusRow(message, scale)
+            else
+              _buildIncomingTimeRow(message, scale),
             if (showTimestamps)
               Padding(
                 padding: EdgeInsets.symmetric(
@@ -575,6 +577,27 @@ class ChatMessageBubble extends StatelessWidget {
           ),
           SizedBox(width: 4 * scale),
           buildStatusIndicator(statusForUi(message), scale),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIncomingTimeRow(Message message, double scale) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: 16 * scale,
+        vertical: 6 * scale,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            message.formattedTime,
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 11 * scale,
+            ),
+          ),
         ],
       ),
     );

@@ -161,10 +161,11 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
 
   Widget _buildHeaderStatusPill(double scale) {
     final status = partnerStatus;
+    final statusFontSize = (11.5 * scale).clamp(11.0, 13.0).toDouble();
     final label = status == 'online'
         ? 'Online'
         : partnerLastSeen != null
-            ? 'Last seen $partnerLastSeen'
+            ? 'Last seen: $partnerLastSeen'
             : 'Offline';
 
     return Padding(
@@ -172,9 +173,10 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
       child: Text(
         label,
         style: TextStyle(
-          color: Colors.grey[300],
-          fontSize: 11 * scale,
-          fontWeight: FontWeight.w400,
+          color: Colors.white.withValues(alpha: 0.9),
+          fontSize: statusFontSize,
+          fontWeight: FontWeight.w500,
+          height: 1.12,
         ),
         overflow: TextOverflow.ellipsis,
       ),
