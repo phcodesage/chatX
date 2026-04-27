@@ -71,7 +71,7 @@ class ApkDownloader {
     final tempDir = await getTemporaryDirectory();
     final safeVersion = version.replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '_');
     final buildSuffix = buildNumber > 0 ? '_build$buildNumber' : '';
-    final outputPath = '${tempDir.path}/flask_call_app_${safeVersion}$buildSuffix.apk';
+    final outputPath = '$tempDir.path/flask_call_app_$safeVersion$buildSuffix.apk';
 
     final headers = <String, String>{
       'Accept': 'application/vnd.android.package-archive,application/octet-stream,*/*',
@@ -140,6 +140,8 @@ class VersionService {
 
   bool _isChecking = false;
   bool _dialogVisible = false;
+  DateTime? _lastVersionCheckTime;
+  static const Duration _minVersionCheckInterval = Duration(minutes: 15);
   String? _lastPromptedVersion;
 
   void _log(String message) {
@@ -159,8 +161,15 @@ class VersionService {
       _log('Skipped check: update dialog is already visible.');
       return;
     }
+    if (_lastVersionCheckTime != null &&
+        DateTime.now().difference(_lastVersionCheckTime!) <
+            _minVersionCheckInterval) {
+      _log('Skipped check: version check was performed recently.');
+      return;
+    }
 
     _isChecking = true;
+    _lastVersionCheckTime = DateTime.now();
     _log('Starting version check. Endpoint: ${ApiConfig.appVersionUrl}');
     try {
       final packageInfo = await PackageInfo.fromPlatform();
@@ -224,7 +233,7 @@ class VersionService {
 
       await showDialog<void>(
         context: context,
-        barrierDismissible: !info.forceUpdate,
+        barrierDismissible: false,
         builder: (dialogContext) {
           return UpdateDialog(
             info: info,
@@ -440,7 +449,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final canDismiss = !widget.info.forceUpdate && !_isDownloading;
+    final canDismiss = false;
     const appBlue = Color(0xFF1E3A8A);
     const appCard = Color(0xFF344256);
     const appPrimary = Color(0xFF2E2A8B);
@@ -455,7 +464,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
-          side: BorderSide(color: appBlue.withOpacity(0.55), width: 1),
+          side: BorderSide(color: appBlue.withValues(alpha: 0.55), width: 1),
         ),
         titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
         contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
@@ -544,7 +553,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
                 decoration: BoxDecoration(
                   color: appSurface,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: appBlue.withOpacity(0.35)),
+                  border: Border.all(color: appBlue.withValues(alpha: 0.35)),
                 ),
                 child: Text(
                   _status,
@@ -568,14 +577,6 @@ class _UpdateDialogState extends State<UpdateDialog> {
         actions: _isDownloading
             ? null
             : [
-                if (!widget.info.forceUpdate)
-                  TextButton(
-                    style: TextButton.styleFrom(
-                      foregroundColor: appMutedText,
-                    ),
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Later'),
-                  ),
                 FilledButton(
                   style: FilledButton.styleFrom(
                     backgroundColor: appPrimary,
@@ -626,7 +627,7 @@ class _VersionBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
         color: appSurface,
-        border: Border.all(color: appBlue.withOpacity(0.45)),
+        border: Border.all(color: appBlue.withValues(alpha: 0.45)),
         borderRadius: BorderRadius.circular(10),
       ),
       child: RichText(

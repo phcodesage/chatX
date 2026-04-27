@@ -1,0 +1,28 @@
+# Slow frame / route logs
+
+These are the slow-frame output lines captured from the app console.
+Because the app is using anonymous `MaterialPageRoute` without a route name, the route is currently shown as `MaterialPageRoute<dynamic>`.
+
+🐢 Slow frame #18: total=175ms, build=132ms, raster=40ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #19: total=47ms, build=3ms, raster=22ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #20: total=30ms, build=15ms, raster=14ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #21: total=23ms, build=1ms, raster=9ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #22: total=21ms, build=1ms, raster=10ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #23: total=19ms, build=2ms, raster=14ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #24: total=19ms, build=2ms, raster=16ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #25: total=19ms, build=3ms, raster=15ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #26: total=20ms, build=2ms, raster=17ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #27: total=18ms, build=2ms, raster=14ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #28: total=18ms, build=1ms, raster=16ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #29: total=18ms, build=1ms, raster=15ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #30: total=20ms, build=1ms, raster=18ms, route=MaterialPageRoute<dynamic>
+🐢 Slow frame #31: total=19ms, build=0ms, raster=15ms, route=MaterialPageRoute<dynamic>
+
+# Rebuilds around the slow frame
+Rebuilding `AnimatedPhysicalModel` repeatedly with ticker active appears to be part of the expensive update.
+
+# Notes
+- The current route name output is not a friendly screen name because `MaterialPageRoute` has no `RouteSettings.name`.
+- To get actual screen names, push named routes or supply `RouteSettings(name: '/screenName')` when creating routes.
+- If you want this file to capture future logs automatically, run the app and redirect output:
+  `flutter run | tee slow_frame_route_logs.txt`

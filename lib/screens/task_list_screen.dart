@@ -428,24 +428,26 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final pendingTasks = allTasks.where((t) => !t.isCompleted).toList();
     final completedTasks = allTasks.where((t) => t.isCompleted).toList();
 
+    final taskBuilders = <Widget Function()>[];
+    if (pendingTasks.isNotEmpty) {
+      taskBuilders.add(() => _buildSectionHeader('Pending', pendingTasks.length));
+      taskBuilders.add(() => const SizedBox(height: 8));
+      taskBuilders.addAll(pendingTasks.map((task) => () => _buildTaskCard(task)));
+    }
+    if (completedTasks.isNotEmpty) {
+      taskBuilders.add(() => const SizedBox(height: 24));
+      taskBuilders.add(() => _buildSectionHeader('Completed', completedTasks.length));
+      taskBuilders.add(() => const SizedBox(height: 8));
+      taskBuilders.addAll(completedTasks.map((task) => () => _buildTaskCard(task)));
+    }
+
     return RefreshIndicator(
       onRefresh: _loadTasks,
       color: const Color(0xFF8B5CF6),
-      child: ListView(
+      child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        children: [
-          if (pendingTasks.isNotEmpty) ...[
-            _buildSectionHeader('Pending', pendingTasks.length),
-            const SizedBox(height: 8),
-            ...pendingTasks.map((task) => _buildTaskCard(task)),
-          ],
-          if (completedTasks.isNotEmpty) ...[
-            const SizedBox(height: 24),
-            _buildSectionHeader('Completed', completedTasks.length),
-            const SizedBox(height: 8),
-            ...completedTasks.map((task) => _buildTaskCard(task)),
-          ],
-        ],
+        itemCount: taskBuilders.length,
+        itemBuilder: (context, index) => taskBuilders[index](),
       ),
     );
   }

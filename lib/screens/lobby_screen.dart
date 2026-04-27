@@ -1160,7 +1160,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       _lobbyUsers[userIndex] = updatedUser;
       _lobbyUsers.removeAt(userIndex);
       _lobbyUsers.insert(0, updatedUser);
-      _filterUsers();
+      _updateFilteredLists();
     });
 
     debugPrint('Doorbell ring received from ${data['sender_name']}');
@@ -1313,7 +1313,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         _lobbyUsers.insert(0, updatedUser);
 
         // Update filtered list
-        _filterUsers();
+        _updateFilteredLists();
       }
     });
   }
@@ -1372,7 +1372,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         _lobbyUsers.insert(0, updatedUser);
 
         // Update filtered list
-        _filterUsers();
+        _updateFilteredLists();
       }
     });
   }
@@ -1418,7 +1418,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         _lobbyUsers[userIndex] = updatedUser;
         _lobbyUsers.removeAt(userIndex);
         _lobbyUsers.insert(0, updatedUser);
-        _filterUsers();
+        _updateFilteredLists();
       }
     });
   }
@@ -1466,7 +1466,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         _lobbyUsers[userIndex] = updatedUser;
         _lobbyUsers.removeAt(userIndex);
         _lobbyUsers.insert(0, updatedUser);
-        _filterUsers();
+        _updateFilteredLists();
       }
     });
   }
@@ -1506,7 +1506,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         );
 
         _lobbyUsers[userIndex] = updatedUser;
-        _filterUsers();
+        _updateFilteredLists();
       }
     });
   }
@@ -1553,7 +1553,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           }
         }
       }
-      _filterUsers();
+      _updateFilteredLists();
     });
   }
 
@@ -1891,29 +1891,87 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   /// Builds a time-sorted list of user tiles interleaved with the AI tile,
   /// so the most recently active conversation always rises to the top.
-  List<Widget> _buildSortedUserAndAiTiles(
+  List<Widget Function()> _buildSortedUserAndAiTileBuilders(
     List<LobbyUser> users, {
     bool includeAi = false,
     bool isOnlineSection = false,
   }) {
-    final entries = <({DateTime time, Widget tile})>[];
+    final builders = <Widget Function()>[];
+
+    if (!includeAi) {
+      builders.addAll(users.map(
+        (user) => () => _buildUserTile(user, isOnlineSection: isOnlineSection),
+      ));
+      return builders;
+    }
+
+    final aiTime = _parseMessageTime(_aiLastMessageTime);
+    var aiInserted = false;
 
     for (final user in users) {
-      entries.add((
-        time: _parseMessageTime(user.lastMessageTime),
-        tile: _buildUserTile(user, isOnlineSection: isOnlineSection),
+      final userTime = _parseMessageTime(user.lastMessageTime);
+      if (!aiInserted && aiTime.compareTo(userTime) >= 0) {
+        builders.add(_buildAiChatTile);
+        aiInserted = true;
+      }
+      builders.add(
+        () => _buildUserTile(user, isOnlineSection: isOnlineSection),
+      );
+    }
+
+    if (!aiInserted) {
+      builders.add(_buildAiChatTile);
+    }
+
+    return builders;
+  }
+
+  List<Widget Function()> _buildLobbyListItemBuilders(
+    List<LobbyUser> selectedUsers,
+    String selectedSectionTitle,
+    Color selectedSectionColor,
+    bool showAiChatTile,
+  ) {
+    final items = <Widget Function()>[];
+
+    if (_activeFilter == LobbyQuickFilter.groups) {
+      if (_filteredGroups.isNotEmpty) {
+        items.add(_buildGroupsSectionHeader);
+        items.addAll(_filteredGroups.map(
+          (group) => () => _buildGroupTile(group),
+        ));
+      }
+      return items;
+    }
+
+    if (_activeFilter != LobbyQuickFilter.all &&
+        _activeFilter != LobbyQuickFilter.groups) {
+      items.add(() => _buildSectionHeader(
+            selectedSectionTitle,
+            selectedUsers.length,
+            selectedSectionColor,
+          ));
+    }
+
+    if (_activeFilter == LobbyQuickFilter.all) {
+      if (_filteredGroups.isNotEmpty) {
+        items.add(_buildGroupsSectionHeader);
+        items.addAll(_filteredGroups.map(
+          (group) => () => _buildGroupTile(group),
+        ));
+      }
+      items.addAll(_buildSortedUserAndAiTileBuilders(
+        selectedUsers,
+        includeAi: showAiChatTile,
+      ));
+    } else {
+      items.addAll(_buildSortedUserAndAiTileBuilders(
+        selectedUsers,
+        isOnlineSection: _activeFilter == LobbyQuickFilter.online,
       ));
     }
 
-    if (includeAi) {
-      entries.add((
-        time: _parseMessageTime(_aiLastMessageTime),
-        tile: _buildAiChatTile(),
-      ));
-    }
-
-    entries.sort((a, b) => b.time.compareTo(a.time));
-    return entries.map((e) => e.tile).toList();
+    return items;
   }
 
   List<Group> _sortGroupsByRecentActivity(List<Group> groups) {
@@ -1928,41 +1986,36 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return sortedGroups;
   }
 
-  void _filterUsers() {
+  void _updateFilteredLists() {
     final query = _searchController.text.toLowerCase();
-    setState(() {
-      // Filter users
-      List<LobbyUser> filtered;
-      if (query.isEmpty) {
-        filtered = List.from(_lobbyUsers);
-      } else {
-        filtered = _lobbyUsers.where((user) {
-          return user.fullName.toLowerCase().contains(query) ||
-              user.username.toLowerCase().contains(query) ||
-              user.email.toLowerCase().contains(query) ||
-              (user.lastMessage?.toLowerCase().contains(query) ?? false);
-        }).toList();
-      }
 
-      // Filter groups
-      List<Group> filteredGroups;
-      if (query.isEmpty) {
-        filteredGroups = List.from(_groups);
-      } else {
-        filteredGroups = _groups.where((group) {
-          return group.name.toLowerCase().contains(query) ||
-              (group.description?.toLowerCase().contains(query) ?? false) ||
-              (group.lastMessage?.content.toLowerCase().contains(query) ??
-                  false);
-        }).toList();
-      }
+    // Filter users
+    final filteredUsers = query.isEmpty
+        ? List<LobbyUser>.from(_lobbyUsers)
+        : _lobbyUsers.where((user) {
+            return user.fullName.toLowerCase().contains(query) ||
+                user.username.toLowerCase().contains(query) ||
+                user.email.toLowerCase().contains(query) ||
+                (user.lastMessage?.toLowerCase().contains(query) ?? false);
+          }).toList();
 
-      filtered = _sortUsersByRecentActivity(filtered);
-      filteredGroups = _sortGroupsByRecentActivity(filteredGroups);
+    // Filter groups
+    final filteredGroups = query.isEmpty
+        ? List<Group>.from(_groups)
+        : _groups.where((group) {
+            return group.name.toLowerCase().contains(query) ||
+                (group.description?.toLowerCase().contains(query) ?? false) ||
+                (group.lastMessage?.content.toLowerCase().contains(query) ??
+                    false);
+          }).toList();
 
-      _filteredUsers = filtered;
-      _filteredGroups = filteredGroups;
-    });
+    _filteredUsers = _sortUsersByRecentActivity(filteredUsers);
+    _filteredGroups = _sortGroupsByRecentActivity(filteredGroups);
+  }
+
+  void _filterUsers() {
+    if (!mounted) return;
+    setState(_updateFilteredLists);
   }
 
   Color _getAvatarColor(int index) {
@@ -2492,6 +2545,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final showAiChatTile =
       _activeFilter == LobbyQuickFilter.all && aiMatchesQuery;
     final hasVisibleResults = !isFilterEmpty || showAiChatTile;
+    final lobbyItemBuilders = _buildLobbyListItemBuilders(
+      selectedUsers,
+      selectedSectionTitle,
+      selectedSectionColor,
+      showAiChatTile,
+    );
 
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A2E),
@@ -2627,40 +2686,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     onRefresh: () => _loadLobby(useCacheFirst: false),
                     color: const Color(0xFF00D9FF),
                     backgroundColor: const Color(0xFF252542),
-                    child: ListView(
-                      children: [
-                        if (_activeFilter == LobbyQuickFilter.groups)
-                          _buildGroupsSectionHeader(),
-                        if (_activeFilter == LobbyQuickFilter.all &&
-                            _filteredGroups.isNotEmpty)
-                          _buildGroupsSectionHeader(),
-                        if (_activeFilter != LobbyQuickFilter.all &&
-                            _activeFilter != LobbyQuickFilter.groups)
-                          _buildSectionHeader(
-                            selectedSectionTitle,
-                            selectedUsers.length,
-                            selectedSectionColor,
-                          ),
-                        if (_activeFilter == LobbyQuickFilter.all) ...[
-                          if (_filteredGroups.isNotEmpty)
-                            ..._filteredGroups.map(
-                              (group) => _buildGroupTile(group),
-                            ),
-                          ..._buildSortedUserAndAiTiles(
-                            selectedUsers,
-                            includeAi: showAiChatTile,
-                          ),
-                        ] else if (_activeFilter == LobbyQuickFilter.groups)
-                          ..._filteredGroups.map(
-                            (group) => _buildGroupTile(group),
-                          )
-                        else
-                          ..._buildSortedUserAndAiTiles(
-                            selectedUsers,
-                            isOnlineSection:
-                                _activeFilter == LobbyQuickFilter.online,
-                          ),
-                      ],
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      itemCount: lobbyItemBuilders.length,
+                      itemBuilder: (context, index) {
+                        return lobbyItemBuilders[index]();
+                      },
                     ),
                   ),
           ),

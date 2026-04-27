@@ -323,7 +323,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
         case 'message_deleted':
           final raw = payload['deleted_message'];
           if (raw is! Map) return;
-          final deleted = Map<String, dynamic>.from(raw as Map);
+          final deleted = Map<String, dynamic>.from(raw);
           final deletedId = deleted['id']?.toString();
           if (deletedId == null) break;
           setState(() {
@@ -1220,12 +1220,12 @@ class _AiChatScreenState extends State<AiChatScreen> {
                     ),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                      color: Colors.white.withOpacity(0.25),
+                      color: Colors.white.withValues(alpha: 0.25),
                       width: 0.8,
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: endColor.withOpacity(0.35),
+                        color: endColor.withValues(alpha: 0.35),
                         blurRadius: 16,
                         offset: const Offset(0, 8),
                       ),
@@ -1530,7 +1530,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                 height: 5,
                 margin: const EdgeInsets.only(bottom: 10),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.28),
+                  color: Colors.white.withValues(alpha: 0.28),
                   borderRadius: BorderRadius.circular(999),
                 ),
               ),
@@ -1618,7 +1618,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
             decoration: BoxDecoration(
               color: tileColor,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
@@ -1954,7 +1954,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
           style: TextStyle(
             fontFamily: 'monospace',
             fontSize: 13,
-            backgroundColor: Colors.white.withOpacity(0.12),
+            backgroundColor: Colors.white.withValues(alpha: 0.12),
             color: const Color(0xFF7DD3FC),
           ),
         ));
@@ -2098,7 +2098,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         child: Icon(
                           Icons.sentiment_satisfied_alt_outlined,
-                          color: Colors.white.withOpacity(0.6),
+                          color: Colors.white.withValues(alpha: 0.6),
                           size: 22,
                         ),
                       ),
@@ -2163,8 +2163,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
           containedInkWell: true,
           highlightShape: BoxShape.circle,
           radius: iconSize * 0.9,
-          splashColor: Colors.white.withOpacity(0.22),
-          highlightColor: Colors.white.withOpacity(0.14),
+          splashColor: Colors.white.withValues(alpha: 0.22),
+          highlightColor: Colors.white.withValues(alpha: 0.14),
           child: Padding(
             padding: padding,
             child: Icon(icon, color: color, size: iconSize),
@@ -2490,7 +2490,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: sendButtonColor,
                             foregroundColor: Colors.white,
-                            overlayColor: Colors.white.withOpacity(0.22),
+                            overlayColor: Colors.white.withValues(alpha: 0.22),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 14,
                               vertical: 10,

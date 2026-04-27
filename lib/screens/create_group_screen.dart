@@ -89,6 +89,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   Future<void> _createGroup() async {
     // Double-check admin access before creating
     final isAdmin = await StorageService.getIsAdmin();
+    if (!mounted) return;
     if (!isAdmin) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -124,20 +125,18 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
         memberIds: _selectedUserIds.toList(),
       );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Group created successfully')),
-        );
-        Navigator.pop(context, true);
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Group created successfully')),
+      );
+      Navigator.pop(context, true);
     } catch (e) {
       debugPrint('Error creating group: $e');
-      if (mounted) {
-        setState(() => _isCreating = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to create group: $e')));
-      }
+      if (!mounted) return;
+      setState(() => _isCreating = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to create group: $e')),
+      );
     }
   }
 
@@ -313,7 +312,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
           color: const Color(0xFF1E293B),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.2),
+              color: Colors.black.withValues(alpha: 0.20),
               blurRadius: 8,
               offset: const Offset(0, -2),
             ),

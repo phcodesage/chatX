@@ -58,7 +58,7 @@ class AppUpdateService {
   }) {
     showDialog(
       context: context,
-      barrierDismissible: !forceUpdate,
+      barrierDismissible: false,
       builder: (ctx) => _UpdateDialog(
         serverVersion: serverVersion,
         releaseNotes: releaseNotes,
@@ -155,7 +155,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !widget.forceUpdate,
+      canPop: false,
       child: AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -227,14 +227,6 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         actions: _downloading
             ? null
             : [
-                if (!widget.forceUpdate)
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text(
-                      'Later',
-                      style: TextStyle(color: Colors.white54),
-                    ),
-                  ),
                 ElevatedButton(
                   onPressed: _downloadAndInstall,
                   style: ElevatedButton.styleFrom(

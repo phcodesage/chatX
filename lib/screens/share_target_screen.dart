@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -39,6 +40,8 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _captionController = TextEditingController();
   final Set<int> _selectedUserIds = <int>{};
+  final Map<int, String> _searchKeyCache = <int, String>{};
+  Timer? _searchDebounceTimer;
 
   late List<LobbyUser> _allUsers;
   late List<LobbyUser> _filteredUsers;
@@ -65,16 +68,22 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
     _allUsers = _normalizeUsers(widget.users);
     _filteredUsers = List<LobbyUser>.from(_allUsers);
     _isLoadingContacts = _allUsers.isEmpty;
-    _searchController.addListener(_applySearch);
+    _searchController.addListener(_scheduleSearch);
     _loadContacts();
   }
 
   @override
   void dispose() {
-    _searchController.removeListener(_applySearch);
+    _searchDebounceTimer?.cancel();
+    _searchController.removeListener(_scheduleSearch);
     _searchController.dispose();
     _captionController.dispose();
     super.dispose();
+  }
+
+  void _scheduleSearch() {
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(const Duration(milliseconds: 150), _applySearch);
   }
 
   void _applySearch() {
@@ -88,8 +97,8 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
 
       _filteredUsers = _allUsers
           .where((user) {
-            return user.fullName.toLowerCase().contains(query) ||
-                user.username.toLowerCase().contains(query);
+            final searchKey = _searchKeyCache[user.id] ?? '';
+            return searchKey.contains(query);
           })
           .toList(growable: false);
     });
@@ -123,6 +132,11 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
           );
         },
       );
+
+    for (final user in sortedUsers) {
+      _searchKeyCache[user.id] = '${user.fullName} ${user.username}'.toLowerCase();
+    }
+
     return sortedUsers;
   }
 

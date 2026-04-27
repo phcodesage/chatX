@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -29,6 +30,25 @@ import 'utils/notification_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (kDebugMode) {
+    debugPrint('🚀 Performance debug logging enabled');
+    debugPrintRebuildDirtyWidgets = true;
+    debugProfileBuildsEnabled = true;
+    WidgetsBinding.instance.addTimingsCallback((timings) {
+      for (final timing in timings) {
+        final totalMs = timing.totalSpan.inMilliseconds;
+        if (totalMs > 16) {
+          debugPrint(
+            '🐢 Slow frame #${timing.frameNumber}: total=${totalMs}ms, '
+            'build=${timing.buildDuration.inMilliseconds}ms, '
+            'raster=${timing.rasterDuration.inMilliseconds}ms, '
+            'route=${PerformanceRouteObserver.currentRoute}',
+          );
+        }
+      }
+    });
+  }
 
   // Set auth error navigation immediately; this does not require async setup.
   AuthErrorHandler.navigatorKey = NotificationHandler.navigatorKey;
@@ -248,6 +268,7 @@ class _MessengerAppState extends State<MessengerApp>
       title: 'Flutter Messenger',
       debugShowCheckedModeBanner: false,
       navigatorKey: NotificationHandler.navigatorKey,
+      navigatorObservers: [PerformanceRouteObserver()],
       theme: baseTheme.copyWith(
         // Kill all page-route transitions globally
         pageTransitionsTheme: const PageTransitionsTheme(
@@ -277,6 +298,34 @@ class _MessengerAppState extends State<MessengerApp>
 }
 
 /// Zero-duration page transition — replaces slides/fades with instant swap.
+class PerformanceRouteObserver extends NavigatorObserver {
+  static String currentRoute = 'unknown';
+
+  void _logRoute(String action, Route<dynamic>? route) {
+    if (route == null) return;
+    currentRoute = route.settings.name ?? route.runtimeType.toString();
+    debugPrint('🧭 Route $action: $currentRoute');
+  }
+
+  @override
+  void didPush(Route route, Route? previousRoute) {
+    _logRoute('pushed', route);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    _logRoute('replaced', newRoute);
+  }
+
+  @override
+  void didPop(Route route, Route? previousRoute) {
+    _logRoute('popped', route);
+    if (previousRoute != null) {
+      _logRoute('restored', previousRoute);
+    }
+  }
+}
+
 class _NoTransitionBuilder extends PageTransitionsBuilder {
   const _NoTransitionBuilder();
 
