@@ -86,6 +86,7 @@ dependencies:
   
   # URL launcher for opening external links
   url_launcher: ^6.2.5
+  connectivity_plus: ^6.1.4
 
   # Local caching & skeleton animations
   hive: ^2.2.3

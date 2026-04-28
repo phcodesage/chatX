@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -186,6 +187,56 @@ class MessengerApp extends StatefulWidget {
 class _MessengerAppState extends State<MessengerApp>
     with WidgetsBindingObserver {
   DateTime? _lastResumeUpdateCheck;
+  final Connectivity _connectivity = Connectivity();
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  bool _hasInternetConnection = true;
+  bool _showBackOnlineBanner = false;
+  bool _didReceiveConnectivityUpdate = false;
+  Timer? _backOnlineBannerTimer;
+
+  Future<void> _initializeConnectivityMonitoring() async {
+    final currentResults = await _connectivity.checkConnectivity();
+    _updateConnectivity(currentResults);
+
+    _connectivitySubscription = _connectivity.onConnectivityChanged.listen(
+      _updateConnectivity,
+    );
+  }
+
+  void _updateConnectivity(List<ConnectivityResult> results) {
+    final hasConnection =
+        results.isNotEmpty && !results.contains(ConnectivityResult.none);
+    if (!mounted) return;
+
+    if (!_didReceiveConnectivityUpdate) {
+      _didReceiveConnectivityUpdate = true;
+      setState(() {
+        _hasInternetConnection = hasConnection;
+      });
+      return;
+    }
+
+    if (_hasInternetConnection == hasConnection) return;
+
+    setState(() {
+      _hasInternetConnection = hasConnection;
+      if (!hasConnection) {
+        _showBackOnlineBanner = false;
+      } else {
+        _showBackOnlineBanner = true;
+      }
+    });
+
+    _backOnlineBannerTimer?.cancel();
+    if (hasConnection) {
+      _backOnlineBannerTimer = Timer(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        setState(() {
+          _showBackOnlineBanner = false;
+        });
+      });
+    }
+  }
 
   void _scheduleUpdateCheck({int retryCount = 0}) {
     if (!mounted) return;
@@ -210,6 +261,7 @@ class _MessengerAppState extends State<MessengerApp>
     WidgetsBinding.instance.addObserver(this);
 
     _scheduleUpdateCheck();
+    unawaited(_initializeConnectivityMonitoring());
   }
 
   @override
@@ -229,6 +281,8 @@ class _MessengerAppState extends State<MessengerApp>
 
   @override
   void dispose() {
+    _connectivitySubscription?.cancel();
+    _backOnlineBannerTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -269,6 +323,40 @@ class _MessengerAppState extends State<MessengerApp>
       debugShowCheckedModeBanner: false,
       navigatorKey: NotificationHandler.navigatorKey,
       navigatorObservers: [PerformanceRouteObserver()],
+      builder: (context, child) {
+        final appContent = child ?? const SizedBox.shrink();
+        final showStatusBanner = !_hasInternetConnection || _showBackOnlineBanner;
+        return Stack(
+          children: [
+            appContent,
+            if (showStatusBanner)
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 280),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, animation) {
+                  final offsetAnimation = Tween<Offset>(
+                    begin: const Offset(0, -0.25),
+                    end: Offset.zero,
+                  ).animate(animation);
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: offsetAnimation,
+                      child: child,
+                    ),
+                  );
+                },
+                child: _ConnectionStatusBanner(
+                  key: ValueKey<String>(
+                    _hasInternetConnection ? 'online' : 'offline',
+                  ),
+                  isOnline: _hasInternetConnection,
+                ),
+              ),
+          ],
+        );
+      },
       theme: baseTheme.copyWith(
         // Kill all page-route transitions globally
         pageTransitionsTheme: const PageTransitionsTheme(
@@ -338,5 +426,61 @@ class _NoTransitionBuilder extends PageTransitionsBuilder {
     Widget child,
   ) {
     return child;
+  }
+}
+
+class _ConnectionStatusBanner extends StatelessWidget {
+  const _ConnectionStatusBanner({super.key, required this.isOnline});
+
+  final bool isOnline;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundColor = isOnline
+        ? const Color(0xFF2E7D32)
+        : const Color(0xFFC62828);
+    final icon = isOnline ? Icons.wifi_rounded : Icons.wifi_off_rounded;
+    final text = isOnline ? 'Back online' : 'No internet connection';
+
+    return SafeArea(
+      bottom: false,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x33000000),
+                blurRadius: 6,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  text,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 26),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
