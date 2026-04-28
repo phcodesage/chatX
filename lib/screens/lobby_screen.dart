@@ -59,6 +59,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   StreamSubscription<List<SharedMediaItem>>? _shareIntentSubscription;
   StreamSubscription<int>? _shortcutLaunchSubscription;
   StreamSubscription<RemoteMessage>? _fcmForegroundSubscription;
+  Timer? _pendingNotificationRetryTimer;
   Future<int?> _currentUserId = StorageService.getUserId();
   bool _isSharePickerOpen = false;
   bool _hasAiSession = false;
@@ -110,6 +111,30 @@ class _LobbyScreenState extends State<LobbyScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkPendingNotification();
     });
+
+    _startPendingNotificationRetryWindow();
+  }
+
+  void _startPendingNotificationRetryWindow() {
+    _pendingNotificationRetryTimer?.cancel();
+    _pendingNotificationRetryTimer = Timer.periodic(
+      const Duration(milliseconds: 700),
+      (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        if (NotificationHandler.hasPendingNavigation) {
+          _checkPendingNotification();
+        }
+
+        // Retry only for a short boot window to catch delayed cold-start payload sync.
+        if (timer.tick >= 10) {
+          timer.cancel();
+        }
+      },
+    );
   }
 
   /// Check if there's a pending notification to handle
@@ -1563,6 +1588,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _searchDebounceTimer?.cancel();
     _searchController.dispose();
     _lastSeenRefreshTimer?.cancel();
+    _pendingNotificationRetryTimer?.cancel();
     // Cancel all active typing timers
     for (final timer in _typingUsers.values) {
       timer.cancel();
