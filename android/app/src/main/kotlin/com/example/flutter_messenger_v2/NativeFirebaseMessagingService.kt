@@ -10,8 +10,22 @@ class NativeFirebaseMessagingService : FlutterFirebaseMessagingService() {
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
-        // Chat notification rendering is handled by ChatFirebaseMessagingReceiver.
-        Log.d(TAG, "onMessageReceived: ${remoteMessage.messageId}")
+        val data = remoteMessage.data
+        Log.d(TAG, "onMessageReceived: id=${remoteMessage.messageId}, keys=${data.keys}")
+
+        if (data.isNotEmpty()) {
+            try {
+                ChatFirebaseMessagingReceiver().handleDataMessage(
+                    this,
+                    data,
+                    source = "service",
+                    transportMessageId = remoteMessage.messageId,
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed native chat notification fallback", e)
+            }
+        }
+
         super.onMessageReceived(remoteMessage)
     }
 

@@ -188,6 +188,7 @@ class _ChatScreenState extends State<ChatScreen>
   bool _hasMoreMessages = true; // Whether older messages may exist on server
   bool _isTyping = false;
   bool _isKeyboardVisible = false;
+  bool _isAppInForeground = true;
   bool _restoreInputFocusOnResume = false;
   bool _suppressRestoreOnNextResume = false;
   bool _isRestoringInputFocus = false;
@@ -369,6 +370,8 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
+      _isAppInForeground = false;
+      ActiveChatService().clearActiveChat();
       if (_suppressRestoreOnNextResume) {
         _restoreInputFocusOnResume = false;
         return;
@@ -379,15 +382,35 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     if (state == AppLifecycleState.resumed && _suppressRestoreOnNextResume) {
+      _isAppInForeground = true;
+      ActiveChatService().setActiveUser(widget.otherUser.id);
       _suppressRestoreOnNextResume = false;
       _restoreInputFocusOnResume = false;
       _keepInputUnfocused();
       return;
     }
 
+    if (state == AppLifecycleState.resumed) {
+      _isAppInForeground = true;
+      ActiveChatService().setActiveUser(widget.otherUser.id);
+    }
+
     if (state == AppLifecycleState.resumed && _restoreInputFocusOnResume) {
       unawaited(_restoreInputFocusAfterResume());
     }
+  }
+
+  bool get _canAutoMarkConversationAsSeen {
+    if (!mounted || _isSelfChat || !_isAppInForeground) {
+      return false;
+    }
+
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) {
+      return false;
+    }
+
+    return true;
   }
 
   @override
@@ -532,7 +555,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Mark visible messages as read
   void _markVisibleMessagesAsRead() {
-    if (_isSelfChat) return;
+    if (!_canAutoMarkConversationAsSeen) return;
 
     final unreadMessageIds = <int>[];
 
@@ -1179,12 +1202,18 @@ class _ChatScreenState extends State<ChatScreen>
         // Mark as read whenever chat is open and message is from partner.
         // Only auto-scroll if user is already at bottom to avoid interrupting reading
         if (incomingMessage.senderId == widget.otherUser.id) {
-          _socketService.markMessagesRead(widget.otherUser.id);
-          _socketService.markMessagesViewed(widget.otherUser.id);
-          unawaited(_clearConversationNotificationStateForCurrentChat());
-          debugPrint(
-            'ðŸ“§ Marked message ${incomingMessage.id} as seen (chat is open)',
-          );
+          if (_canAutoMarkConversationAsSeen) {
+            _socketService.markMessagesRead(widget.otherUser.id);
+            _socketService.markMessagesViewed(widget.otherUser.id);
+            unawaited(_clearConversationNotificationStateForCurrentChat());
+            debugPrint(
+              'ðŸ“§ Marked message ${incomingMessage.id} as seen (chat is visible)',
+            );
+          } else {
+            debugPrint(
+              'ðŸ“§ Skipped auto-seen for ${incomingMessage.id} (app not foreground/active chat)',
+            );
+          }
 
           // Only auto-scroll if user is at bottom, otherwise just show unread badge
           if (_isAtBottom) {
@@ -1548,12 +1577,18 @@ class _ChatScreenState extends State<ChatScreen>
             debugPrint('Error playing message sound: $e');
           }
 
-          _socketService.markMessagesRead(widget.otherUser.id);
-          _socketService.markMessagesViewed(widget.otherUser.id);
-          unawaited(_clearConversationNotificationStateForCurrentChat());
-          debugPrint(
-            'ðŸ“§ Marked file message ${message.id} as delivered/seen (chat is open)',
-          );
+          if (_canAutoMarkConversationAsSeen) {
+            _socketService.markMessagesRead(widget.otherUser.id);
+            _socketService.markMessagesViewed(widget.otherUser.id);
+            unawaited(_clearConversationNotificationStateForCurrentChat());
+            debugPrint(
+              'ðŸ“§ Marked file message ${message.id} as delivered/seen (chat is visible)',
+            );
+          } else {
+            debugPrint(
+              'ðŸ“§ Skipped auto-seen for file ${message.id} (app not foreground/active chat)',
+            );
+          }
         } else {
           debugPrint(' Cross-device: added own sent file to chat');
         }
@@ -1631,12 +1666,18 @@ class _ChatScreenState extends State<ChatScreen>
             debugPrint('Error playing message sound: $e');
           }
 
-          _socketService.markMessagesRead(widget.otherUser.id);
-          _socketService.markMessagesViewed(widget.otherUser.id);
-          unawaited(_clearConversationNotificationStateForCurrentChat());
-          debugPrint(
-            'ðŸ“§ Marked voice message ${message.id} as delivered/seen (chat is open)',
-          );
+          if (_canAutoMarkConversationAsSeen) {
+            _socketService.markMessagesRead(widget.otherUser.id);
+            _socketService.markMessagesViewed(widget.otherUser.id);
+            unawaited(_clearConversationNotificationStateForCurrentChat());
+            debugPrint(
+              'ðŸ“§ Marked voice message ${message.id} as delivered/seen (chat is visible)',
+            );
+          } else {
+            debugPrint(
+              'ðŸ“§ Skipped auto-seen for voice ${message.id} (app not foreground/active chat)',
+            );
+          }
         } else {
           debugPrint('ðŸŽ¤ Cross-device: added own sent voice message to chat');
         }

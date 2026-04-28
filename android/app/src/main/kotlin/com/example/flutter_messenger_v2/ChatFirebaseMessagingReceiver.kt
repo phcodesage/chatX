@@ -27,26 +27,115 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
         private const val REQUEST_QUICK_REPLY = 4100
         private const val CHAT_NOTIFICATION_HISTORY_PREFS = "chat_notification_history"
         private const val CHAT_NOTIFICATION_HISTORY_LIMIT = 12
+        private const val FLUTTER_PREFS = "FlutterSharedPreferences"
+        private const val CURRENT_USER_ID_KEY = "flutter.user_id"
+        private const val DUPLICATE_WINDOW_MS = 8000L
+        private const val MAX_RECENT_KEYS = 120
+        private val recentNotificationKeys = LinkedHashMap<String, Long>()
     }
 
     override fun onReceive(context: Context, intent: Intent) {
         try {
             val extras = intent.extras ?: return
             val remoteMessage = RemoteMessage(extras)
-            val data = remoteMessage.data
-
-            if (!isChatMessage(data)) {
-                return
-            }
-
-            if (isAppInForeground(context)) {
-                Log.d(TAG, "App in foreground, skipping native background notification")
-                return
-            }
-
-            showQuickReplyNotification(context, data)
+            handleDataMessage(
+                context,
+                remoteMessage.data,
+                source = "broadcast",
+                transportMessageId = remoteMessage.messageId,
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Error handling native FCM broadcast", e)
+        }
+    }
+
+    fun handleDataMessage(
+        context: Context,
+        data: Map<String, String>,
+        source: String = "service",
+        transportMessageId: String? = null,
+    ) {
+        if (!isChatMessage(data)) {
+            return
+        }
+
+        val dedupeKey = buildDedupeKey(data, transportMessageId)
+        if (isLikelyDuplicate(dedupeKey)) {
+            Log.d(TAG, "Skipping duplicate chat notification ($source): $dedupeKey")
+            return
+        }
+
+        if (isAppInForeground(context)) {
+            Log.d(TAG, "App in foreground, skipping native background notification ($source)")
+            return
+        }
+
+        // Suppress echo notifications for messages sent by the current user
+        // (e.g. quick-reply echoes from the server after a notification reply)
+        // Flutter's shared_preferences stores int values via putLong on Android.
+        val senderId = data["sender_id"]?.trim()
+        if (!senderId.isNullOrBlank()) {
+            try {
+                val currentUserId = context
+                    .getSharedPreferences(FLUTTER_PREFS, Context.MODE_PRIVATE)
+                    .getLong(CURRENT_USER_ID_KEY, -1L)
+                if (currentUserId != -1L && senderId == currentUserId.toString()) {
+                    Log.d(TAG, "Suppressing echo notification from self (sender=$senderId, source=$source)")
+                    return
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not read current user ID for echo suppression", e)
+            }
+        }
+
+        showQuickReplyNotification(context, data)
+    }
+
+    private fun buildDedupeKey(data: Map<String, String>, transportMessageId: String?): String {
+        if (!transportMessageId.isNullOrBlank()) {
+            return "fcm:$transportMessageId"
+        }
+
+        val stableMessageId = data["message_id"]?.trim()
+        if (!stableMessageId.isNullOrEmpty()) {
+            return "msg:$stableMessageId"
+        }
+
+        val senderId = data["sender_id"]?.trim().orEmpty()
+        val roomId = data["room_id"]?.trim().orEmpty()
+        val groupId = data["group_id"]?.trim().orEmpty()
+        val body = resolveBody(data)?.trim().orEmpty()
+        val content = data["content"]?.trim().orEmpty()
+        val ts = data["timestamp"]?.trim().orEmpty()
+
+        return "fallback:$senderId:$roomId:$groupId:$ts:${body.hashCode()}:${content.hashCode()}"
+    }
+
+    private fun isLikelyDuplicate(key: String): Boolean {
+        val now = System.currentTimeMillis()
+
+        synchronized(recentNotificationKeys) {
+            val iterator = recentNotificationKeys.entries.iterator()
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                if (now - entry.value > DUPLICATE_WINDOW_MS) {
+                    iterator.remove()
+                }
+            }
+
+            val lastSeenAt = recentNotificationKeys[key]
+            if (lastSeenAt != null && now - lastSeenAt <= DUPLICATE_WINDOW_MS) {
+                return true
+            }
+
+            recentNotificationKeys[key] = now
+
+            while (recentNotificationKeys.size > MAX_RECENT_KEYS) {
+                val oldestKey = recentNotificationKeys.keys.firstOrNull() ?: break
+                recentNotificationKeys.remove(oldestKey)
+            }
+
+            return false
         }
     }
 
