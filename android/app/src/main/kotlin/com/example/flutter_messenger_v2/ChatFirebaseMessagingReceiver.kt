@@ -56,6 +56,16 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
             return false
         }
 
+        if (type == "message" || type == "chat") {
+            return true
+        }
+
+        if (!data["title"].isNullOrBlank() ||
+            !data["body"].isNullOrBlank() ||
+            !data["content"].isNullOrBlank()) {
+            return true
+        }
+
         return !data["room_id"].isNullOrBlank() ||
             !data["group_id"].isNullOrBlank() ||
             !data["sender_id"].isNullOrBlank() ||
@@ -225,7 +235,21 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
         }
 
         val content = data["content"]?.trim()
-        return if (content.isNullOrEmpty()) null else content
+        if (!content.isNullOrEmpty()) {
+            return content
+        }
+
+        val messageType = (data["message_type"] ?: data["messageType"])?.lowercase()
+        val fileName = (data["file_name"] ?: data["fileName"]).orEmpty().trim()
+
+        return when (messageType) {
+            "audio", "voice" -> "🎤 Voice message"
+            "image" -> if (fileName.isNotBlank()) "🖼️ Image: $fileName" else "🖼️ Image"
+            "video" -> if (fileName.isNotBlank()) "🎬 Video: $fileName" else "🎬 Video"
+            "file" -> if (fileName.isNotBlank()) "📎 File: $fileName" else "📎 File"
+            "contact" -> "👤 Contact card"
+            else -> if (fileName.isNotBlank()) "📎 $fileName" else null
+        }
     }
 
     private fun resolveReplyEndpoint(
@@ -252,20 +276,20 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
         replyRecipientId: String,
         notificationId: Int,
     ): String {
-        data["room_id"]?.takeIf { it.isNotBlank() }?.let {
-            return "room:$it"
-        }
-
         if (conversationType == "group" && groupId.isNotBlank()) {
             return "group:$groupId"
+        }
+
+        data["sender_id"]?.takeIf { it.isNotBlank() }?.let {
+            return "direct:$it"
         }
 
         if (replyRecipientId.isNotBlank()) {
             return "direct:$replyRecipientId"
         }
 
-        data["sender_id"]?.takeIf { it.isNotBlank() }?.let {
-            return "direct:$it"
+        data["room_id"]?.takeIf { it.isNotBlank() }?.let {
+            return "room:$it"
         }
 
         data["sender_name"]?.takeIf { it.isNotBlank() }?.let {

@@ -547,6 +547,7 @@ class _ChatScreenState extends State<ChatScreen>
       // Mark messages as read/viewed so both web + lobby state clear their badges
       _socketService.markMessagesRead(widget.otherUser.id);
       _socketService.markMessagesViewed(widget.otherUser.id);
+      unawaited(_clearConversationNotificationStateForCurrentChat());
       debugPrint(
         'ðŸ“§ Sent read confirmations for ${unreadMessageIds.length} messages to update web clients',
       );
@@ -575,6 +576,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     _socketService.markMessagesRead(widget.otherUser.id);
     _socketService.markMessagesViewed(widget.otherUser.id);
+    unawaited(_clearConversationNotificationStateForCurrentChat());
 
     final latestIncomingMessageId = incomingMessageIds.reduce(math.max);
     await MessageService.markAsRead(
@@ -648,6 +650,12 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     unawaited(_clearIncomingCallNotificationsForCurrentChat());
+    unawaited(
+      FirebaseMessagingService.instance.clearConversationNotificationState(
+        otherUserId: widget.otherUser.id,
+        senderName: widget.otherUser.fullName,
+      ),
+    );
 
     // Initialize presence state from widget
     _partnerIsOnline = widget.otherUser.isOnline;
@@ -690,6 +698,13 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       debugPrint('Error clearing incoming call notifications: $e');
     }
+  }
+
+  Future<void> _clearConversationNotificationStateForCurrentChat() async {
+    await FirebaseMessagingService.instance.clearConversationNotificationState(
+      otherUserId: widget.otherUser.id,
+      senderName: widget.otherUser.fullName,
+    );
   }
 
   /// Load persisted chat color from SharedPreferences
@@ -1166,6 +1181,7 @@ class _ChatScreenState extends State<ChatScreen>
         if (incomingMessage.senderId == widget.otherUser.id) {
           _socketService.markMessagesRead(widget.otherUser.id);
           _socketService.markMessagesViewed(widget.otherUser.id);
+          unawaited(_clearConversationNotificationStateForCurrentChat());
           debugPrint(
             'ðŸ“§ Marked message ${incomingMessage.id} as seen (chat is open)',
           );
@@ -1534,6 +1550,7 @@ class _ChatScreenState extends State<ChatScreen>
 
           _socketService.markMessagesRead(widget.otherUser.id);
           _socketService.markMessagesViewed(widget.otherUser.id);
+          unawaited(_clearConversationNotificationStateForCurrentChat());
           debugPrint(
             'ðŸ“§ Marked file message ${message.id} as delivered/seen (chat is open)',
           );
@@ -1616,6 +1633,7 @@ class _ChatScreenState extends State<ChatScreen>
 
           _socketService.markMessagesRead(widget.otherUser.id);
           _socketService.markMessagesViewed(widget.otherUser.id);
+          unawaited(_clearConversationNotificationStateForCurrentChat());
           debugPrint(
             'ðŸ“§ Marked voice message ${message.id} as delivered/seen (chat is open)',
           );

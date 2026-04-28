@@ -20,6 +20,7 @@ import '../services/storage_service.dart';
 import '../services/chat_cache_service.dart';
 import '../services/translation_service.dart';
 import '../services/active_chat_service.dart';
+import '../services/firebase_messaging_service.dart';
 import '../widgets/reaction_picker.dart';
 import '../widgets/color_picker_modal.dart';
 
@@ -119,6 +120,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _currentUserId = await StorageService.getUserId();
     _currentUserIsAdmin = await StorageService.getIsAdmin();
     debugPrint('🎨 [INIT] Current user ID: $_currentUserId');
+    unawaited(
+      FirebaseMessagingService.instance.clearConversationNotificationState(
+        groupId: widget.group.id,
+        senderName: widget.group.name,
+      ),
+    );
     await _loadMessages();
     await _loadSavedGroupChatColor(); // Load saved color
     debugPrint('🎨 [INIT] Setting up realtime listeners...');
@@ -1005,6 +1012,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         senderId: entry.key,
       );
     }
+
+    unawaited(
+      FirebaseMessagingService.instance.clearConversationNotificationState(
+        groupId: widget.group.id,
+        senderName: widget.group.name,
+      ),
+    );
   }
 
   /// Load persisted group chat color from SharedPreferences

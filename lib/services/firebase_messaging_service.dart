@@ -52,6 +52,21 @@ bool _isConversationNotificationEligible(Map<String, dynamic> data) {
     return false;
   }
 
+  // If backend marks this as a chat/message event, always treat it as a
+  // conversation notification even when sender metadata is sparse.
+  if (type == 'message' || type == 'chat') {
+    return true;
+  }
+
+  final title = data['title']?.toString().trim();
+  final body = data['body']?.toString().trim();
+  final content = data['content']?.toString().trim();
+  if ((title?.isNotEmpty ?? false) ||
+      (body?.isNotEmpty ?? false) ||
+      (content?.isNotEmpty ?? false)) {
+    return true;
+  }
+
   return data['sender_id'] != null ||
       data['group_id'] != null ||
       data['room_id'] != null ||
@@ -97,11 +112,6 @@ int _buildChatNotificationId(Map<String, dynamic> data) {
 }
 
 String _buildChatConversationKey(Map<String, dynamic> data) {
-  final roomId = data['room_id']?.toString();
-  if (roomId != null && roomId.isNotEmpty) {
-    return 'room:$roomId';
-  }
-
   final groupId = data['group_id']?.toString();
   if (groupId != null && groupId.isNotEmpty) {
     return 'group:$groupId';
@@ -112,14 +122,19 @@ String _buildChatConversationKey(Map<String, dynamic> data) {
     return 'direct:$senderId';
   }
 
-  final senderName = data['sender_name']?.toString().trim();
-  if (senderName != null && senderName.isNotEmpty) {
-    return 'sender:$senderName';
-  }
-
   final recipientId = data['reply_recipient_id']?.toString();
   if (recipientId != null && recipientId.isNotEmpty) {
     return 'direct:$recipientId';
+  }
+
+  final roomId = data['room_id']?.toString();
+  if (roomId != null && roomId.isNotEmpty) {
+    return 'room:$roomId';
+  }
+
+  final senderName = data['sender_name']?.toString().trim();
+  if (senderName != null && senderName.isNotEmpty) {
+    return 'sender:$senderName';
   }
 
   final messageId = data['message_id']?.toString();
@@ -134,10 +149,26 @@ Map<String, String> _extractNotificationText(Map<String, dynamic> data) {
   final title = (data['title'] ?? '').toString().trim();
   final body = (data['body'] ?? '').toString().trim();
   final content = (data['content'] ?? '').toString().trim();
+  final messageType = (data['message_type'] ?? data['messageType'])
+      ?.toString()
+      .toLowerCase();
+  final fileName = (data['file_name'] ?? data['fileName'] ?? '')
+      .toString()
+      .trim();
+  final fallbackBody = switch (messageType) {
+    'audio' || 'voice' => '🎤 Voice message',
+    'image' => fileName.isNotEmpty ? '🖼️ Image: $fileName' : '🖼️ Image',
+    'video' => fileName.isNotEmpty ? '🎬 Video: $fileName' : '🎬 Video',
+    'file' => fileName.isNotEmpty ? '📎 File: $fileName' : '📎 File',
+    'contact' => '👤 Contact card',
+    _ => fileName.isNotEmpty ? '📎 $fileName' : '',
+  };
 
   return {
     'title': title.isNotEmpty ? title : 'New message',
-    'body': body.isNotEmpty ? body : content,
+    'body': body.isNotEmpty
+        ? body
+        : (content.isNotEmpty ? content : fallbackBody),
   };
 }
 
@@ -734,6 +765,51 @@ class FirebaseMessagingService {
       }
     } catch (e) {
       debugPrint('❌ Error clearing incoming call notifications: $e');
+    }
+  }
+
+  Future<void> clearConversationNotificationState({
+    int? otherUserId,
+    int? groupId,
+    String? roomId,
+    String? senderName,
+  }) async {
+    try {
+      await _initializeLocalNotifications();
+
+      final senderNameTrimmed = senderName?.trim();
+      final keyCandidates = <Map<String, dynamic>>[
+        if (roomId != null && roomId.isNotEmpty) {'room_id': roomId},
+        if (groupId != null) {'group_id': groupId},
+        if (otherUserId != null) {'sender_id': otherUserId},
+        if (senderNameTrimmed != null && senderNameTrimmed.isNotEmpty)
+          {'sender_name': senderNameTrimmed},
+      ];
+
+      final clearedNotificationIds = <int>{};
+      final clearedConversationKeys = <String>{};
+
+      for (final keyData in keyCandidates) {
+        final notificationId = _buildChatNotificationId(keyData);
+        if (clearedNotificationIds.add(notificationId)) {
+          await _localNotifications.cancel(notificationId);
+        }
+
+        if (defaultTargetPlatform == TargetPlatform.android) {
+          final conversationKey = _buildChatConversationKey(keyData);
+          if (clearedConversationKeys.add(conversationKey)) {
+            await _quickReplyNativeChannel.invokeMethod(
+              'clearConversationNotificationState',
+              <String, dynamic>{
+                'notificationId': notificationId,
+                'conversationKey': conversationKey,
+              },
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error clearing conversation notification state: $e');
     }
   }
 

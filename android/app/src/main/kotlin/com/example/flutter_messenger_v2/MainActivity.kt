@@ -323,6 +323,21 @@ class MainActivity : FlutterActivity() {
                             result.error("NATIVE_NOTIFICATION_ERROR", e.message, null)
                         }
                     }
+                    "clearConversationNotificationState" -> {
+                        try {
+                            val args = call.arguments as? Map<*, *>
+                            if (args == null) {
+                                result.error("BAD_ARGS", "Expected Map arguments", null)
+                                return@setMethodCallHandler
+                            }
+
+                            clearConversationNotificationState(args)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to clear conversation notification state", e)
+                            result.error("NATIVE_NOTIFICATION_CLEAR_ERROR", e.message, null)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -868,10 +883,11 @@ class MainActivity : FlutterActivity() {
         val conversationType = (args["conversationType"] as? String)?.ifBlank { "direct" } ?: "direct"
         val enableQuickReply = args["enableQuickReply"] as? Boolean ?: true
         val groupId = (args["groupId"] as? String).orEmpty()
+        val senderId = (args["senderId"] as? String).orEmpty()
         val baseUrl = (args["baseUrl"] as? String).orEmpty()
         val payloadJson = (args["payloadJson"] as? String).orEmpty()
         val conversationKey = (args["conversationKey"] as? String)?.ifBlank { null }
-            ?: buildConversationKey(conversationType, groupId, replyRecipientId, notificationId)
+            ?: buildConversationKey(conversationType, groupId, replyRecipientId, notificationId, senderId)
         val history = appendChatHistory(conversationKey, senderName, body)
 
         ensureNotificationChannel(channelId, channelName)
@@ -973,14 +989,33 @@ class MainActivity : FlutterActivity() {
         NotificationManagerCompat.from(this).notify(notificationId, builder.build())
     }
 
+    private fun clearConversationNotificationState(args: Map<*, *>) {
+        val notificationId = (args["notificationId"] as? Number)?.toInt()
+        val conversationKey = (args["conversationKey"] as? String).orEmpty()
+
+        if (notificationId != null) {
+            NotificationManagerCompat.from(this).cancel(notificationId)
+        }
+
+        if (conversationKey.isNotBlank()) {
+            val prefs = getSharedPreferences(CHAT_NOTIFICATION_HISTORY_PREFS, Context.MODE_PRIVATE)
+            prefs.edit().remove("history_$conversationKey").apply()
+        }
+    }
+
     private fun buildConversationKey(
         conversationType: String,
         groupId: String,
         replyRecipientId: String,
         notificationId: Int,
+        senderId: String = "",
     ): String {
         if (conversationType == "group" && groupId.isNotBlank()) {
             return "group:$groupId"
+        }
+
+        if (senderId.isNotBlank()) {
+            return "direct:$senderId"
         }
 
         if (replyRecipientId.isNotBlank()) {
