@@ -141,7 +141,7 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
 
     private fun isChatMessage(data: Map<String, String>): Boolean {
         val type = data["type"]?.lowercase()
-        if (type == "call" || type == "color_change") {
+        if (type == "call") {
             return false
         }
 
@@ -424,16 +424,16 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
     }
 
     private fun resolveNotificationId(data: Map<String, String>): Int {
-        data["room_id"]?.takeIf { it.isNotBlank() }?.let {
-            return it.hashCode() and 0x7FFFFFFF
-        }
-
         data["group_id"]?.takeIf { it.isNotBlank() }?.let {
             return "group:$it".hashCode() and 0x7FFFFFFF
         }
 
         data["sender_id"]?.takeIf { it.isNotBlank() }?.let {
             return "direct:$it".hashCode() and 0x7FFFFFFF
+        }
+
+        data["room_id"]?.takeIf { it.isNotBlank() }?.let {
+            return it.hashCode() and 0x7FFFFFFF
         }
 
         data["message_id"]?.takeIf { it.isNotBlank() }?.let {

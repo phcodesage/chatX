@@ -48,7 +48,7 @@ bool _isChatQuickReplyEligible(Map<String, dynamic> data) {
 
 bool _isConversationNotificationEligible(Map<String, dynamic> data) {
   final type = data['type']?.toString().toLowerCase();
-  if (type == 'color_change' || type == 'call') {
+  if (type == 'call') {
     return false;
   }
 
@@ -83,11 +83,6 @@ bool _isChatQuickReplyActionId(String? actionId) {
 }
 
 int _buildChatNotificationId(Map<String, dynamic> data) {
-  final roomId = data['room_id']?.toString();
-  if (roomId != null && roomId.isNotEmpty) {
-    return roomId.hashCode & 0x7FFFFFFF;
-  }
-
   final groupId = data['group_id']?.toString();
   if (groupId != null && groupId.isNotEmpty) {
     return 'group:$groupId'.hashCode & 0x7FFFFFFF;
@@ -96,6 +91,11 @@ int _buildChatNotificationId(Map<String, dynamic> data) {
   final senderId = data['sender_id']?.toString();
   if (senderId != null && senderId.isNotEmpty) {
     return 'direct:$senderId'.hashCode & 0x7FFFFFFF;
+  }
+
+  final roomId = data['room_id']?.toString();
+  if (roomId != null && roomId.isNotEmpty) {
+    return roomId.hashCode & 0x7FFFFFFF;
   }
 
   final senderName = data['sender_name']?.toString().trim();
