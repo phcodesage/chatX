@@ -908,7 +908,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: Text('Chat saved to: $savedFileName'),
             duration: const Duration(seconds: 3),
@@ -946,7 +946,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     if (manageStatus.isGranted) return true;
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         SnackBar(
           content: const Text('Storage permission required to save files'),
           backgroundColor: Colors.orange,
@@ -1129,9 +1129,58 @@ class _AiChatScreenState extends State<AiChatScreen> {
     );
   }
 
+  void _showTopSnackBar(SnackBar snackBar) {
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.hideCurrentMaterialBanner();
+
+    final actions = <Widget>[];
+    if (snackBar.action != null) {
+      actions.add(
+        TextButton(
+          onPressed: () {
+            messenger.hideCurrentMaterialBanner();
+            snackBar.action!.onPressed();
+          },
+          child: Text(
+            snackBar.action!.label,
+            style: TextStyle(color: snackBar.action!.textColor ?? Colors.white),
+          ),
+        ),
+      );
+    }
+
+    actions.add(
+      TextButton(
+        onPressed: messenger.hideCurrentMaterialBanner,
+        child: const Text('DISMISS', style: TextStyle(color: Colors.white)),
+      ),
+    );
+
+    messenger.showMaterialBanner(
+      MaterialBanner(
+        content: snackBar.content,
+        backgroundColor: snackBar.backgroundColor ?? const Color(0xFF323232),
+        contentTextStyle: const TextStyle(color: Colors.white),
+        actions: actions,
+      ),
+    );
+
+    final autoHide = snackBar.duration;
+    if (autoHide > Duration.zero) {
+      Timer(autoHide, () {
+        if (mounted) {
+          messenger.hideCurrentMaterialBanner();
+        }
+      });
+    }
+  }
+
   void _showError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.redAccent,
@@ -1148,7 +1197,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   void _showInfo(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: const Color(0xFF252542),

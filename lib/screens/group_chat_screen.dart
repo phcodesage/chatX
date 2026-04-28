@@ -155,6 +155,55 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     }
   }
 
+  void _showTopSnackBar(SnackBar snackBar) {
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.hideCurrentMaterialBanner();
+
+    final actions = <Widget>[];
+    if (snackBar.action != null) {
+      actions.add(
+        TextButton(
+          onPressed: () {
+            messenger.hideCurrentMaterialBanner();
+            snackBar.action!.onPressed();
+          },
+          child: Text(
+            snackBar.action!.label,
+            style: TextStyle(color: snackBar.action!.textColor ?? Colors.white),
+          ),
+        ),
+      );
+    }
+
+    actions.add(
+      TextButton(
+        onPressed: messenger.hideCurrentMaterialBanner,
+        child: const Text('DISMISS', style: TextStyle(color: Colors.white)),
+      ),
+    );
+
+    messenger.showMaterialBanner(
+      MaterialBanner(
+        content: snackBar.content,
+        backgroundColor: snackBar.backgroundColor ?? const Color(0xFF323232),
+        contentTextStyle: const TextStyle(color: Colors.white),
+        actions: actions,
+      ),
+    );
+
+    final autoHide = snackBar.duration;
+    if (autoHide > Duration.zero) {
+      Timer(autoHide, () {
+        if (mounted) {
+          messenger.hideCurrentMaterialBanner();
+        }
+      });
+    }
+  }
+
   void _setupRealtimeListeners() {
     final key = 'group_chat_${widget.group.id}';
 
@@ -672,7 +721,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     // Show snackbar notification
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         SnackBar(
           content: Text('🔔 ${senderName ?? "Someone"} rang the doorbell'),
           duration: const Duration(seconds: 3),
@@ -1119,10 +1168,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         setState(() {
           _messages.removeWhere((m) => m.id == tempId);
         });
-
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to send message: $e')));
+        _showTopSnackBar(SnackBar(content: Text('Failed to send message: $e')));
       }
     }
   }
@@ -1219,10 +1265,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         setState(() {
           _messages.removeWhere((m) => m.id == tempId);
         });
-
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to upload file: $e')));
+        _showTopSnackBar(
+          SnackBar(content: Text('Failed to upload file: $e')),
+        );
       }
     }
   }
@@ -1255,9 +1300,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     } catch (e) {
       debugPrint('Error deleting message: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to delete message: $e')));
+        _showTopSnackBar(
+          SnackBar(content: Text('Failed to delete message: $e')),
+        );
       }
     }
   }
@@ -2207,7 +2252,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (manageStatus.isGranted) return true;
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(
           content: Text('Storage permission required to save files'),
           backgroundColor: Colors.orange,
@@ -2222,7 +2267,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final fileUrl = message.fileUrl;
     if (fileUrl == null || fileUrl.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(content: Text('File URL not available')),
       );
       return;
@@ -2232,7 +2277,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     if (!hasStorageAccess) return;
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(content: Text('Downloading file...')),
       );
     }
@@ -2250,7 +2295,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       await saveFile.writeAsBytes(response.bodyBytes, flush: true);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: Text('Downloaded: $outputName'),
             backgroundColor: Colors.green,
@@ -2260,7 +2305,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     } catch (e) {
       debugPrint('Error downloading group file: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: Text('Failed to download file: $e'),
             backgroundColor: Colors.red,
@@ -2272,7 +2317,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   /// Open file URL (for downloads or external viewing)
   void _openFile(String fileUrl) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       SnackBar(
         content: Text('File URL: $fileUrl'),
         action: SnackBarAction(
@@ -2295,7 +2340,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     if (isVideo) {
       // For video, show a snackbar
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         SnackBar(
           content: Text('Video: ${message.fileName ?? "Video"}'),
           action: SnackBarAction(
@@ -3547,9 +3592,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       debugPrint('Error ringing doorbell: $e');
 
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to ring doorbell: $e')));
+        _showTopSnackBar(
+          SnackBar(content: Text('Failed to ring doorbell: $e')),
+        );
       }
     }
   }
@@ -3684,9 +3729,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     } catch (e) {
       debugPrint('Error picking file: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to pick file: $e')));
+        _showTopSnackBar(SnackBar(content: Text('Failed to pick file: $e')));
       }
     }
   }
@@ -3702,9 +3745,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     } catch (e) {
       debugPrint('Error taking photo: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to take photo: $e')));
+        _showTopSnackBar(SnackBar(content: Text('Failed to take photo: $e')));
       }
     }
   }
@@ -3712,7 +3753,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// Show voice recording modal (placeholder - to be implemented)
   Future<void> _showVoiceRecordingModal() async {
     // TODO: Implement voice recording for group chat
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       const SnackBar(
         content: Text('Voice recording coming soon for group chats'),
         duration: Duration(seconds: 2),
@@ -3739,7 +3780,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     await prefs.setBool('autoTranslate_group_${widget.group.id}', newValue);
 
     // Show feedback snackbar
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       SnackBar(
         content: Text(
           newValue ? 'Auto-translate enabled' : 'Auto-translate disabled',
@@ -3885,7 +3926,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// Copy group message to clipboard
   void _copyGroupMessageToClipboard(GroupMessage message) {
     Clipboard.setData(ClipboardData(text: message.content));
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       const SnackBar(
         content: Text('Message copied to clipboard'),
         duration: Duration(seconds: 2),
@@ -3927,7 +3968,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         setState(() {
           _messageTranslations.remove(message.id);
         });
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           const SnackBar(
             content: Text('Translation hidden'),
             duration: Duration(seconds: 2),
@@ -3938,7 +3979,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       }
 
       // Show loading indicator
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(
           content: Row(
             children: [
@@ -3974,7 +4015,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           _messageTranslations[message.id] = translatedText;
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           const SnackBar(
             content: Text('Message translated'),
             duration: Duration(seconds: 2),
@@ -3983,7 +4024,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         );
       } else if (translatedText == message.content) {
         // Same text, no translation needed
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           const SnackBar(
             content: Text('Message is already in your language'),
             duration: Duration(seconds: 2),
@@ -3992,7 +4033,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         );
       } else {
         // Translation failed
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           const SnackBar(
             content: Text('Translation failed. Please try again.'),
             duration: Duration(seconds: 3),
@@ -4005,7 +4046,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
       debugPrint('Translation error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(
           content: Text('Translation failed. Please try again.'),
           duration: Duration(seconds: 3),
@@ -4049,7 +4090,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// Delete group message (placeholder)
   void _deleteGroupMessage(GroupMessage message) {
     // TODO: Implement group message deletion
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       const SnackBar(
         content: Text('Message deletion coming soon for group chats'),
         duration: Duration(seconds: 2),
@@ -4070,7 +4111,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// Export chat history
   Future<void> _exportChat() async {
     // TODO: Implement chat export for group chat
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       const SnackBar(
         content: Text('Chat export coming soon for group chats'),
         duration: const Duration(seconds: 2),
@@ -4106,7 +4147,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
     try {
       // TODO: Implement delete all messages API call
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(
           content: Text('Delete all messages coming soon'),
           duration: Duration(seconds: 2),
@@ -4115,7 +4156,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     } catch (e) {
       debugPrint('Error deleting all messages: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(content: Text('Failed to delete messages: $e')),
         );
       }
@@ -4667,15 +4708,27 @@ class _AudioMessagePlayerState extends State<_AudioMessagePlayer> {
       debugPrint('AudioPlayers Exception: $e');
       if (mounted) {
         setState(() => _isPlaying = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.hideCurrentSnackBar();
+        messenger.hideCurrentMaterialBanner();
+        messenger.showMaterialBanner(
+          MaterialBanner(
             content: Text(
               'Error playing audio: ${e.toString().split(':').last.trim()}',
             ),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 2),
+            contentTextStyle: const TextStyle(color: Colors.white),
+            actions: [
+              TextButton(
+                onPressed: messenger.hideCurrentMaterialBanner,
+                child: const Text('DISMISS', style: TextStyle(color: Colors.white)),
+              ),
+            ],
           ),
         );
+        Timer(const Duration(seconds: 2), () {
+          if (mounted) messenger.hideCurrentMaterialBanner();
+        });
       }
     }
   }
