@@ -2883,6 +2883,28 @@ class _ChatScreenState extends State<ChatScreen>
     _doJumpToTaskBubble(task);
   }
 
+  /// Scroll to the original message that [replyToId] points to and flash it.
+  void _jumpToRepliedMessage(int replyToId) {
+    final existing = _messages.firstWhere(
+      (m) => m.id == replyToId,
+      orElse: () => Message(
+        id: replyToId,
+        senderId: 0,
+        recipientId: 0,
+        content: '',
+        messageType: 'text',
+        timestamp: DateTime.now().toIso8601String(),
+        timestampMs: 0,
+        isRead: false,
+        status: 'sent',
+        threadId: '',
+        reactions: {},
+        isDeleted: false,
+      ),
+    );
+    _doJumpToTaskBubble(existing);
+  }
+
   Future<void> _doJumpToTaskBubble(Message task) async {
     setState(() {
       _bubbleFlashId = task.id;
@@ -8593,6 +8615,29 @@ class _ChatScreenState extends State<ChatScreen>
   List<PopupMenuEntry<void>> _buildTaskActionMenuItems(Message message) {
     final items = <PopupMenuEntry<void>>[];
 
+    if (message.replyToId != null) {
+      items.add(
+        PopupMenuItem<void>(
+          onTap: () => _jumpToRepliedMessage(message.replyToId!),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.arrow_upward_rounded, color: Color(0xFF60A5FA), size: 18),
+              SizedBox(width: 8),
+              Text(
+                'View replied message',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (_canQuickToggleExcalidrawPin(message)) {
       items.add(
         PopupMenuItem<void>(
@@ -8748,6 +8793,18 @@ class _ChatScreenState extends State<ChatScreen>
                   closeWithAction(sheetContext, () => _setReplyTo(message));
                 },
               ),
+              if (message.replyToId != null)
+                _buildContextMenuActionTile(
+                  icon: Icons.arrow_upward_rounded,
+                  label: 'View replied message',
+                  iconColor: const Color(0xFF60A5FA),
+                  onTap: () {
+                    closeWithAction(
+                      sheetContext,
+                      () => _jumpToRepliedMessage(message.replyToId!),
+                    );
+                  },
+                ),
               if (message.messageType == 'text' && !message.isDeleted)
                 _buildContextMenuActionTile(
                   icon: message.isTask
