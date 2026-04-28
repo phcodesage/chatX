@@ -976,6 +976,55 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  void _showTopSnackBar(SnackBar snackBar) {
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.hideCurrentMaterialBanner();
+
+    final actions = <Widget>[];
+    if (snackBar.action != null) {
+      actions.add(
+        TextButton(
+          onPressed: () {
+            messenger.hideCurrentMaterialBanner();
+            snackBar.action!.onPressed();
+          },
+          child: Text(
+            snackBar.action!.label,
+            style: TextStyle(color: snackBar.action!.textColor ?? Colors.white),
+          ),
+        ),
+      );
+    }
+
+    actions.add(
+      TextButton(
+        onPressed: messenger.hideCurrentMaterialBanner,
+        child: const Text('DISMISS', style: TextStyle(color: Colors.white)),
+      ),
+    );
+
+    messenger.showMaterialBanner(
+      MaterialBanner(
+        content: snackBar.content,
+        backgroundColor: snackBar.backgroundColor ?? const Color(0xFF323232),
+        contentTextStyle: const TextStyle(color: Colors.white),
+        actions: actions,
+      ),
+    );
+
+    final autoHide = snackBar.duration;
+    if (autoHide > Duration.zero) {
+      Timer(autoHide, () {
+        if (mounted) {
+          messenger.hideCurrentMaterialBanner();
+        }
+      });
+    }
+  }
+
   void _hideTopBanner() {
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
@@ -2400,7 +2449,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Show a snackbar notification
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(
           content: Text('All messages have been deleted'),
           duration: Duration(seconds: 3),
@@ -2931,7 +2980,7 @@ class _ChatScreenState extends State<ChatScreen>
 
       // Show loading indicator
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           const SnackBar(
             content: Text('Preparing chat export...'),
             duration: Duration(seconds: 1),
@@ -3002,7 +3051,7 @@ class _ChatScreenState extends State<ChatScreen>
 
       if (selectedDirectory == null || selectedDirectory.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          _showTopSnackBar(
             const SnackBar(
               content: Text('Export cancelled'),
               duration: Duration(seconds: 1),
@@ -3035,7 +3084,7 @@ class _ChatScreenState extends State<ChatScreen>
 
         if (fallbackPath == null) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            _showTopSnackBar(
               const SnackBar(
                 content: Text('Export cancelled'),
                 duration: Duration(seconds: 1),
@@ -3057,7 +3106,7 @@ class _ChatScreenState extends State<ChatScreen>
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: Text('Chat saved to: $savedFileName'),
             duration: const Duration(seconds: 3),
@@ -3068,7 +3117,7 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       debugPrint('Error exporting chat: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: Text('Failed to export chat: $e'),
             backgroundColor: Colors.red,
@@ -3095,7 +3144,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (manageStatus.isGranted) return true;
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(
           content: Text('Storage permission required to save files'),
           backgroundColor: Colors.orange,
@@ -3174,7 +3223,7 @@ class _ChatScreenState extends State<ChatScreen>
     final fileUrl = message.fileUrl;
     if (fileUrl == null || fileUrl.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(content: Text('File URL not available')),
       );
       return;
@@ -3184,7 +3233,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (!hasStorageAccess) return;
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(content: Text('Downloading file...')),
       );
     }
@@ -3216,7 +3265,7 @@ class _ChatScreenState extends State<ChatScreen>
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: Text('Downloaded: $outputName'),
             backgroundColor: Colors.green,
@@ -3226,7 +3275,7 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       debugPrint('Error downloading incoming file: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: Text('Failed to download file: $e'),
             backgroundColor: Colors.red,
@@ -3280,7 +3329,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Show progress
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(
           content: Row(
             children: [
@@ -3321,7 +3370,7 @@ class _ChatScreenState extends State<ChatScreen>
           _databaseLoadedMessageIds.clear();
         });
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          _showTopSnackBar(
             const SnackBar(
               content: Text('All messages deleted successfully'),
               backgroundColor: Color(0xFF10B981),
@@ -3331,7 +3380,7 @@ class _ChatScreenState extends State<ChatScreen>
         }
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          _showTopSnackBar(
             SnackBar(
               content: Text(
                 'Failed to delete messages (${response.statusCode})',
@@ -3344,7 +3393,7 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
         );
       }
@@ -3710,7 +3759,7 @@ class _ChatScreenState extends State<ChatScreen>
       final granted = await FlutterContacts.requestPermission(readonly: true);
       if (!granted) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          _showTopSnackBar(
             const SnackBar(
               content: Text('Contacts permission is required to share contacts'),
               backgroundColor: Colors.red,
@@ -3734,7 +3783,7 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       debugPrint('Contact pick error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           const SnackBar(content: Text('Could not open contact picker')),
         );
       }
@@ -3754,7 +3803,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (name.isEmpty || phone.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           const SnackBar(
             content: Text('This contact has no phone number to share'),
           ),
@@ -4290,7 +4339,7 @@ class _ChatScreenState extends State<ChatScreen>
           ? 'Sent to ${response.sentCount}/${response.requestedCount}. ${response.failedCount} failed.'
           : 'Sent to ${response.sentCount} recipients.';
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         SnackBar(
           content: Text(summaryText),
           backgroundColor: response.failedCount > 0
@@ -4300,7 +4349,7 @@ class _ChatScreenState extends State<ChatScreen>
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         SnackBar(
           content: Text('Bulk send failed: $e'),
           backgroundColor: Colors.red,
@@ -6035,7 +6084,7 @@ class _ChatScreenState extends State<ChatScreen>
     // Set up error callback
     callService.onCallError = (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: Text('Call error: $error'),
             backgroundColor: Colors.red,
@@ -6226,7 +6275,7 @@ class _ChatScreenState extends State<ChatScreen>
 
       // Try to show a user-friendly error
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: Text('Failed to open call screen: ${e.toString()}'),
             backgroundColor: Colors.red,
@@ -6809,7 +6858,7 @@ class _ChatScreenState extends State<ChatScreen>
     final status = await Permission.microphone.request();
     if (status != PermissionStatus.granted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showTopSnackBar(
           SnackBar(
             content: const Text(
               'Microphone permission is required to record voice messages',
@@ -8235,7 +8284,7 @@ class _ChatScreenState extends State<ChatScreen>
         isSelfChat: _isSelfChat,
         callInProgressOnOtherDevice: _callInProgressOnOtherDevice,
         partnerStatus: _partnerStatus,
-        partnerLastSeen: _partnerLastSeen,
+        partnerLastSeen: _formattedPartnerLastSeen(),
         taskCount: _taskMessages.where((m) => m.isTask).length,
         excalidrawCount: _pinnedExcalidrawLinks.length,
         scale: scale,
@@ -8256,16 +8305,18 @@ class _ChatScreenState extends State<ChatScreen>
                 LiveChatTimestampHeader(scale: scale),
                 // Messages list
                 Expanded(
-                  child: ChatMessageList(
-                    scale: scale,
-                    controller: _scrollController,
-                    isLoading: _isLoading,
-                    messages: _messages,
-                    hasMoreMessages: _hasMoreMessages,
-                    isLoadingMore: _isLoadingMore,
-                    onLoadMoreMessages: _loadMoreMessages,
-                    loadingWidgetBuilder: (_) => _buildChatShimmer(),
-                    itemBuilder: (context, index) {
+                  child: Stack(
+                    children: [
+                      ChatMessageList(
+                        scale: scale,
+                        controller: _scrollController,
+                        isLoading: _isLoading,
+                        messages: _messages,
+                        hasMoreMessages: _hasMoreMessages,
+                        isLoadingMore: _isLoadingMore,
+                        onLoadMoreMessages: _loadMoreMessages,
+                        loadingWidgetBuilder: (_) => _buildChatShimmer(),
+                        itemBuilder: (context, index) {
                       // "Load more" button is handled inside ChatMessageList.
                       final message = _messages[index];
 
@@ -8320,43 +8371,79 @@ class _ChatScreenState extends State<ChatScreen>
                               child: _buildMessageBubble(message, isSentByMe),
                             );
 
-                      return ChatMessageItem(
-                        messageKey: _messageItemKeys.putIfAbsent(
-                          message.id,
-                          () => GlobalKey(),
+                        return ChatMessageItem(
+                          messageKey: _messageItemKeys.putIfAbsent(
+                            message.id,
+                            () => GlobalKey(),
+                          ),
+                          dateSeparator: dateSeparator,
+                          content: msgContent,
+                        );
+                      },
+                        emptyStateBuilder: (context) => Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.chat_bubble_outline,
+                                size: 64 * scale,
+                                color: Colors.grey[700],
+                              ),
+                              SizedBox(height: 16 * scale),
+                              Text(
+                                'No messages yet',
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 16 * scale,
+                                ),
+                              ),
+                              SizedBox(height: 8 * scale),
+                              Text(
+                                'Send a message to start the conversation',
+                                style: TextStyle(
+                                  color: Colors.grey[700],
+                                  fontSize: 14 * scale,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        dateSeparator: dateSeparator,
-                        content: msgContent,
-                      );
-                    },
-                    emptyStateBuilder: (context) => Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.chat_bubble_outline,
-                            size: 64 * scale,
-                            color: Colors.grey[700],
-                          ),
-                          SizedBox(height: 16 * scale),
-                          Text(
-                            'No messages yet',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 16 * scale,
-                            ),
-                          ),
-                          SizedBox(height: 8 * scale),
-                          Text(
-                            'Send a message to start the conversation',
-                            style: TextStyle(
-                              color: Colors.grey[700],
-                              fontSize: 14 * scale,
-                            ),
-                          ),
-                        ],
                       ),
-                    ),
+                      if (!_isAtBottom)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 16,
+                          child: Center(
+                            child: GestureDetector(
+                              onTap: () {
+                                _scrollToBottom();
+                                _markVisibleMessagesAsRead();
+                              },
+                              child: Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF7C3AED),
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.3),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.keyboard_arrow_down,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 // Bottom bar: typing preview + message input (keyed for modal positioning)
@@ -8886,7 +8973,7 @@ class _ChatScreenState extends State<ChatScreen>
         }
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         SnackBar(
           content: Text(
             wasPinned
@@ -8909,7 +8996,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       SnackBar(
         content: Text(
           wasPinned ? 'Excalidraw unpinned' : 'Excalidraw pinned',
@@ -8968,7 +9055,7 @@ class _ChatScreenState extends State<ChatScreen>
       await _loadPinnedExcalidrawLinks();
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(
           content: Text(
             'Failed to unpin Excalidraw',
@@ -8987,7 +9074,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// Copy message content to clipboard
   void _copyMessageToClipboard(Message message) {
     Clipboard.setData(ClipboardData(text: message.content));
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       const SnackBar(
         content: Text('Message copied to clipboard'),
         duration: Duration(seconds: 2),
@@ -9088,7 +9175,7 @@ class _ChatScreenState extends State<ChatScreen>
       }
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       const SnackBar(
         content: Text('Message edited'),
         duration: Duration(seconds: 2),
@@ -9277,7 +9364,7 @@ class _ChatScreenState extends State<ChatScreen>
       }
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       const SnackBar(
         content: Text('Message deleted'),
         duration: Duration(seconds: 2),
@@ -10613,7 +10700,7 @@ class _ChatScreenState extends State<ChatScreen>
                           Clipboard.setData(
                             ClipboardData(text: task.content),
                           );
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          _showTopSnackBar(
                             const SnackBar(
                               content: Text('Copied to clipboard'),
                               duration: Duration(milliseconds: 1200),
@@ -11161,7 +11248,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (uri == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         const SnackBar(
           content: Text('Invalid link'),
           backgroundColor: Colors.red,
@@ -11191,7 +11278,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showTopSnackBar(
       SnackBar(
         content: Text('Could not open: $normalizedUrl'),
         backgroundColor: Colors.red,
@@ -11782,7 +11869,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (isVideo) {
       // For video, we could open in external player or implement video player
       // For now, show a snackbar
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showTopSnackBar(
         SnackBar(
           content: Text('Video: ${message.fileName ?? "Video"}'),
           action: SnackBarAction(
@@ -11905,106 +11992,6 @@ class _ChatScreenState extends State<ChatScreen>
     final raw = _partnerLastSeen;
     if (raw == null || raw.isEmpty) return null;
     return _formatLastSeen(raw);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scale = _uiScale(context);
-    final keyboardInset = _effectiveKeyboardInset(context);
-    final emojiPanelHeight = _emojiPanelHeight(keyboardInset);
-    final stablePanelHeight =
-        _isSwitchingInputMode && _lockedInputPanelHeight > 0
-        ? _lockedInputPanelHeight
-        : (_showEmojiPicker ? emojiPanelHeight : keyboardInset);
-    final actionPanelInset = (_isActionsPanelOpen && _actionsPanelFromKeyboard)
-      ? _actionsPanelInset
-      : 0.0;
-    final composerInset = _showEmojiPicker
-      ? 0.0
-      : math.max(stablePanelHeight, actionPanelInset);
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      backgroundColor: const Color(0xFF2C2C2C),
-      appBar: ChatHeader(
-        otherUser: widget.otherUser,
-        headerColor: _headerColor,
-        isSelfChat: _isSelfChat,
-        callInProgressOnOtherDevice: _callInProgressOnOtherDevice,
-        partnerStatus: _partnerStatus,
-        partnerLastSeen: _formattedPartnerLastSeen(),
-        taskCount: _taskMessages.where((m) => m.isTask).length,
-        excalidrawCount: _pinnedExcalidrawLinks.length,
-        scale: scale,
-        onBack: () => Navigator.pop(context),
-        onUserProfile: _showUserProfile,
-        onShowTasks: _showTasksModal,
-        onShowExcalidraw: _showExcalidrawModal,
-        onCallAudio: () => _showCallSetupModal(CallType.audio),
-        onCallVideo: () => _showCallSetupModal(CallType.video),
-      ),
-      body: GestureDetector(
-        // Tap outside the modal to dismiss it
-        behavior: HitTestBehavior.translucent,
-        child: Stack(
-          children: [
-            Column(
-              children: [
-                LiveChatTimestampHeader(scale: scale),
-                // Messages list
-                Expanded(
-                  child: ChatMessageList(
-                    scale: scale,
-                    controller: _scrollController,
-                    isLoading: _isLoading,
-                    messages: _messages,
-                    hasMoreMessages: _hasMoreMessages,
-                    isLoadingMore: _isLoadingMore,
-                    onLoadMoreMessages: _loadMoreMessages,
-                    loadingWidgetBuilder: (_) => _buildChatShimmer(),
-                    itemBuilder: (context, index) {
-                      // "Load more" button is handled inside ChatMessageList.
-                      final message = _messages[index];
-
-                      if (message.isDeleted) {
-                        return const SizedBox.shrink();
-                      }
-
-                      final isSentByMe =
-                          message.senderId.toString() == _currentUserId.toString();
-
-                      return ChatMessageItem(
-                        scale: scale,
-                        message: message,
-                        isSentByMe: isSentByMe,
-                        showDateSeparator: _shouldShowDateSeparator(index),
-                        dateSeparatorBuilder: () => ChatDateSeparator(
-                          dateLabel: message.formattedDate,
-                          scale: scale,
-                        ),
-                        swipeableBuilder: (child) => SwipeableMessage(
-                          scale: scale,
-                          onReply: () => _setReplyMessage(message),
-                          child: child,
-                        ),
-                        bubbleBuilder: () => _buildMessageBubble(message, isSentByMe),
-                      );
-                    },
-                  ),
-                ),
-*** End Patch
-        final hours = difference.inHours;
-        return '$hours ${hours == 1 ? "hour" : "hours"} ago';
-      } else if (difference.inDays == 1) {
-        return 'yesterday';
-      } else if (difference.inDays < 7) {
-        return '${difference.inDays} days ago';
-      } else {
-        return '${lastSeen.month}/${lastSeen.day}/${lastSeen.year}';
-      }
-    } catch (e) {
-      debugPrint('Error parsing last seen: $e');
-      return 'a while ago';
-    }
   }
 }
 
@@ -12130,9 +12117,9 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
       debugPrint('Native startRecording error: $e');
       if (mounted) {
         setState(() => _isRecording = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error starting recording: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error starting recording: $e')),
+        );
       }
     }
   }
