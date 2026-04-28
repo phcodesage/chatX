@@ -33,7 +33,7 @@ Future<void> notificationTapBackgroundHandler(
 
 bool _isChatQuickReplyEligible(Map<String, dynamic> data) {
   final type = data['type']?.toString().toLowerCase();
-  if (type == 'doorbell' || type == 'color_change' || type == 'call') {
+  if (type == 'color_change' || type == 'call') {
     return false;
   }
 
@@ -41,7 +41,21 @@ bool _isChatQuickReplyEligible(Map<String, dynamic> data) {
     return false;
   }
 
-  return data['sender_id'] != null || data['group_id'] != null;
+  return data['sender_id'] != null ||
+      data['group_id'] != null ||
+      data['room_id'] != null;
+}
+
+bool _isConversationNotificationEligible(Map<String, dynamic> data) {
+  final type = data['type']?.toString().toLowerCase();
+  if (type == 'color_change' || type == 'call') {
+    return false;
+  }
+
+  return data['sender_id'] != null ||
+      data['group_id'] != null ||
+      data['room_id'] != null ||
+      (data['sender_name']?.toString().trim().isNotEmpty ?? false);
 }
 
 bool _isChatQuickReplyActionId(String? actionId) {
@@ -69,12 +83,51 @@ int _buildChatNotificationId(Map<String, dynamic> data) {
     return 'direct:$senderId'.hashCode & 0x7FFFFFFF;
   }
 
+  final senderName = data['sender_name']?.toString().trim();
+  if (senderName != null && senderName.isNotEmpty) {
+    return 'sender:$senderName'.hashCode & 0x7FFFFFFF;
+  }
+
   final messageId = data['message_id']?.toString();
   if (messageId != null && messageId.isNotEmpty) {
     return 'msg:$messageId'.hashCode & 0x7FFFFFFF;
   }
 
   return DateTime.now().millisecondsSinceEpoch ~/ 1000;
+}
+
+String _buildChatConversationKey(Map<String, dynamic> data) {
+  final roomId = data['room_id']?.toString();
+  if (roomId != null && roomId.isNotEmpty) {
+    return 'room:$roomId';
+  }
+
+  final groupId = data['group_id']?.toString();
+  if (groupId != null && groupId.isNotEmpty) {
+    return 'group:$groupId';
+  }
+
+  final senderId = data['sender_id']?.toString();
+  if (senderId != null && senderId.isNotEmpty) {
+    return 'direct:$senderId';
+  }
+
+  final senderName = data['sender_name']?.toString().trim();
+  if (senderName != null && senderName.isNotEmpty) {
+    return 'sender:$senderName';
+  }
+
+  final recipientId = data['reply_recipient_id']?.toString();
+  if (recipientId != null && recipientId.isNotEmpty) {
+    return 'direct:$recipientId';
+  }
+
+  final messageId = data['message_id']?.toString();
+  if (messageId != null && messageId.isNotEmpty) {
+    return 'msg:$messageId';
+  }
+
+  return 'ts:${DateTime.now().millisecondsSinceEpoch ~/ 1000}';
 }
 
 Map<String, String> _extractNotificationText(Map<String, dynamic> data) {
@@ -100,7 +153,7 @@ StyleInformation? _buildMessagingStyle(
   Map<String, dynamic> data,
   String body,
 ) {
-  if (!_isChatQuickReplyEligible(data)) {
+  if (!_isConversationNotificationEligible(data)) {
     return null;
   }
 
@@ -158,7 +211,7 @@ Future<bool> _showNativeQuickReplyNotification({
   bool allowFromBackgroundIsolate = true,
 }) async {
   if (defaultTargetPlatform != TargetPlatform.android ||
-      !_isChatQuickReplyEligible(data)) {
+      !_isConversationNotificationEligible(data)) {
     return false;
   }
 
@@ -185,7 +238,9 @@ Future<bool> _showNativeQuickReplyNotification({
         'replyRecipientId': data['reply_recipient_id']?.toString() ??
             data['sender_id']?.toString(),
         'conversationType': conversationType ?? (isGroup ? 'group' : 'direct'),
+        'enableQuickReply': _isChatQuickReplyEligible(data),
         'groupId': data['group_id']?.toString(),
+        'conversationKey': _buildChatConversationKey(data),
         'baseUrl': ApiConfig.baseUrl,
         'payloadJson': jsonEncode(data),
       },
@@ -305,7 +360,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   // On Android, chat notifications are rendered natively by ChatFirebaseMessagingReceiver
   // so inline reply works when app is backgrounded/terminated without MethodChannel.
   if (defaultTargetPlatform == TargetPlatform.android &&
-      _isChatQuickReplyEligible(data)) {
+      _isConversationNotificationEligible(data)) {
     debugPrint(
       '📨 Android background chat notification delegated to native receiver',
     );

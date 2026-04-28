@@ -15,6 +15,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import com.google.firebase.messaging.RemoteMessage
+import org.json.JSONArray
 import org.json.JSONObject
 
 class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
@@ -24,6 +25,8 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
         private const val CHAT_CHANNEL_NAME = "Chat Messages"
         private val DEFAULT_BASE_URL: String = BuildConfig.BASE_URL
         private const val REQUEST_QUICK_REPLY = 4100
+        private const val CHAT_NOTIFICATION_HISTORY_PREFS = "chat_notification_history"
+        private const val CHAT_NOTIFICATION_HISTORY_LIMIT = 12
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -48,6 +51,18 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
     }
 
     private fun isChatMessage(data: Map<String, String>): Boolean {
+        val type = data["type"]?.lowercase()
+        if (type == "call" || type == "color_change") {
+            return false
+        }
+
+        return !data["room_id"].isNullOrBlank() ||
+            !data["group_id"].isNullOrBlank() ||
+            !data["sender_id"].isNullOrBlank() ||
+            !data["sender_name"].isNullOrBlank()
+    }
+
+    private fun supportsQuickReply(data: Map<String, String>): Boolean {
         val type = data["type"]?.lowercase() ?: return false
         return type == "message" || type == "chat"
     }
@@ -63,6 +78,7 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
         val isGroup = conversationType == "group" || groupId.isNotBlank()
         val replyEndpoint = resolveReplyEndpoint(data, conversationType, groupId)
         val replyRecipientId = (data["reply_recipient_id"] ?: data["sender_id"]).orEmpty()
+        val enableQuickReply = supportsQuickReply(data)
         val baseUrl = data["base_url"].orEmpty().ifBlank { DEFAULT_BASE_URL }
         val payloadJson = JSONObject(data as Map<*, *>).toString()
 
@@ -107,10 +123,20 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
             .setAllowGeneratedReplies(true)
             .build()
 
-        val senderPerson = Person.Builder().setName(senderName).build()
+        val conversationKey = buildConversationKey(data, conversationType, groupId, replyRecipientId, notificationId)
+        val history = appendChatHistory(context, conversationKey, senderName, body)
+
         val mePerson = Person.Builder().setName("You").build()
         val style = NotificationCompat.MessagingStyle(mePerson)
-            .addMessage(body, System.currentTimeMillis(), senderPerson)
+
+        for (i in 0 until history.length()) {
+            val entry = history.optJSONObject(i) ?: continue
+            val lineSender = entry.optString("sender").ifBlank { senderName }
+            val lineText = entry.optString("text").ifBlank { body }
+            val lineTimestamp = entry.optLong("ts", System.currentTimeMillis())
+            val senderPerson = Person.Builder().setName(lineSender).build()
+            style.addMessage(lineText, lineTimestamp, senderPerson)
+        }
 
         if (isGroup && groupName.isNotBlank()) {
             style.setConversationTitle(groupName)
@@ -140,9 +166,13 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setStyle(style)
+            .setNumber(history.length())
             .setOnlyAlertOnce(false)
-            .addAction(replyAction)
             .setAllowSystemGeneratedContextualActions(true)
+
+        if (enableQuickReply) {
+            builder.addAction(replyAction)
+        }
 
         if (contentPendingIntent != null) {
             builder.setContentIntent(contentPendingIntent)
@@ -213,6 +243,71 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
         }
 
         return "/api/mobile/messages/quick-reply"
+    }
+
+    private fun buildConversationKey(
+        data: Map<String, String>,
+        conversationType: String,
+        groupId: String,
+        replyRecipientId: String,
+        notificationId: Int,
+    ): String {
+        data["room_id"]?.takeIf { it.isNotBlank() }?.let {
+            return "room:$it"
+        }
+
+        if (conversationType == "group" && groupId.isNotBlank()) {
+            return "group:$groupId"
+        }
+
+        if (replyRecipientId.isNotBlank()) {
+            return "direct:$replyRecipientId"
+        }
+
+        data["sender_id"]?.takeIf { it.isNotBlank() }?.let {
+            return "direct:$it"
+        }
+
+        data["sender_name"]?.takeIf { it.isNotBlank() }?.let {
+            return "sender:$it"
+        }
+
+        return "id:$notificationId"
+    }
+
+    private fun appendChatHistory(
+        context: Context,
+        conversationKey: String,
+        senderName: String,
+        body: String,
+    ): JSONArray {
+        val prefs = context.getSharedPreferences(CHAT_NOTIFICATION_HISTORY_PREFS, Context.MODE_PRIVATE)
+        val prefKey = "history_$conversationKey"
+        val existingRaw = prefs.getString(prefKey, null)
+        val updated = JSONArray()
+
+        if (!existingRaw.isNullOrBlank()) {
+            try {
+                val existing = JSONArray(existingRaw)
+                val start = maxOf(0, existing.length() - (CHAT_NOTIFICATION_HISTORY_LIMIT - 1))
+                for (i in start until existing.length()) {
+                    updated.put(existing.optJSONObject(i) ?: JSONObject())
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse notification history for $conversationKey", e)
+            }
+        }
+
+        updated.put(
+            JSONObject().apply {
+                put("sender", senderName)
+                put("text", body)
+                put("ts", System.currentTimeMillis())
+            },
+        )
+
+        prefs.edit().putString(prefKey, updated.toString()).apply()
+        return updated
     }
 
     private fun resolveNotificationId(data: Map<String, String>): Int {

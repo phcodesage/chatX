@@ -36,6 +36,8 @@ import androidx.core.graphics.drawable.IconCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 
@@ -70,6 +72,8 @@ class MainActivity : FlutterActivity() {
         private const val REQUEST_TOGGLE_MIC = 1001
         private const val REQUEST_END_CALL = 1002
         private const val REQUEST_QUICK_REPLY = 2001
+        private const val CHAT_NOTIFICATION_HISTORY_PREFS = "chat_notification_history"
+        private const val CHAT_NOTIFICATION_HISTORY_LIMIT = 12
     }
 
     private val pipActionReceiver = object : BroadcastReceiver() {
@@ -862,9 +866,13 @@ class MainActivity : FlutterActivity() {
         val replyEndpoint = (args["replyEndpoint"] as? String).orEmpty()
         val replyRecipientId = (args["replyRecipientId"] as? String).orEmpty()
         val conversationType = (args["conversationType"] as? String)?.ifBlank { "direct" } ?: "direct"
+        val enableQuickReply = args["enableQuickReply"] as? Boolean ?: true
         val groupId = (args["groupId"] as? String).orEmpty()
         val baseUrl = (args["baseUrl"] as? String).orEmpty()
         val payloadJson = (args["payloadJson"] as? String).orEmpty()
+        val conversationKey = (args["conversationKey"] as? String)?.ifBlank { null }
+            ?: buildConversationKey(conversationType, groupId, replyRecipientId, notificationId)
+        val history = appendChatHistory(conversationKey, senderName, body)
 
         ensureNotificationChannel(channelId, channelName)
 
@@ -907,11 +915,18 @@ class MainActivity : FlutterActivity() {
             .setAllowGeneratedReplies(true)
             .build()
 
-        val senderPerson = Person.Builder().setName(senderName).build()
         val mePerson = Person.Builder().setName("You").build()
 
         val style = NotificationCompat.MessagingStyle(mePerson)
-            .addMessage(body, System.currentTimeMillis(), senderPerson)
+
+        for (i in 0 until history.length()) {
+            val entry = history.optJSONObject(i) ?: continue
+            val lineSender = entry.optString("sender").ifBlank { senderName }
+            val lineText = entry.optString("text").ifBlank { body }
+            val lineTimestamp = entry.optLong("ts", System.currentTimeMillis())
+            val senderPerson = Person.Builder().setName(lineSender).build()
+            style.addMessage(lineText, lineTimestamp, senderPerson)
+        }
 
         if (isGroup && groupName.isNotBlank()) {
             style.setConversationTitle(groupName)
@@ -943,15 +958,70 @@ class MainActivity : FlutterActivity() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setStyle(style)
+            .setNumber(history.length())
             .setOnlyAlertOnce(false)
-            .addAction(replyAction)
             .setAllowSystemGeneratedContextualActions(true)
+
+        if (enableQuickReply) {
+            builder.addAction(replyAction)
+        }
 
         if (contentPendingIntent != null) {
             builder.setContentIntent(contentPendingIntent)
         }
 
         NotificationManagerCompat.from(this).notify(notificationId, builder.build())
+    }
+
+    private fun buildConversationKey(
+        conversationType: String,
+        groupId: String,
+        replyRecipientId: String,
+        notificationId: Int,
+    ): String {
+        if (conversationType == "group" && groupId.isNotBlank()) {
+            return "group:$groupId"
+        }
+
+        if (replyRecipientId.isNotBlank()) {
+            return "direct:$replyRecipientId"
+        }
+
+        return "id:$notificationId"
+    }
+
+    private fun appendChatHistory(
+        conversationKey: String,
+        senderName: String,
+        body: String,
+    ): JSONArray {
+        val prefs = getSharedPreferences(CHAT_NOTIFICATION_HISTORY_PREFS, Context.MODE_PRIVATE)
+        val prefKey = "history_$conversationKey"
+        val existingRaw = prefs.getString(prefKey, null)
+        val updated = JSONArray()
+
+        if (!existingRaw.isNullOrBlank()) {
+            try {
+                val existing = JSONArray(existingRaw)
+                val start = maxOf(0, existing.length() - (CHAT_NOTIFICATION_HISTORY_LIMIT - 1))
+                for (i in start until existing.length()) {
+                    updated.put(existing.optJSONObject(i) ?: JSONObject())
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse notification history for $conversationKey", e)
+            }
+        }
+
+        updated.put(
+            JSONObject().apply {
+                put("sender", senderName)
+                put("text", body)
+                put("ts", System.currentTimeMillis())
+            },
+        )
+
+        prefs.edit().putString(prefKey, updated.toString()).apply()
+        return updated
     }
 
     private fun ensureNotificationChannel(channelId: String, channelName: String) {
