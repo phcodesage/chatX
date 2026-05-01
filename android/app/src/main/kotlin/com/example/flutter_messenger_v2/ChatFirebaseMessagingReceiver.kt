@@ -256,7 +256,31 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
             )
         }
 
-        val builder = NotificationCompat.Builder(context, CHAT_CHANNEL_ID)
+        val groupKey = "chat:$conversationKey"
+        val nm = NotificationManagerCompat.from(context)
+
+        // ── Per-message notification: unique ID ensures each message triggers its own
+        // heads-up popup so rapid messages appear one-by-one (Skype/WhatsApp style).
+        val messageNotifId = resolveMessageNotificationId(data)
+        val msgBuilder = NotificationCompat.Builder(context, CHAT_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.sym_action_chat)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setAutoCancel(true)
+            .setGroup(groupKey)
+            .setOnlyAlertOnce(false)
+            .setSortKey(System.currentTimeMillis().toString())
+        if (enableQuickReply) msgBuilder.addAction(replyAction)
+        if (contentPendingIntent != null) msgBuilder.setContentIntent(contentPendingIntent)
+        nm.notify(messageNotifId, msgBuilder.build())
+
+        // ── Group summary: MessagingStyle with full accumulated history.
+        // setGroupSummary(true) collapses all individual notifications into one expandable
+        // thread in the drawer. setOnlyAlertOnce(true) avoids double-vibrating.
+        val summaryBuilder = NotificationCompat.Builder(context, CHAT_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.sym_action_chat)
             .setContentTitle(title)
             .setContentText(body)
@@ -265,20 +289,23 @@ class ChatFirebaseMessagingReceiver : BroadcastReceiver() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setStyle(style)
+            .setGroup(groupKey)
+            .setGroupSummary(true)
             .setNumber(history.length())
-            .setOnlyAlertOnce(false)
+            .setOnlyAlertOnce(true)
             .setAllowSystemGeneratedContextualActions(true)
+        if (enableQuickReply) summaryBuilder.addAction(replyAction)
+        if (contentPendingIntent != null) summaryBuilder.setContentIntent(contentPendingIntent)
+        nm.notify(notificationId, summaryBuilder.build())
 
-        if (enableQuickReply) {
-            builder.addAction(replyAction)
+        Log.d(TAG, "Notifications: msg=$messageNotifId summary=$notificationId group=$groupKey msgs=${history.length()}")
+    }
+
+    private fun resolveMessageNotificationId(data: Map<String, String>): Int {
+        data["message_id"]?.takeIf { it.isNotBlank() }?.let {
+            return "msg:$it".hashCode() and 0x7FFFFFFF
         }
-
-        if (contentPendingIntent != null) {
-            builder.setContentIntent(contentPendingIntent)
-        }
-
-        NotificationManagerCompat.from(context).notify(notificationId, builder.build())
-        Log.d(TAG, "Native quick-reply notification shown: $notificationId")
+        return ("msg_ts:${System.currentTimeMillis()}").hashCode() and 0x7FFFFFFF
     }
 
     private fun ensureChannel(context: Context) {

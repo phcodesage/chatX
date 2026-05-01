@@ -998,6 +998,17 @@ class MainActivity : FlutterActivity() {
         }
 
         if (conversationKey.isNotBlank()) {
+            // Cancel all per-message notifications belonging to this conversation's group.
+            val groupKey = "chat:$conversationKey"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val nm = getSystemService(NotificationManager::class.java)
+                nm?.activeNotifications?.forEach { sbn ->
+                    if (sbn.notification?.group == groupKey) {
+                        nm.cancel(sbn.tag, sbn.id)
+                    }
+                }
+            }
+
             val prefs = getSharedPreferences(CHAT_NOTIFICATION_HISTORY_PREFS, Context.MODE_PRIVATE)
             prefs.edit().remove("history_$conversationKey").apply()
         }

@@ -42,7 +42,7 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
     
     <application
-        android:label="Flutter Messenger v2"
+        android:label="CHATX"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true"
