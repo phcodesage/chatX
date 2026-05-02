@@ -238,7 +238,7 @@ class VersionService {
 
       await showDialog<void>(
         context: context,
-        barrierDismissible: false,
+        barrierDismissible: !info.forceUpdate,
         builder: (dialogContext) {
           return UpdateDialog(
             info: info,
@@ -454,7 +454,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final canDismiss = false;
+    final canDismiss = !widget.info.forceUpdate;
     const appBlue = Color(0xFF1E3A8A);
     const appCard = Color(0xFF344256);
     const appPrimary = Color(0xFF2E2A8B);
@@ -582,6 +582,11 @@ class _UpdateDialogState extends State<UpdateDialog> {
         actions: _isDownloading
             ? null
             : [
+                if (!widget.info.forceUpdate)
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Later', style: TextStyle(color: appMutedText)),
+                  ),
                 FilledButton(
                   style: FilledButton.styleFrom(
                     backgroundColor: appPrimary,
