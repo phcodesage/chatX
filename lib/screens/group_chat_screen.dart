@@ -35,6 +35,10 @@ class GroupChatScreen extends StatefulWidget {
 }
 
 class _GroupChatScreenState extends State<GroupChatScreen> {
+  static const MethodChannel _fileOpsChannel = MethodChannel(
+    'com.example.flutter_messenger_v2/file_ops',
+  );
+
   final SocketService _socketService = SocketService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -1993,59 +1997,55 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           if (isGenericFile) ...[
             Container(
               padding: const EdgeInsets.all(16),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(
-                    Icons.attach_file,
-                    color: Colors.white70,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          message.fileName ?? 'File',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.attach_file,
+                        color: Colors.white70,
+                        size: 24,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              message.fileName ?? 'File',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              message.fileUrl != null
+                                  ? ((message.fileSize != null && message.fileSize! > 0)
+                                        ? _formatFileSize(message.fileSize!)
+                                        : 'Unknown size')
+                                  : 'File not available',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (message.fileUrl != null && isSentByMe)
+                        IconButton(
+                          onPressed: () => _openFile(message.fileUrl!),
+                          icon: const Icon(
+                            Icons.open_in_new,
+                            color: Colors.white70,
+                            size: 20,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          message.fileUrl != null
-                              ? ((message.fileSize != null && message.fileSize! > 0)
-                                    ? _formatFileSize(message.fileSize!)
-                                    : 'Unknown size')
-                              : 'File not available',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.7),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
+                    ],
                   ),
-                  if (message.fileUrl != null && !isSentByMe)
-                    IconButton(
-                      onPressed: () => _downloadGroupIncomingFile(message),
-                      icon: const Icon(
-                        Icons.download,
-                        color: Colors.white70,
-                        size: 20,
-                      ),
-                    )
-                  else if (message.fileUrl != null && isSentByMe)
-                    IconButton(
-                      onPressed: () => _openFile(message.fileUrl!),
-                      icon: const Icon(
-                        Icons.open_in_new,
-                        color: Colors.white70,
-                        size: 20,
-                      ),
-                    ),
                 ],
               ),
             ),
@@ -2124,20 +2124,71 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           if (isSentByMe)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  // Timestamp
-                  Text(
-                    message.formattedTime,
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
-                  const SizedBox(width: 4),
-                  // Status indicator (simplified for groups)
-                  const Icon(Icons.done_all, size: 16, color: Colors.white70),
-                ],
-              ),
+              child: (message.fileUrl != null &&
+                      message.fileUrl!.isNotEmpty &&
+                      (isMedia || isAudio || isGenericFile))
+                  ? Row(
+                      mainAxisSize: MainAxisSize.max,
+                      children: [
+                        Text(
+                          message.formattedTime,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(
+                          Icons.done_all,
+                          size: 16,
+                          color: Colors.white70,
+                        ),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: () => _downloadGroupIncomingFile(message),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 0,
+                            ),
+                            visualDensity: const VisualDensity(
+                              horizontal: -3,
+                              vertical: -3,
+                            ),
+                          ),
+                          child: const Text(
+                            'Save',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              height: 1,
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Text(
+                          message.formattedTime,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(
+                          Icons.done_all,
+                          size: 16,
+                          color: Colors.white70,
+                        ),
+                      ],
+                    ),
             ),
           // Full timestamp - only visible when _showTimestamps is true
           if (_showTimestamps)
@@ -2244,17 +2295,24 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   /// Resolve a directory to save downloaded files
   Future<Directory> _resolveDownloadDirectory() async {
     if (Platform.isAndroid) {
-      final publicDownloads = Directory('/storage/emulated/0/Download');
-      if (await publicDownloads.exists()) return publicDownloads;
+      final sharedDownloads = Directory('/storage/emulated/0/Download');
+      if (!await sharedDownloads.exists()) {
+        await sharedDownloads.create(recursive: true);
+      }
+      return sharedDownloads;
     }
 
     final systemDownloads = await getDownloadsDirectory();
     if (systemDownloads != null) return systemDownloads;
 
-    final external = await getExternalStorageDirectory();
-    if (external != null) return external;
-
-    return getApplicationDocumentsDirectory();
+    final appDocs = await getApplicationDocumentsDirectory();
+    final fallbackDownloads = Directory(
+      '${appDocs.path}${Platform.pathSeparator}Downloads',
+    );
+    if (!await fallbackDownloads.exists()) {
+      await fallbackDownloads.create(recursive: true);
+    }
+    return fallbackDownloads;
   }
 
   /// Request storage permission for downloads
@@ -2287,9 +2345,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       return;
     }
 
-    final hasStorageAccess = await _requestStorageAccessForFileOps();
-    if (!hasStorageAccess) return;
-
     if (mounted) {
       _showTopSnackBar(
         const SnackBar(content: Text('Downloading file...')),
@@ -2303,15 +2358,28 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         throw Exception('Download failed with status ${response.statusCode}');
       }
 
+      final mimeType =
+          message.fileType ?? lookupMimeType(uri.path) ?? 'application/octet-stream';
       final outputName = message.fileName ?? uri.pathSegments.last;
-      final downloadDir = await _resolveDownloadDirectory();
-      final saveFile = File('${downloadDir.path}${Platform.pathSeparator}$outputName');
-      await saveFile.writeAsBytes(response.bodyBytes, flush: true);
+
+      if (Platform.isAndroid) {
+        await _saveToAndroidDownloads(
+          fileName: outputName,
+          mimeType: mimeType,
+          bytes: response.bodyBytes,
+        );
+      } else {
+        final downloadDir = await _resolveDownloadDirectory();
+        final saveFile = File(
+          '${downloadDir.path}${Platform.pathSeparator}$outputName',
+        );
+        await saveFile.writeAsBytes(response.bodyBytes, flush: true);
+      }
 
       if (mounted) {
         _showTopSnackBar(
           SnackBar(
-            content: Text('Downloaded: $outputName'),
+            content: Text('Saved to Downloads: $outputName'),
             backgroundColor: Colors.green,
           ),
         );
@@ -2327,6 +2395,18 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         );
       }
     }
+  }
+
+  Future<void> _saveToAndroidDownloads({
+    required String fileName,
+    required String mimeType,
+    required List<int> bytes,
+  }) async {
+    await _fileOpsChannel.invokeMethod('saveToDownloads', {
+      'fileName': fileName,
+      'mimeType': mimeType,
+      'bytes': bytes,
+    });
   }
 
   /// Open file URL (for downloads or external viewing)

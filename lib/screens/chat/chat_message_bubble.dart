@@ -71,6 +71,10 @@ class ChatMessageBubble extends StatelessWidget {
             ((message.messageType == 'file' ||
                     message.messageType == 'document') ||
                 (message.fileUrl != null && message.fileUrl!.isNotEmpty));
+    final bool canSaveAttachment =
+      message.fileUrl != null &&
+      message.fileUrl!.isNotEmpty &&
+      (isMedia || isAudio || isGenericFile);
 
     final hasReactions =
         messageReactions[message.id] != null &&
@@ -159,9 +163,17 @@ class ChatMessageBubble extends StatelessWidget {
             else if (isMedia || isAudio)
               const SizedBox(height: 8),
             if (isSentByMe)
-              _buildSentStatusRow(message, scale)
+              _buildSentStatusRow(
+                message,
+                scale,
+                canSaveAttachment: canSaveAttachment,
+              )
             else
-              _buildIncomingTimeRow(message, scale),
+              _buildIncomingTimeRow(
+                message,
+                scale,
+                canSaveAttachment: canSaveAttachment,
+              ),
             if (showTimestamps)
               Padding(
                 padding: EdgeInsets.symmetric(
@@ -425,69 +437,65 @@ class ChatMessageBubble extends StatelessWidget {
   ) {
     return Container(
       padding: EdgeInsets.all(16 * scale),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(
-            Icons.attach_file,
-            color: Colors.white70,
-            size: 24,
-          ),
-          SizedBox(width: 12 * scale),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  (message.fileName?.isNotEmpty ?? false)
-                      ? message.fileName!
-                      : (message.fileUrl != null
-                          ? Uri.tryParse(message.fileUrl!)
-                                  ?.pathSegments
-                                  .last
-                                  .replaceAll('%20', ' ') ??
-                              'File'
-                          : 'File'),
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12 * scale,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                SizedBox(height: 4 * scale),
-                Text(
-                  message.fileUrl != null
-                      ? ((message.fileSize != null && message.fileSize! > 0)
-                          ? formatFileSize(message.fileSize!)
-                          : 'Unknown size')
-                      : 'File not available',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha:  0.7),
-                    fontSize: 12 * scale,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (message.fileUrl != null && !isSentByMe)
-            IconButton(
-              onPressed: () => onDownloadIncomingFile(message),
-              icon: const Icon(
-                Icons.download,
+          Row(
+            children: [
+              const Icon(
+                Icons.attach_file,
                 color: Colors.white70,
-                size: 20,
+                size: 24,
               ),
-            ),
-          if (message.fileUrl != null && isSentByMe)
-            IconButton(
-              onPressed: () => onOpenMessageUrl(message.fileUrl!),
-              icon: const Icon(
-                Icons.open_in_new,
-                color: Colors.white70,
-                size: 20,
+              SizedBox(width: 12 * scale),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      (message.fileName?.isNotEmpty ?? false)
+                          ? message.fileName!
+                          : (message.fileUrl != null
+                              ? Uri.tryParse(message.fileUrl!)
+                                      ?.pathSegments
+                                      .last
+                                      .replaceAll('%20', ' ') ??
+                                  'File'
+                              : 'File'),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12 * scale,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    SizedBox(height: 4 * scale),
+                    Text(
+                      message.fileUrl != null
+                          ? ((message.fileSize != null && message.fileSize! > 0)
+                              ? formatFileSize(message.fileSize!)
+                              : 'Unknown size')
+                          : 'File not available',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 12 * scale,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
+              if (message.fileUrl != null && isSentByMe)
+                IconButton(
+                  onPressed: () => onOpenMessageUrl(message.fileUrl!),
+                  icon: const Icon(
+                    Icons.open_in_new,
+                    color: Colors.white70,
+                    size: 20,
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );
@@ -558,15 +566,42 @@ class ChatMessageBubble extends StatelessWidget {
     return message.content;
   }
 
-  Widget _buildSentStatusRow(Message message, double scale) {
+  Widget _buildSentStatusRow(
+    Message message,
+    double scale, {
+    required bool canSaveAttachment,
+  }) {
+    if (!canSaveAttachment) {
+      return Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: 16 * scale,
+          vertical: 6 * scale,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Text(
+              message.formattedTime,
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 11 * scale,
+              ),
+            ),
+            SizedBox(width: 4 * scale),
+            buildStatusIndicator(statusForUi(message), scale),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: 16 * scale,
         vertical: 6 * scale,
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.end,
+        mainAxisSize: MainAxisSize.max,
         children: [
           Text(
             message.formattedTime,
@@ -577,19 +612,46 @@ class ChatMessageBubble extends StatelessWidget {
           ),
           SizedBox(width: 4 * scale),
           buildStatusIndicator(statusForUi(message), scale),
+          const Spacer(),
+          _buildFooterSaveAction(message, scale),
         ],
       ),
     );
   }
 
-  Widget _buildIncomingTimeRow(Message message, double scale) {
+  Widget _buildIncomingTimeRow(
+    Message message,
+    double scale, {
+    required bool canSaveAttachment,
+  }) {
+    if (!canSaveAttachment) {
+      return Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: 16 * scale,
+          vertical: 6 * scale,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              message.formattedTime,
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 11 * scale,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: 16 * scale,
         vertical: 6 * scale,
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: MainAxisSize.max,
         children: [
           Text(
             message.formattedTime,
@@ -598,7 +660,30 @@ class ChatMessageBubble extends StatelessWidget {
               fontSize: 11 * scale,
             ),
           ),
+          const Spacer(),
+          _buildFooterSaveAction(message, scale),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFooterSaveAction(Message message, double scale) {
+    return TextButton(
+      onPressed: () => onDownloadIncomingFile(message),
+      style: TextButton.styleFrom(
+        foregroundColor: Colors.white,
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: EdgeInsets.symmetric(horizontal: 8 * scale, vertical: 0),
+        visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
+      ),
+      child: Text(
+        'Save',
+        style: TextStyle(
+          fontSize: 11 * scale,
+          fontWeight: FontWeight.w600,
+          height: 1,
+        ),
       ),
     );
   }

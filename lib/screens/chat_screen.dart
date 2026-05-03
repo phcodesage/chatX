@@ -20,6 +20,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:open_filex/open_filex.dart';
 import '../models/lobby_user.dart';
 import '../models/message.dart';
 import '../models/common_phrase.dart';
@@ -164,6 +165,10 @@ class _LiveChatTimestampHeaderState extends State<LiveChatTimestampHeader> {
 
 class _ChatScreenState extends State<ChatScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  static const MethodChannel _fileOpsChannel = MethodChannel(
+    'com.example.flutter_messenger_v2/file_ops',
+  );
+
   final SocketService _socketService = SocketService();
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _autoCorrectionWrongController =
@@ -3245,13 +3250,37 @@ class _ChatScreenState extends State<ChatScreen>
       iOS: iosSettings,
     );
 
-    await _localNotificationsPlugin.initialize(settings);
+    await _localNotificationsPlugin.initialize(
+      settings,
+      onDidReceiveNotificationResponse:
+          _handleFileOperationNotificationResponse,
+    );
     _localNotificationsReady = true;
+  }
+
+  Future<void> _handleFileOperationNotificationResponse(
+    NotificationResponse response,
+  ) async {
+    final payload = response.payload;
+    if (payload == null || payload.isEmpty) return;
+
+    try {
+      final decoded = jsonDecode(payload) as Map<String, dynamic>;
+      final target = decoded['target'] as String?;
+      final mimeType = decoded['mimeType'] as String?;
+      if (target == null || target.isEmpty) return;
+
+      await _openDownloadedFileTarget(target: target, mimeType: mimeType);
+    } catch (e) {
+      debugPrint('Error handling file-operation notification tap: $e');
+    }
   }
 
   Future<void> _showLocalFileOperationNotification({
     required String title,
     required String body,
+    String? target,
+    String? mimeType,
   }) async {
     try {
       await _ensureLocalNotificationsReady();
@@ -3268,11 +3297,16 @@ class _ChatScreenState extends State<ChatScreen>
         iOS: iosDetails,
       );
 
+      final payload = target == null
+          ? null
+          : jsonEncode({'target': target, 'mimeType': mimeType});
+
       await _localNotificationsPlugin.show(
         DateTime.now().millisecondsSinceEpoch % 100000,
         title,
         body,
         details,
+        payload: payload,
       );
     } catch (e) {
       debugPrint('Error showing local file-operation notification: $e');
@@ -3281,10 +3315,11 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<Directory> _resolveDownloadDirectory() async {
     if (Platform.isAndroid) {
-      final publicDownloads = Directory('/storage/emulated/0/Download');
-      if (await publicDownloads.exists()) {
-        return publicDownloads;
+      final sharedDownloads = Directory('/storage/emulated/0/Download');
+      if (!await sharedDownloads.exists()) {
+        await sharedDownloads.create(recursive: true);
       }
+      return sharedDownloads;
     }
 
     final systemDownloads = await getDownloadsDirectory();
@@ -3292,12 +3327,14 @@ class _ChatScreenState extends State<ChatScreen>
       return systemDownloads;
     }
 
-    final external = await getExternalStorageDirectory();
-    if (external != null) {
-      return external;
+    final appDocs = await getApplicationDocumentsDirectory();
+    final fallbackDownloads = Directory(
+      '${appDocs.path}${Platform.pathSeparator}Downloads',
+    );
+    if (!await fallbackDownloads.exists()) {
+      await fallbackDownloads.create(recursive: true);
     }
-
-    return getApplicationDocumentsDirectory();
+    return fallbackDownloads;
   }
 
   Future<void> _downloadIncomingFile(Message message) async {
@@ -3309,9 +3346,6 @@ class _ChatScreenState extends State<ChatScreen>
       );
       return;
     }
-
-    final hasStorageAccess = await _requestStorageAccessForFileOps();
-    if (!hasStorageAccess) return;
 
     if (mounted) {
       _showTopSnackBar(
@@ -3334,21 +3368,33 @@ class _ChatScreenState extends State<ChatScreen>
         isFromCamera: false,
       );
 
-      final downloadDir = await _resolveDownloadDirectory();
-      final saveFile = File(
-        '${downloadDir.path}${Platform.pathSeparator}$outputName',
-      );
-      await saveFile.writeAsBytes(response.bodyBytes, flush: true);
+      String? savedTarget;
+      if (Platform.isAndroid) {
+        savedTarget = await _saveToAndroidDownloads(
+          fileName: outputName,
+          mimeType: mimeType,
+          bytes: response.bodyBytes,
+        );
+      } else {
+        final downloadDir = await _resolveDownloadDirectory();
+        final saveFile = File(
+          '${downloadDir.path}${Platform.pathSeparator}$outputName',
+        );
+        await saveFile.writeAsBytes(response.bodyBytes, flush: true);
+        savedTarget = saveFile.path;
+      }
 
       await _showLocalFileOperationNotification(
         title: 'File Downloaded',
         body: outputName,
+        target: savedTarget,
+        mimeType: mimeType,
       );
 
       if (mounted) {
         _showTopSnackBar(
           SnackBar(
-            content: Text('Downloaded: $outputName'),
+            content: Text('Saved to Downloads: $outputName'),
             backgroundColor: Colors.green,
           ),
         );
@@ -3364,6 +3410,33 @@ class _ChatScreenState extends State<ChatScreen>
         );
       }
     }
+  }
+
+  Future<String?> _saveToAndroidDownloads({
+    required String fileName,
+    required String mimeType,
+    required List<int> bytes,
+  }) async {
+    return _fileOpsChannel.invokeMethod<String>('saveToDownloads', {
+      'fileName': fileName,
+      'mimeType': mimeType,
+      'bytes': bytes,
+    });
+  }
+
+  Future<void> _openDownloadedFileTarget({
+    required String target,
+    String? mimeType,
+  }) async {
+    if (Platform.isAndroid) {
+      await _fileOpsChannel.invokeMethod('openDownloadedFile', {
+        'target': target,
+        'mimeType': mimeType ?? '*/*',
+      });
+      return;
+    }
+
+    await OpenFilex.open(target);
   }
 
   /// Admin-only: delete all messages in this conversation

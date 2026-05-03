@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
 import android.content.ComponentName
+import android.content.ContentValues
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -22,6 +23,8 @@ import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.Log
 import android.util.Rational
@@ -46,6 +49,7 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.flutter_messenger_v2/pip"
     private val AUDIO_CHANNEL = "com.example.flutter_messenger_v2/audio_recorder"
     private val QUICK_REPLY_CHANNEL = "com.example.flutter_messenger_v2/quick_reply"
+    private val FILE_OPS_CHANNEL = "com.example.flutter_messenger_v2/file_ops"
     private val SHARE_CHANNEL = "com.example.flutter_messenger_v2/share_target"
     private val SHORTCUT_CHANNEL = "com.example.flutter_messenger_v2/shortcuts"
     private val NOTIFICATION_PAYLOAD_CHANNEL = "com.example.flutter_messenger_v2/notification_payload"
@@ -342,6 +346,65 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // ── Native file save bridge (Downloads via MediaStore) ───────────
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILE_OPS_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "saveToDownloads" -> {
+                        try {
+                            val fileName = call.argument<String>("fileName")
+                            val mimeType = call.argument<String>("mimeType")
+                                ?: "application/octet-stream"
+                            val bytes = call.argument<ByteArray>("bytes")
+
+                            if (fileName.isNullOrBlank() || bytes == null) {
+                                result.error(
+                                    "BAD_ARGS",
+                                    "fileName and bytes are required",
+                                    null,
+                                )
+                                return@setMethodCallHandler
+                            }
+
+                            val savedUri = saveBytesToDownloads(fileName, mimeType, bytes)
+                            if (savedUri == null) {
+                                result.error("SAVE_FAILED", "Failed to save file", null)
+                            } else {
+                                result.success(savedUri.toString())
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "saveToDownloads error: ${e.message}", e)
+                            result.error("SAVE_FAILED", e.message, null)
+                        }
+                    }
+                    "openDownloadedFile" -> {
+                        try {
+                            val target = call.argument<String>("target")
+                            val mimeType = call.argument<String>("mimeType") ?: "*/*"
+                            if (target.isNullOrBlank()) {
+                                result.error("BAD_ARGS", "target is required", null)
+                                return@setMethodCallHandler
+                            }
+
+                            val opened = openDownloadedFile(target, mimeType)
+                            if (opened) {
+                                result.success(true)
+                            } else {
+                                result.error(
+                                    "OPEN_FAILED",
+                                    "No app found to open this file",
+                                    null,
+                                )
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "openDownloadedFile error: ${e.message}", e)
+                            result.error("OPEN_FAILED", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
         // ── Native notification payload bridge ────────────────────────────
         notificationPayloadChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -409,6 +472,68 @@ class MainActivity : FlutterActivity() {
         shortcutMethodChannel = null
         notificationPayloadChannel = null
         super.onDestroy()
+    }
+
+    private fun saveBytesToDownloads(
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray,
+    ): Uri? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+
+            val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            val itemUri = contentResolver.insert(collection, values) ?: return null
+
+            try {
+                contentResolver.openOutputStream(itemUri)?.use { output ->
+                    output.write(bytes)
+                    output.flush()
+                } ?: throw IllegalStateException("Unable to open output stream")
+
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                contentResolver.update(itemUri, values, null, null)
+                itemUri
+            } catch (e: Exception) {
+                contentResolver.delete(itemUri, null, null)
+                throw e
+            }
+        } else {
+            val downloadDir =
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (!downloadDir.exists()) {
+                downloadDir.mkdirs()
+            }
+            val outputFile = File(downloadDir, fileName)
+            FileOutputStream(outputFile).use { output ->
+                output.write(bytes)
+                output.flush()
+            }
+            Uri.fromFile(outputFile)
+        }
+    }
+
+    private fun openDownloadedFile(target: String, mimeType: String): Boolean {
+        val uri = when {
+            target.startsWith("content://") || target.startsWith("file://") -> Uri.parse(target)
+            else -> Uri.fromFile(File(target))
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        val resolved = intent.resolveActivity(packageManager) ?: return false
+        startActivity(intent)
+        return resolved != null
     }
 
     /**
