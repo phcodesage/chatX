@@ -1,0 +1,113 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build macOS release",
+			"type": "shell",
+			"command": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer flutter build macos --release",
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Build macOS release via script",
+			"type": "shell",
+			"command": "bash ./build_macos_app.sh --release",
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Inspect flutter_sound package",
+			"type": "shell",
+			"command": "ls -la ~/.pub-cache/hosted/pub.dev | grep '^d' | grep flutter_sound && echo '---' && ls -la ~/.pub-cache/hosted/pub.dev/flutter_sound-*/",
+			"problemMatcher": []
+		},
+		{
+			"label": "Inspect flutter_sound macos files",
+			"type": "shell",
+			"command": "ls -la ~/.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/macos && echo '---' && find ~/.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/macos -maxdepth 2 -type f | sed -n '1,80p'",
+			"problemMatcher": []
+		},
+		{
+			"label": "Build macOS release via script retry",
+			"type": "shell",
+			"command": "bash ./build_macos_app.sh --release",
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Read taudio podspec",
+			"type": "shell",
+			"command": "sed -n '1,120p' ~/.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/macos/taudio.podspec",
+			"problemMatcher": []
+		},
+		{
+			"label": "Build macOS release via script final retry",
+			"type": "shell",
+			"command": "bash ./build_macos_app.sh --release",
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Check CA bundle paths",
+			"type": "shell",
+			"command": "ls -l /etc/ssl/cert.pem /opt/homebrew/etc/openssl@3/cert.pem /usr/local/etc/openssl@3/cert.pem 2>/dev/null || true && ruby -ropenssl -e 'puts OpenSSL::X509::DEFAULT_CERT_FILE'",
+			"problemMatcher": []
+		},
+		{
+			"label": "Test pod install with cert env",
+			"type": "shell",
+			"command": "cd macos && SSL_CERT_FILE=/etc/ssl/cert.pem CURL_CA_BUNDLE=/etc/ssl/cert.pem pod install",
+			"problemMatcher": []
+		},
+		{
+			"label": "Build macOS release final",
+			"type": "shell",
+			"command": "bash ./build_macos_app.sh --release",
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Inspect flutter_sound swift class",
+			"type": "shell",
+			"command": "sed -n '1,200p' ~/.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/macos/Classes/TaudioPlugin.swift",
+			"problemMatcher": []
+		},
+		{
+			"label": "Inspect flutter_sound plugin metadata",
+			"type": "shell",
+			"command": "python3 - <<'PY'\nimport re, pathlib\np=pathlib.Path.home()/'.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/pubspec.yaml'\ntext=p.read_text()\nstart=text.find('plugin:')\nprint(text[start:start+600])\nPY",
+			"problemMatcher": []
+		},
+		{
+			"label": "Patch flutter_sound metadata once",
+			"type": "shell",
+			"command": "perl -0777 -i -pe \"s/(macos:\\n\\s*pluginClass:\\s*)FlutterSoundPlugin/${1}TaudioPlugin/g\" ~/.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/pubspec.yaml && grep -n \"macos:\\|pluginClass\" ~/.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/pubspec.yaml | sed -n '1,120p'",
+			"problemMatcher": []
+		},
+		{
+			"label": "Show flutter_sound plugin snippet",
+			"type": "shell",
+			"command": "sed -n '60,90p' ~/.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/pubspec.yaml",
+			"problemMatcher": []
+		},
+		{
+			"label": "Repair flutter_sound pubspec block",
+			"type": "shell",
+			"command": "python3 - <<'PY'\nfrom pathlib import Path\np = Path.home()/'.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/pubspec.yaml'\ntext = p.read_text()\ntext = text.replace('''      linux:\n        pluginClass: FlutterSoundPlugin\n      TaudioPlugin\n      windows:\n        pluginClass: FlutterSoundPluginCApi\n''', '''      linux:\n        pluginClass: FlutterSoundPlugin\n      macos:\n        pluginClass: TaudioPlugin\n      windows:\n        pluginClass: FlutterSoundPluginCApi\n''')\np.write_text(text)\nprint('patched')\nPY\nsed -n '60,90p' ~/.pub-cache/hosted/pub.dev/flutter_sound-9.30.0/pubspec.yaml",
+			"problemMatcher": []
+		},
+		{
+			"label": "Build macOS release success check",
+			"type": "shell",
+			"command": "bash ./build_macos_app.sh --release",
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Make script executable and verify app",
+			"type": "shell",
+			"command": "chmod +x build_macos_app.sh && ls -la build/macos/Build/Products/Release/flutter_messenger.app",
+			"problemMatcher": []
+		}
+	]
+}

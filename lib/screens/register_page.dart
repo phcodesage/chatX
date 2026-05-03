@@ -25,6 +25,15 @@ class _RegisterPageState extends State<RegisterPage> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
+
+  // Focus nodes for keyboard tab-through on desktop.
+  final _firstFocus = FocusNode();
+  final _lastFocus = FocusNode();
+  final _usernameFocus = FocusNode();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
+  final _confirmFocus = FocusNode();
+
   bool _isLoading = false;
 
   @override
@@ -35,6 +44,12 @@ class _RegisterPageState extends State<RegisterPage> {
     _email.dispose();
     _password.dispose();
     _confirm.dispose();
+    _firstFocus.dispose();
+    _lastFocus.dispose();
+    _usernameFocus.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
+    _confirmFocus.dispose();
     super.dispose();
   }
 
@@ -46,7 +61,6 @@ class _RegisterPageState extends State<RegisterPage> {
     final password = _password.text.trim();
     final confirm = _confirm.text.trim();
 
-    // Validation
     if (firstName.isEmpty ||
         username.isEmpty ||
         email.isEmpty ||
@@ -76,14 +90,13 @@ class _RegisterPageState extends State<RegisterPage> {
         lastName: lastName.isNotEmpty ? lastName : null,
       );
 
-      // Send FCM token to backend after successful registration
+      // Send FCM token to backend after successful registration.
       final fcmToken = FirebaseMessagingService.instance.fcmToken;
       if (fcmToken != null) {
         await FCMService.updateFCMToken(fcmToken);
       }
 
       if (mounted) {
-        // Navigate to lobby screen directly to avoid extra transition loader.
         Navigator.pushReplacementNamed(context, LobbyScreen.route);
       }
     } catch (e) {
@@ -105,28 +118,111 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.sizeOf(context).width >= 600;
+
     return AuthScaffold(
       title: 'Create your account',
       child: Column(
         children: [
-          AppTextField(label: 'First Name', controller: _first),
-          const SizedBox(height: 10),
-          AppTextField(label: 'Last Name', controller: _last),
-          const SizedBox(height: 10),
-          AppTextField(label: 'Username', controller: _username),
-          const SizedBox(height: 10),
+          // On wide screens, show First / Last name side by side.
+          if (isWide)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: AppTextField(
+                    label: 'First Name',
+                    controller: _first,
+                    focusNode: _firstFocus,
+                    nextFocusNode: _lastFocus,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: AppTextField(
+                    label: 'Last Name',
+                    controller: _last,
+                    focusNode: _lastFocus,
+                    nextFocusNode: _usernameFocus,
+                  ),
+                ),
+              ],
+            )
+          else ...[
+            AppTextField(
+              label: 'First Name',
+              controller: _first,
+              focusNode: _firstFocus,
+              nextFocusNode: _lastFocus,
+            ),
+            const SizedBox(height: 10),
+            AppTextField(
+              label: 'Last Name',
+              controller: _last,
+              focusNode: _lastFocus,
+              nextFocusNode: _usernameFocus,
+            ),
+          ],
+          const SizedBox(height: 14),
+          AppTextField(
+            label: 'Username',
+            controller: _username,
+            focusNode: _usernameFocus,
+            nextFocusNode: _emailFocus,
+          ),
+          const SizedBox(height: 14),
           AppTextField(
             label: 'Email',
             controller: _email,
             keyboardType: TextInputType.emailAddress,
+            focusNode: _emailFocus,
+            nextFocusNode: _passwordFocus,
           ),
-          const SizedBox(height: 10),
-          PasswordField(label: 'Password', controller: _password),
-          const SizedBox(height: 10),
-          PasswordField(label: 'Confirm Password', controller: _confirm),
           const SizedBox(height: 14),
+          // On wide screens, show Password / Confirm side by side.
+          if (isWide)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: PasswordField(
+                    label: 'Password',
+                    controller: _password,
+                    focusNode: _passwordFocus,
+                    nextFocusNode: _confirmFocus,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: PasswordField(
+                    label: 'Confirm Password',
+                    controller: _confirm,
+                    focusNode: _confirmFocus,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _isLoading ? null : _handleRegister(),
+                  ),
+                ),
+              ],
+            )
+          else ...[
+            PasswordField(
+              label: 'Password',
+              controller: _password,
+              focusNode: _passwordFocus,
+              nextFocusNode: _confirmFocus,
+            ),
+            const SizedBox(height: 14),
+            PasswordField(
+              label: 'Confirm Password',
+              controller: _confirm,
+              focusNode: _confirmFocus,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _isLoading ? null : _handleRegister(),
+            ),
+          ],
+          const SizedBox(height: 20),
           PrimaryButton(
-            text: 'Register',
+            text: _isLoading ? 'Creating account…' : 'Register',
             onPressed: _isLoading ? null : _handleRegister,
           ),
           if (_isLoading)
@@ -134,13 +230,12 @@ class _RegisterPageState extends State<RegisterPage> {
               padding: EdgeInsets.only(top: 12),
               child: Center(child: CircularProgressIndicator()),
             ),
-          const SizedBox(height: 10),
-          Wrap(
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Text(
-                'Already have an account? ',
+                'Already have an account?',
                 style: TextStyle(color: Colors.white70),
               ),
               TextButton(

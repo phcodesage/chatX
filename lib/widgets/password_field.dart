@@ -1,16 +1,24 @@
 import 'package:flutter/material.dart';
 
-/// Password field with visibility toggle
+/// Password field with visibility toggle and desktop keyboard navigation support.
 class PasswordField extends StatefulWidget {
   final String label;
   final TextEditingController controller;
   final Iterable<String>? autofillHints;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
 
   const PasswordField({
     super.key,
     required this.label,
     required this.controller,
     this.autofillHints,
+    this.focusNode,
+    this.nextFocusNode,
+    this.textInputAction,
+    this.onSubmitted,
   });
 
   @override
@@ -25,7 +33,14 @@ class _PasswordFieldState extends State<PasswordField> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(widget.label, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white70)),
+        Text(
+          widget.label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w600,
+            color: Colors.white70,
+            fontSize: 13,
+          ),
+        ),
         const SizedBox(height: 6),
         TextField(
           controller: widget.controller,
@@ -33,10 +48,23 @@ class _PasswordFieldState extends State<PasswordField> {
           autofillHints: widget.autofillHints,
           enableSuggestions: false,
           autocorrect: false,
+          focusNode: widget.focusNode,
+          textInputAction: widget.textInputAction ??
+              (widget.nextFocusNode != null
+                  ? TextInputAction.next
+                  : TextInputAction.done),
+          onSubmitted: widget.onSubmitted ??
+              (widget.nextFocusNode != null
+                  ? (_) =>
+                      FocusScope.of(context).requestFocus(widget.nextFocusNode)
+                  : null),
           style: const TextStyle(color: Colors.black),
           decoration: InputDecoration(
             suffixIcon: IconButton(
-              icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, color: Colors.black54),
+              icon: Icon(
+                _obscure ? Icons.visibility_off : Icons.visibility,
+                color: Colors.black54,
+              ),
               onPressed: () => setState(() => _obscure = !_obscure),
             ),
           ),

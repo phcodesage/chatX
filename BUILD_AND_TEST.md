@@ -2,6 +2,21 @@
 
 ## Quick Start
 
+### 0. Build macOS Desktop App
+
+Run the macOS build script:
+```bash
+chmod +x ./build_macos_app.sh
+./build_macos_app.sh --release --open
+```
+
+If full Xcode is installed but your machine still points to Command Line Tools, use:
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./build_macos_app.sh --release --open
+```
+
+Note: CocoaPods is required for Flutter macOS plugin builds.
+
 ### 1. Build and Install (Windows)
 
 Run the provided batch script:

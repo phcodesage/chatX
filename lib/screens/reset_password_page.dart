@@ -22,6 +22,11 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
   final _token = TextEditingController();
   final _newPassword = TextEditingController();
   final _confirmPassword = TextEditingController();
+
+  final _tokenFocus = FocusNode();
+  final _newPasswordFocus = FocusNode();
+  final _confirmPasswordFocus = FocusNode();
+
   bool _isLoading = false;
 
   @override
@@ -37,6 +42,9 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     _token.dispose();
     _newPassword.dispose();
     _confirmPassword.dispose();
+    _tokenFocus.dispose();
+    _newPasswordFocus.dispose();
+    _confirmPasswordFocus.dispose();
     super.dispose();
   }
 
@@ -111,20 +119,33 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
         children: [
           const Text(
             'Paste the full token from your email exactly as shown (including dots).',
-            style: TextStyle(color: Colors.white70),
+            style: TextStyle(color: Colors.white70, height: 1.5),
           ),
-          const SizedBox(height: 12),
-          AppTextField(label: 'Reset Token', controller: _token),
-          const SizedBox(height: 12),
-          PasswordField(label: 'New Password', controller: _newPassword),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
+          AppTextField(
+            label: 'Reset Token',
+            controller: _token,
+            focusNode: _tokenFocus,
+            nextFocusNode: _newPasswordFocus,
+          ),
+          const SizedBox(height: 14),
+          PasswordField(
+            label: 'New Password',
+            controller: _newPassword,
+            focusNode: _newPasswordFocus,
+            nextFocusNode: _confirmPasswordFocus,
+          ),
+          const SizedBox(height: 14),
           PasswordField(
             label: 'Confirm New Password',
             controller: _confirmPassword,
+            focusNode: _confirmPasswordFocus,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _isLoading ? null : _handleResetPassword(),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 24),
           PrimaryButton(
-            text: 'Reset Password',
+            text: _isLoading ? 'Resetting…' : 'Reset Password',
             onPressed: _isLoading ? null : _handleResetPassword,
           ),
           if (_isLoading)
@@ -132,7 +153,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
               padding: EdgeInsets.only(top: 12),
               child: Center(child: CircularProgressIndicator()),
             ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

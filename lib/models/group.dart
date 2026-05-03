@@ -363,32 +363,27 @@ class GroupMessage {
       }
       */
 
-      // If content contains HTML and no file info is provided, parse it
-      if (content.contains('<') && content.contains('>') && fileUrl == null) {
+      // If content contains HTML, parse it for file info and strip the raw HTML
+      if (content.contains('<') && content.contains('>')) {
         // Check if this is a color change message first
         if (content.contains('Changed background color to') ||
             content.contains('Reset background color')) {
           // Clean up color change HTML content
           content = _cleanColorChangeContent(content);
         } else {
-          // debugPrint(
-          //   '📎 [GROUP MESSAGE PARSE] Parsing HTML content for file info',
-          // );
-          final htmlParseResult = _parseHtmlContent(content);
-          if (htmlParseResult != null) {
-            // debugPrint(
-            //   '📎 [GROUP MESSAGE PARSE] HTML parsing successful: $htmlParseResult',
-            // );
-            messageType = htmlParseResult['messageType'] ?? messageType;
-            fileUrl = htmlParseResult['fileUrl'];
-            fileName = htmlParseResult['fileName'];
-            fileType = htmlParseResult['fileType'];
-            fileSize = htmlParseResult['fileSize'];
-          } else {
-            // debugPrint(
-            //   '📎 [GROUP MESSAGE PARSE] HTML parsing failed for content: $content',
-            // );
+          if (fileUrl == null) {
+            // Server didn't provide file_url — extract everything from HTML
+            final htmlParseResult = _parseHtmlContent(content);
+            if (htmlParseResult != null) {
+              messageType = htmlParseResult['messageType'] ?? messageType;
+              fileUrl = htmlParseResult['fileUrl'];
+              fileName = htmlParseResult['fileName'];
+              fileType = htmlParseResult['fileType'];
+              fileSize = htmlParseResult['fileSize'];
+            }
           }
+          // Always replace raw HTML content with just the filename so it isn't rendered as text
+          content = fileName ?? '';
         }
       }
 

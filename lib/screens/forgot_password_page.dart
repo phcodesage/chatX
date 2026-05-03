@@ -17,11 +17,13 @@ class ForgotPasswordPage extends StatefulWidget {
 
 class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   final _userOrEmail = TextEditingController();
+  final _fieldFocus = FocusNode();
   bool _isLoading = false;
 
   @override
   void dispose() {
     _userOrEmail.dispose();
+    _fieldFocus.dispose();
     super.dispose();
   }
 
@@ -76,10 +78,16 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AppTextField(label: 'Email or Username', controller: _userOrEmail),
-          const SizedBox(height: 22),
+          AppTextField(
+            label: 'Email or Username',
+            controller: _userOrEmail,
+            focusNode: _fieldFocus,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _isLoading ? null : _handleForgotPassword(),
+          ),
+          const SizedBox(height: 24),
           PrimaryButton(
-            text: 'Send Reset Email',
+            text: _isLoading ? 'Sending…' : 'Send Reset Email',
             onPressed: _isLoading ? null : _handleForgotPassword,
           ),
           if (_isLoading)

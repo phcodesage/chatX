@@ -139,17 +139,21 @@ class Message {
 
     final timestamp = json['timestamp'] as String;
 
-    // If content contains HTML and no file info is provided, parse it
-    if (content.contains('<') && content.contains('>') && fileUrl == null) {
-      final htmlParseResult = _parseHtmlContent(content);
-      if (htmlParseResult != null) {
-        messageType = htmlParseResult['messageType'] ?? messageType;
-        fileUrl = htmlParseResult['fileUrl'];
-        fileName = htmlParseResult['fileName'];
-        fileType = htmlParseResult['fileType'];
-        fileSize = htmlParseResult['fileSize'];
-        // Keep original content for display purposes, but mark as file message
+    // If content contains HTML, parse it for file info and strip the raw HTML
+    if (content.contains('<') && content.contains('>')) {
+      if (fileUrl == null) {
+        // Server didn't provide file_url — extract everything from HTML
+        final htmlParseResult = _parseHtmlContent(content);
+        if (htmlParseResult != null) {
+          messageType = htmlParseResult['messageType'] ?? messageType;
+          fileUrl = htmlParseResult['fileUrl'];
+          fileName = htmlParseResult['fileName'];
+          fileType = htmlParseResult['fileType'];
+          fileSize = htmlParseResult['fileSize'];
+        }
       }
+      // Always replace raw HTML content with just the filename so it isn't rendered as text
+      content = fileName ?? '';
     }
 
     return Message(

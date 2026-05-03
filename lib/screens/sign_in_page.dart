@@ -24,6 +24,8 @@ class SignInPage extends StatefulWidget {
 class _SignInPageState extends State<SignInPage> {
   final _username = TextEditingController();
   final _password = TextEditingController();
+  final _usernameFocus = FocusNode();
+  final _passwordFocus = FocusNode();
   bool remember = false;
   bool _isLoading = false;
 
@@ -49,6 +51,8 @@ class _SignInPageState extends State<SignInPage> {
   void dispose() {
     _username.dispose();
     _password.dispose();
+    _usernameFocus.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
@@ -66,7 +70,6 @@ class _SignInPageState extends State<SignInPage> {
     try {
       await AuthService.login(username: username, password: password);
 
-      // Save or clear remembered credentials based on checkbox.
       if (remember) {
         await StorageService.saveRememberedCredentials(
           username: username,
@@ -78,14 +81,12 @@ class _SignInPageState extends State<SignInPage> {
 
       TextInput.finishAutofillContext();
 
-      // Send FCM token to backend after successful login
       final fcmToken = FirebaseMessagingService.instance.fcmToken;
       if (fcmToken != null) {
         await FCMService.updateFCMToken(fcmToken);
       }
 
       if (mounted) {
-        // Navigate to lobby screen directly to avoid extra transition loader.
         Navigator.pushReplacementNamed(context, LobbyScreen.route);
       }
     } catch (e) {
@@ -107,24 +108,35 @@ class _SignInPageState extends State<SignInPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Pick up vScale from AuthScaffold (desktop/medium) or default to 1.0 (mobile).
+    final vScale = AuthVScale.of(context);
+    final gap = 16.0 * vScale;
+    final smallGap = 8.0 * vScale;
+
     return AuthScaffold(
       title: 'Sign in',
       child: AutofillGroup(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             AppTextField(
               label: 'Username',
               controller: _username,
               autofillHints: const [AutofillHints.username],
+              focusNode: _usernameFocus,
+              nextFocusNode: _passwordFocus,
             ),
-            const SizedBox(height: 18),
+            SizedBox(height: gap),
             PasswordField(
               label: 'Password',
               controller: _password,
               autofillHints: const [AutofillHints.password],
+              focusNode: _passwordFocus,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _isLoading ? null : _handleSignIn(),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: smallGap),
             Align(
               alignment: Alignment.centerRight,
               child: TextButton(
@@ -136,41 +148,48 @@ class _SignInPageState extends State<SignInPage> {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 4,
+            SizedBox(height: smallGap),
+            Row(
               children: [
-                Checkbox(
-                  value: remember,
-                  onChanged: (v) => setState(() => remember = v ?? false),
-                  checkColor: Colors.white,
-                  activeColor: const Color(0xFF00E5FF),
-                  side: const BorderSide(color: Colors.white70),
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: Checkbox(
+                    value: remember,
+                    onChanged: (v) => setState(() => remember = v ?? false),
+                    checkColor: Colors.white,
+                    activeColor: const Color(0xFF00E5FF),
+                    side: const BorderSide(color: Colors.white70),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
-                const Text(
-                  'Remember Me',
-                  style: TextStyle(color: Colors.white),
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: () => setState(() => remember = !remember),
+                  child: const Text(
+                    'Remember Me',
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            SizedBox(height: gap),
             PrimaryButton(
-              text: 'Sign In',
+              text: _isLoading ? 'Signing in…' : 'Sign In',
               onPressed: _isLoading ? null : _handleSignIn,
             ),
             if (_isLoading)
-              const Padding(
-                padding: EdgeInsets.only(top: 12),
-                child: Center(child: CircularProgressIndicator()),
+              Padding(
+                padding: EdgeInsets.only(top: smallGap),
+                child: const Center(child: CircularProgressIndicator()),
               ),
-            const SizedBox(height: 18),
-            Wrap(
-              alignment: WrapAlignment.center,
-              crossAxisAlignment: WrapCrossAlignment.center,
+            SizedBox(height: gap),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Text(
-                  "Don't have an account? ",
+                  "Don't have an account?",
                   style: TextStyle(color: Colors.white70),
                 ),
                 TextButton(
