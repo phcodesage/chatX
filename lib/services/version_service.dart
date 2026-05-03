@@ -9,6 +9,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/api_config.dart';
@@ -35,11 +36,16 @@ class AppVersionInfo {
         ? rawBuild
         : int.tryParse(rawBuild?.toString() ?? '') ?? 0;
 
+    final dynamic rawForceUpdate = json['force_update'];
+    final bool forceUpdate = rawForceUpdate is bool
+        ? rawForceUpdate
+        : (rawForceUpdate?.toString().toLowerCase() == 'true');
+
     return AppVersionInfo(
       version: (json['version'] as String? ?? '').trim(),
       buildNumber: build,
       downloadUrl: (json['download_url'] as String? ?? '').trim(),
-      forceUpdate: json['force_update'] as bool? ?? false,
+      forceUpdate: forceUpdate,
       releaseNotes: (json['release_notes'] as String? ?? '').trim(),
     );
   }
@@ -143,6 +149,11 @@ class VersionService {
   factory VersionService() => _instance;
   VersionService._internal();
 
+  static final ValueNotifier<int> deferredUpdateSignal = ValueNotifier<int>(0);
+
+  static const String _deferredUpdatePayloadKey =
+      'deferred_app_update_payload';
+
   bool _isChecking = false;
   bool _dialogVisible = false;
   DateTime? _lastVersionCheckTime;
@@ -151,6 +162,168 @@ class VersionService {
 
   void _log(String message) {
     debugPrint('[VersionService] $message');
+  }
+
+  Future<void> deferUpdatePayload(Map<String, dynamic> payload) async {
+    try {
+      final info = AppVersionInfo.fromJson(payload);
+      if (info.version.isEmpty) {
+        _log('Skipping deferred update save: payload has no version.');
+        return;
+      }
+
+      final resolvedDownloadUrl = _resolveDownloadUrl(info.downloadUrl);
+      if (resolvedDownloadUrl.isEmpty) {
+        _log('Skipping deferred update save: invalid download URL.');
+        return;
+      }
+
+      final normalizedPayload = <String, dynamic>{
+        'type': 'app_update',
+        'version': info.version,
+        'build_number': info.buildNumber,
+        'download_url': resolvedDownloadUrl,
+        'force_update': info.forceUpdate,
+        'release_notes': info.releaseNotes,
+      };
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _deferredUpdatePayloadKey,
+        jsonEncode(normalizedPayload),
+      );
+      deferredUpdateSignal.value++;
+      _log('Deferred update saved for contacts screen entry point.');
+    } catch (e) {
+      _log('Failed to save deferred update payload: $e');
+    }
+  }
+
+  Future<void> clearDeferredUpdatePayload() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_deferredUpdatePayloadKey);
+      deferredUpdateSignal.value++;
+    } catch (e) {
+      _log('Failed to clear deferred update payload: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>?> getDeferredUpdatePayloadIfRelevant() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_deferredUpdatePayloadKey);
+      if (raw == null || raw.isEmpty) {
+        return null;
+      }
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        await clearDeferredUpdatePayload();
+        return null;
+      }
+
+      final isStillRelevant = await _isPayloadRelevant(decoded);
+      if (!isStillRelevant) {
+        await clearDeferredUpdatePayload();
+        return null;
+      }
+
+      return decoded;
+    } catch (e) {
+      _log('Failed to read deferred update payload: $e');
+      return null;
+    }
+  }
+
+  Future<bool> _isPayloadRelevant(Map<String, dynamic> payload) async {
+    final info = AppVersionInfo.fromJson(payload);
+    if (info.version.isEmpty) {
+      return false;
+    }
+
+    final resolvedDownloadUrl = _resolveDownloadUrl(info.downloadUrl);
+    if (resolvedDownloadUrl.isEmpty) {
+      return false;
+    }
+
+    final packageInfo = await PackageInfo.fromPlatform();
+    final currentVersion = packageInfo.version;
+    final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+
+    final shouldUpdate = _isUpdateRequired(
+      currentVersion: currentVersion,
+      currentBuild: currentBuild,
+      serverVersion: info.version,
+      serverBuild: info.buildNumber,
+    );
+
+    return shouldUpdate || info.forceUpdate;
+  }
+
+  Future<void> promptUpdateFromPush(
+    BuildContext context,
+    Map<String, dynamic> payload,
+  ) async {
+    if (!context.mounted) {
+      _log('Skipped push prompt: context is not mounted.');
+      return;
+    }
+    if (_dialogVisible) {
+      _log('Skipped push prompt: update dialog is already visible.');
+      return;
+    }
+
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentVersion = packageInfo.version;
+      final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+
+      final info = AppVersionInfo.fromJson(payload);
+      if (info.version.isEmpty) {
+        _log('Skipped push prompt: version is missing in payload.');
+        return;
+      }
+
+      final resolvedDownloadUrl = _resolveDownloadUrl(info.downloadUrl);
+      if (resolvedDownloadUrl.isEmpty) {
+        _log('Skipped push prompt: could not resolve download URL.');
+        return;
+      }
+
+      final shouldUpdate = _isUpdateRequired(
+        currentVersion: currentVersion,
+        currentBuild: currentBuild,
+        serverVersion: info.version,
+        serverBuild: info.buildNumber,
+      );
+
+      if (!shouldUpdate && !info.forceUpdate) {
+        _log('Skipped push prompt: payload does not require an update.');
+        return;
+      }
+
+      _dialogVisible = true;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: !info.forceUpdate,
+        builder: (dialogContext) {
+          return UpdateDialog(
+            info: info,
+            currentVersion: currentVersion,
+            currentBuild: currentBuild,
+            downloadUrl: resolvedDownloadUrl,
+            downloader: ApkDownloader(),
+          );
+        },
+      );
+
+      _lastPromptedVersion = info.version;
+    } catch (e) {
+      _log('Push update prompt failed: $e');
+    } finally {
+      _dialogVisible = false;
+    }
   }
 
   Future<void> checkAndPromptUpdate(BuildContext context) async {
@@ -346,6 +519,17 @@ class _UpdateDialogState extends State<UpdateDialog> {
   bool _isDownloading = false;
   double _progress = 0;
   String _status = '';
+
+  Map<String, dynamic> _toDeferredPayload() {
+    return <String, dynamic>{
+      'type': 'app_update',
+      'version': widget.info.version,
+      'build_number': widget.info.buildNumber,
+      'download_url': widget.downloadUrl,
+      'force_update': widget.info.forceUpdate,
+      'release_notes': widget.info.releaseNotes,
+    };
+  }
 
   Future<void> _downloadAndInstall() async {
     setState(() {
@@ -584,7 +768,13 @@ class _UpdateDialogState extends State<UpdateDialog> {
             : [
                 if (!widget.info.forceUpdate)
                   TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () async {
+                      await VersionService().deferUpdatePayload(
+                        _toDeferredPayload(),
+                      );
+                      if (!mounted) return;
+                      Navigator.of(this.context).pop();
+                    },
                     child: const Text('Later', style: TextStyle(color: appMutedText)),
                   ),
                 FilledButton(

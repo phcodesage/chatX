@@ -8,10 +8,14 @@ import 'dart:convert';
 import 'fcm_service.dart';
 import 'active_chat_service.dart';
 import 'storage_service.dart';
+import 'version_service.dart';
 import '../config/api_config.dart';
 import '../utils/notification_handler.dart';
 
 const String _chatQuickReplyInputActionId = 'chat_reply_input';
+const int _appUpdateNotificationId = 9001;
+const String _appUpdateChannelId = 'app_update';
+const String _appUpdateChannelName = 'App Updates';
 const MethodChannel _quickReplyNativeChannel = MethodChannel(
   'com.example.flutter_messenger_v2/quick_reply',
 );
@@ -80,6 +84,69 @@ bool _isChatQuickReplyActionId(String? actionId) {
 
   return actionId == _chatQuickReplyInputActionId ||
       _chatQuickReplyActionMap.containsKey(actionId);
+}
+
+bool _isAppUpdateType(Map<String, dynamic> data) {
+  return data['type']?.toString().toLowerCase() == 'app_update';
+}
+
+bool _parseBool(dynamic value) {
+  if (value is bool) return value;
+  return value?.toString().toLowerCase() == 'true';
+}
+
+String _readActionId(Map<String, dynamic> data, String key, String fallback) {
+  final value = data[key]?.toString().trim();
+  if (value == null || value.isEmpty) return fallback;
+  return value;
+}
+
+String _appUpdateBody(Map<String, dynamic> data, bool isForced) {
+  final releaseNotes = data['release_notes']?.toString().trim() ?? '';
+  if (releaseNotes.isNotEmpty) {
+    return releaseNotes;
+  }
+
+  return isForced
+      ? 'This update is required.'
+      : 'Update now or update later.';
+}
+
+Future<void> _showAppUpdateNotification(
+  FlutterLocalNotificationsPlugin localNotifications,
+  Map<String, dynamic> data,
+) async {
+  final isForced = _parseBool(data['force_update']);
+  final version = data['version']?.toString().trim();
+
+  final title = (version != null && version.isNotEmpty)
+      ? 'Update available: v$version'
+      : 'Update available';
+
+  final androidDetails = AndroidNotificationDetails(
+    _appUpdateChannelId,
+    _appUpdateChannelName,
+    channelDescription: 'Notifications for app version updates',
+    importance: Importance.high,
+    priority: Priority.high,
+    ongoing: isForced,
+    autoCancel: !isForced,
+    icon: '@mipmap/ic_launcher',
+  );
+
+  const iosDetails = DarwinNotificationDetails(
+    presentAlert: true,
+    presentBadge: true,
+    presentSound: true,
+  );
+
+  await localNotifications.show(
+    _appUpdateNotificationId,
+    title,
+    _appUpdateBody(data, isForced),
+    NotificationDetails(android: androidDetails, iOS: iosDetails),
+    payload: jsonEncode(data),
+  );
 }
 
 int _buildChatNotificationId(Map<String, dynamic> data) {
@@ -379,6 +446,19 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     } catch (e) {
       debugPrint('Error persisting background color change: $e');
     }
+  }
+
+  if (_isAppUpdateType(data)) {
+    // When FCM already carries a notification payload, Android may render it
+    // natively. Skip local rendering in background isolate to avoid duplicates.
+    if (message.notification != null) {
+      debugPrint(
+        '📲 App update notification already provided by FCM payload; skipping local duplicate.',
+      );
+      return;
+    }
+    await _showAppUpdateNotification(localNotifications, data);
+    return;
   }
 
   // Handle incoming call notifications specifically
@@ -738,6 +818,22 @@ class FirebaseMessagingService {
         >()
         ?.createNotificationChannel(incomingCallsChannel);
 
+    const AndroidNotificationChannel appUpdateChannel =
+        AndroidNotificationChannel(
+          _appUpdateChannelId,
+          _appUpdateChannelName,
+          description: 'Notifications for app version updates',
+          importance: Importance.high,
+          playSound: true,
+          enableVibration: true,
+        );
+
+    await _localNotifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(appUpdateChannel);
+
     _localNotificationsInitialized = true;
   }
 
@@ -816,6 +912,11 @@ class FirebaseMessagingService {
   /// Show notification using local notifications plugin
   Future<void> showNotification(RemoteMessage message) async {
     Map<String, dynamic> data = message.data;
+
+    if (_isAppUpdateType(data)) {
+      await _showAppUpdateNotification(_localNotifications, data);
+      return;
+    }
 
     // Smart notification filtering using ActiveChatService
     final activeChat = ActiveChatService();
@@ -953,6 +1054,11 @@ class FirebaseMessagingService {
     try {
       final data = jsonDecode(payload) as Map<String, dynamic>;
 
+      if (_isAppUpdateType(data)) {
+        await _handleAppUpdateResponse(data, response.actionId);
+        return;
+      }
+
       if (_isChatQuickReplyActionId(response.actionId)) {
         await _handleQuickReplyAction(data, response);
         return;
@@ -962,6 +1068,39 @@ class FirebaseMessagingService {
     } catch (e) {
       debugPrint('Error parsing notification payload: $e');
     }
+  }
+
+  Future<void> _handleAppUpdateResponse(
+    Map<String, dynamic> data,
+    String? actionId,
+  ) async {
+    final updateNowActionId = _readActionId(
+      data,
+      'action_update_now',
+      'update_now',
+    );
+    final updateLaterActionId = _readActionId(
+      data,
+      'action_update_later',
+      'update_later',
+    );
+
+    final normalizedAction = actionId?.trim();
+    if (normalizedAction == updateLaterActionId) {
+      await VersionService().deferUpdatePayload(data);
+      await _localNotifications.cancel(_appUpdateNotificationId);
+      return;
+    }
+
+    if (normalizedAction == null ||
+        normalizedAction.isEmpty ||
+        normalizedAction == updateNowActionId) {
+      await _localNotifications.cancel(_appUpdateNotificationId);
+      _handleNotificationTap(data);
+      return;
+    }
+
+    _handleNotificationTap(data);
   }
 
   Future<void> _handleQuickReplyAction(
@@ -1139,6 +1278,35 @@ class FirebaseMessagingService {
           // Regular notification tap: store as pending until lobby is mounted.
           try {
             final data = jsonDecode(payload) as Map<String, dynamic>;
+
+            // Preserve app-update action semantics on cold start.
+            // In particular, "update later" should not open the update prompt.
+            if (_isAppUpdateType(data)) {
+              final updateNowActionId = _readActionId(
+                data,
+                'action_update_now',
+                'update_now',
+              );
+              final updateLaterActionId = _readActionId(
+                data,
+                'action_update_later',
+                'update_later',
+              );
+              final normalizedAction = response.actionId?.trim();
+
+              if (normalizedAction == updateLaterActionId) {
+                await VersionService().deferUpdatePayload(data);
+                await _localNotifications.cancel(_appUpdateNotificationId);
+                return;
+              }
+
+              if (normalizedAction == null ||
+                  normalizedAction.isEmpty ||
+                  normalizedAction == updateNowActionId) {
+                await _localNotifications.cancel(_appUpdateNotificationId);
+              }
+            }
+
             _storePendingForLobby(data);
           } catch (e) {
             debugPrint('Error parsing notification payload: $e');

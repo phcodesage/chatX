@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_NAME="com.example.flutter_messenger_v2"
 APK_PATH="$SCRIPT_DIR/build/app/outputs/flutter-apk/app-release.apk"
 KEY_PROPERTIES_PATH="$SCRIPT_DIR/android/key.properties"
+ENV_FILE_PATH="$SCRIPT_DIR/.env.json"
 
 SKIP_INSTALL=false
 START_LOGCAT=false
@@ -131,7 +132,13 @@ echo "Building Release APK..."
 echo "========================================"
 
 SECONDS=0
-flutter build apk --release
+if [[ -f "$ENV_FILE_PATH" ]]; then
+  echo "Using dart define file: $ENV_FILE_PATH"
+  flutter build apk --release --dart-define-from-file="$ENV_FILE_PATH"
+else
+  echo "Warning: $ENV_FILE_PATH not found. Falling back to ApiConfig default BASE_URL."
+  flutter build apk --release
+fi
 build_time="$SECONDS"
 
 if [[ ! -f "$APK_PATH" ]]; then

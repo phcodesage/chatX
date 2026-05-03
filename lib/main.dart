@@ -29,6 +29,8 @@ import 'services/presence_service.dart';
 import 'services/version_service.dart';
 import 'utils/notification_handler.dart';
 
+final Completer<void> _bootstrapReadyCompleter = Completer<void>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -168,6 +170,10 @@ Future<void> _bootstrapAppServices() async {
     unawaited(FirebaseMessagingService.instance.checkInitialMessage());
   } catch (e) {
     debugPrint('Firebase bootstrap failed: $e');
+  } finally {
+    if (!_bootstrapReadyCompleter.isCompleted) {
+      _bootstrapReadyCompleter.complete();
+    }
   }
 }
 
@@ -242,12 +248,30 @@ class _MessengerAppState extends State<MessengerApp>
     if (!mounted) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!_bootstrapReadyCompleter.isCompleted) {
+        debugPrint(
+          '[VersionService] Waiting for Firebase bootstrap before first version check.',
+        );
+        _bootstrapReadyCompleter.future.then((_) {
+          if (!mounted) return;
+          _scheduleUpdateCheck(retryCount: retryCount);
+        });
+        return;
+      }
 
-      final checkContext = NotificationHandler.navigatorKey.currentContext ?? context;
+      final checkContext = NotificationHandler.navigatorKey.currentContext;
+      if (checkContext == null) {
+        if (retryCount < 3) {
+          Future<void>.delayed(const Duration(milliseconds: 450), () {
+            _scheduleUpdateCheck(retryCount: retryCount + 1);
+          });
+        }
+        return;
+      }
+
       VersionService().checkAndPromptUpdate(checkContext);
 
-      if (NotificationHandler.navigatorKey.currentContext == null && retryCount < 3) {
+      if (retryCount < 3) {
         Future<void>.delayed(const Duration(milliseconds: 450), () {
           _scheduleUpdateCheck(retryCount: retryCount + 1);
         });

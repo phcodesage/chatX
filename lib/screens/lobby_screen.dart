@@ -29,6 +29,7 @@ import '../services/presence_service.dart';
 import '../services/chat_cache_service.dart';
 import '../services/share_intent_service.dart';
 import '../services/shortcut_service.dart';
+import '../services/version_service.dart';
 import '../utils/notification_handler.dart';
 import 'share_target_screen.dart';
 import 'ai_chat_screen.dart';
@@ -65,6 +66,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   bool _hasAiSession = false;
   String? _aiLastMessageTime;
   String? _aiLastMessagePreview;
+  Map<String, dynamic>? _deferredUpdatePayload;
   final Map<String, DateTime> _recentRealtimeEventKeys = {};
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
   Route<dynamic>? _activeIncomingCallRoute;
@@ -102,6 +104,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _setupFcmForegroundListener();
     _setupShareIntentListener();
     _setupShortcutLaunchListener();
+    unawaited(_loadDeferredUpdateEntry());
+    VersionService.deferredUpdateSignal.addListener(_handleDeferredUpdateSignal);
     // Periodically refresh "last seen" relative labels (like the web app does)
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted) setState(() {});
@@ -113,6 +117,68 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
 
     _startPendingNotificationRetryWindow();
+  }
+
+  Future<void> _loadDeferredUpdateEntry() async {
+    final payload = await VersionService().getDeferredUpdatePayloadIfRelevant();
+    if (!mounted) return;
+    setState(() {
+      _deferredUpdatePayload = payload;
+    });
+  }
+
+  Future<void> _openDeferredUpdatePrompt() async {
+    final payload = _deferredUpdatePayload;
+    if (payload == null) {
+      return;
+    }
+
+    await VersionService().promptUpdateFromPush(context, payload);
+    await _loadDeferredUpdateEntry();
+  }
+
+  void _handleDeferredUpdateSignal() {
+    unawaited(_loadDeferredUpdateEntry());
+  }
+
+  Widget _buildDeferredUpdateIndicator() {
+    final payload = _deferredUpdatePayload;
+    if (payload == null) {
+      return const SizedBox(width: 40);
+    }
+
+    final version = (payload['version'] ?? '').toString().trim();
+    final tooltip = version.isEmpty
+        ? 'Update available'
+        : 'Update available: v$version';
+
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: _openDeferredUpdatePrompt,
+      icon: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Icon(
+            Icons.system_update_alt_rounded,
+            color: Color(0xFF00D9FF),
+            size: 24,
+          ),
+          Positioned(
+            right: -1,
+            top: -1,
+            child: Container(
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF4D6D),
+                borderRadius: BorderRadius.circular(99),
+                border: Border.all(color: const Color(0xFF1A1A2E), width: 1.5),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _startPendingNotificationRetryWindow() {
@@ -1597,6 +1663,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _shareIntentSubscription?.cancel();
     _shortcutLaunchSubscription?.cancel();
     _fcmForegroundSubscription?.cancel();
+    VersionService.deferredUpdateSignal.removeListener(
+      _handleDeferredUpdateSignal,
+    );
     // Clear all lobby socket listeners to prevent memory leaks
     _socketService.removeListenersForKey('lobby');
     super.dispose();
@@ -2584,6 +2653,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         backgroundColor: const Color(0xFF1A1A2E),
         elevation: 0,
         centerTitle: true,
+        leading: _buildDeferredUpdateIndicator(),
         title: const AppVersionText(),
         actions: [
           PopupMenuButton<String>(

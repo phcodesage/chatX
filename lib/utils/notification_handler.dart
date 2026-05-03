@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../screens/chat_screen.dart' show ChatScreen;
 import '../screens/connected_call_screen.dart';
@@ -10,6 +12,7 @@ import '../services/call_service.dart';
 import '../services/group_service.dart';
 import '../services/socket_service.dart';
 import '../services/presence_service.dart';
+import '../services/version_service.dart';
 
 /// Helper class to handle notification taps and navigate to appropriate screens
 class NotificationHandler {
@@ -69,6 +72,9 @@ class NotificationHandler {
     );
 
     switch (type) {
+      case 'app_update':
+        _handleAppUpdateNotification(data);
+        break;
       case 'message':
         if (groupId != null) {
           _navigateToGroupChat(groupId, groupName ?? 'Group');
@@ -122,6 +128,17 @@ class NotificationHandler {
           );
         }
     }
+  }
+
+  static void _handleAppUpdateNotification(Map<String, dynamic> data) {
+    final context = navigatorKey.currentContext;
+    if (context == null) {
+      debugPrint('⏳ No context for app update tap, storing pending data');
+      _pendingNotificationData = data;
+      return;
+    }
+
+    unawaited(VersionService().promptUpdateFromPush(context, data));
   }
 
   /// Handle incoming call notification tap - show incoming call modal

@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DESTINATION_DIR="/Users/macmini/Documents/code-proj/flask-proj/flask_web_backend/app/static/downloads/android"
 OUTPUT_BASE_NAME="flask_call_app"
 KEY_PROPERTIES_PATH="$SCRIPT_DIR/android/key.properties"
+ENV_FILE_PATH="$SCRIPT_DIR/.env.json"
 
 usage() {
   cat <<'EOF'
@@ -87,17 +88,19 @@ printf 'Target file: %s\n' "$target_file_name"
 printf 'Destination: %s\n\n' "$DESTINATION_DIR"
 
 echo "Updating API config to production URL..."
-CONFIG_FILE="$SCRIPT_DIR/lib/config/api_config.dart"
-if [[ -f "$CONFIG_FILE" ]]; then
-  sed -i '' -E "s|^([[:space:]]*)defaultValue:.*|\1defaultValue: 'https://web.flask-call-app.site/',|g" "$CONFIG_FILE"
-else
-  echo "Warning: lib/config/api_config.dart not found."
+if [[ ! -f "$ENV_FILE_PATH" ]]; then
+  echo "Warning: $ENV_FILE_PATH not found. Falling back to ApiConfig default BASE_URL."
 fi
 
 echo "Running Flutter release build..."
 flutter clean
 flutter pub get
-flutter build apk --release
+if [[ -f "$ENV_FILE_PATH" ]]; then
+  echo "Using dart define file: $ENV_FILE_PATH"
+  flutter build apk --release --dart-define-from-file="$ENV_FILE_PATH"
+else
+  flutter build apk --release
+fi
 
 source_apk_path="$SCRIPT_DIR/build/app/outputs/flutter-apk/app-release.apk"
 if [[ ! -f "$source_apk_path" ]]; then
