@@ -4647,6 +4647,16 @@ class _ChatScreenState extends State<ChatScreen>
         },
       ),
       _buildCompressedActionChip(
+        label: widget.otherUser.firstName,
+        backgroundColor: const Color(0xFF0D9488),
+        onPressed: () {
+          final current = _messageController.text;
+          final firstName = widget.otherUser.firstName;
+          final newText = current.isEmpty ? firstName : '$current $firstName';
+          _replaceInputTextWithSanitized(newText);
+        },
+      ),
+      _buildCompressedActionChip(
         label: 'Change Color',
         backgroundColor: const Color(0xFFA855F7),
         onPressed: _changeColor,

@@ -68,7 +68,7 @@ android {
 
         // Expose BASE_URL to native Kotlin code via BuildConfig.BASE_URL.
         // Falls back to the same default as api_config.dart when no dart-define is present.
-        val baseUrl = dartEnv["BASE_URL"] ?: "https://check.flask-meet.site"
+        val baseUrl = dartEnv["BASE_URL"] ?: "https://web.flask-call-app.site/"
         buildConfigField("String", "BASE_URL", "\"$baseUrl\"")
     }
 
