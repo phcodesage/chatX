@@ -344,6 +344,15 @@ class _ChatScreenState extends State<ChatScreen>
     return currentUserId != null && widget.otherUser.id == currentUserId;
   }
 
+  /// Return a short display name for use inside the chat area (prefer first name).
+  String _chatDisplayNameFromSender(String? senderName) {
+    if (senderName == null) return widget.otherUser.firstName;
+    final s = senderName.trim();
+    if (s.isEmpty) return widget.otherUser.firstName;
+    if (s.toLowerCase() == 'you') return 'You';
+    return s.split(RegExp(r"\\s+"))[0];
+  }
+
   void _notifyTaskModalChanged() {
     _taskModalVersion.value = _taskModalVersion.value + 1;
   }
@@ -2230,7 +2239,8 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _handleColorChange(Map<String, dynamic> data) {
     final colorHex = data['color'] as String?;
-    final senderName = data['sender_name'] ?? widget.otherUser.fullName;
+    final rawSenderName = data['sender_name'] as String?;
+    final senderName = _chatDisplayNameFromSender(rawSenderName ?? widget.otherUser.fullName);
     final senderId = data['sender_id'] as int?;
     final isFromSelf = senderId == _currentUserId;
     final timestampMs =
@@ -2274,8 +2284,8 @@ class _ChatScreenState extends State<ChatScreen>
           id: timestampMs,
           senderId: isFromSelf ? _currentUserId! : widget.otherUser.id,
           recipientId: isFromSelf ? widget.otherUser.id : _currentUserId!,
-          content: isFromSelf
-              ? 'You changed the bg color of ${widget.otherUser.fullName}'
+            content: isFromSelf
+              ? 'You changed the bg color of ${widget.otherUser.firstName}'
               : '$senderName changed your bg color to $colorHex',
           messageType: 'system',
           timestamp: DateTime.now().toIso8601String(),
@@ -2308,7 +2318,8 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _handleColorReset(Map<String, dynamic> data) {
-    final senderName = data['sender_name'] ?? widget.otherUser.fullName;
+    final rawSenderName = data['sender_name'] as String?;
+    final senderName = _chatDisplayNameFromSender(rawSenderName ?? widget.otherUser.fullName);
     final senderId = data['sender_id'] as int?;
     final isFromSelf = senderId == _currentUserId;
     final timestampMs =
@@ -2340,9 +2351,9 @@ class _ChatScreenState extends State<ChatScreen>
       id: timestampMs,
       senderId: isFromSelf ? _currentUserId! : widget.otherUser.id,
       recipientId: isFromSelf ? widget.otherUser.id : _currentUserId!,
-      content: isFromSelf
+        content: isFromSelf
           ? 'Reset bg color'
-          : '$senderName reset\'s their bg color',
+          : '$senderName reset their bg color',
       messageType: 'system',
       timestamp: DateTime.now().toIso8601String(),
       timestampMs: timestampMs,
@@ -2370,7 +2381,8 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _handleIncomingDoorbell(Map<String, dynamic> data) {
-    final senderName = data['sender_name'] ?? widget.otherUser.fullName;
+    final rawSenderName = data['sender_name'] as String?;
+    final senderName = _chatDisplayNameFromSender(rawSenderName ?? widget.otherUser.fullName);
     final timestampMs = data['timestamp_ms'] as int;
 
     // Check if we already have this doorbell notification to prevent duplicates
@@ -3734,10 +3746,10 @@ class _ChatScreenState extends State<ChatScreen>
     final replyToId = _replyingToMessage?.id;
     String? replyPreviewContent;
     if (_replyingToMessage != null) {
-      final msg = _replyingToMessage!;
-      final senderName = msg.senderId == _currentUserId
+        final msg = _replyingToMessage!;
+        final senderName = msg.senderId == _currentUserId
           ? 'You'
-          : widget.otherUser.fullName;
+          : widget.otherUser.firstName;
       String previewText;
       // Handle different message types
       if (msg.isDeleted) {
@@ -4647,16 +4659,6 @@ class _ChatScreenState extends State<ChatScreen>
         },
       ),
       _buildCompressedActionChip(
-        label: widget.otherUser.firstName,
-        backgroundColor: const Color(0xFF0D9488),
-        onPressed: () {
-          final current = _messageController.text;
-          final firstName = widget.otherUser.firstName;
-          final newText = current.isEmpty ? firstName : '$current $firstName';
-          _replaceInputTextWithSanitized(newText);
-        },
-      ),
-      _buildCompressedActionChip(
         label: 'Change Color',
         backgroundColor: const Color(0xFFA855F7),
         onPressed: _changeColor,
@@ -4706,20 +4708,34 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  void _insertOtherUserFirstName() {
+    final current = _messageController.text;
+    final firstName = widget.otherUser.firstName;
+    final newText = current.isEmpty ? firstName : '$current $firstName';
+    _replaceInputTextWithSanitized(newText);
+  }
+
   Widget _buildTwoRowActions(List<Widget> allButtons) {
-    final splitIndex = (allButtons.length / 2).ceil();
-    final topRow = allButtons.take(splitIndex).toList();
-    final bottomRow = allButtons.skip(splitIndex).toList();
+    const int itemsPerRow = 5;
+    final topRow = allButtons.take(itemsPerRow).toList();
+    final bottomRow = <Widget>[
+      _buildCompressedActionChip(
+        label: widget.otherUser.firstName,
+        backgroundColor: const Color(0xFF0D9488),
+        onPressed: _insertOtherUserFirstName,
+      ),
+      ...allButtons.skip(itemsPerRow),
+    ];
 
     Widget buildFittedRow(List<Widget> rowButtons) {
       if (rowButtons.isEmpty) return const SizedBox.shrink();
 
       return LayoutBuilder(
         builder: (context, constraints) {
-          const gap = 4.0;
+          const gap = 3.0;
           final totalGap = gap * (rowButtons.length - 1);
           final itemWidth = math.max(
-            58.0,
+            48.0,
             (constraints.maxWidth - totalGap) / rowButtons.length,
           );
 
@@ -5281,7 +5297,7 @@ class _ChatScreenState extends State<ChatScreen>
             id: DateTime.now().millisecondsSinceEpoch,
             senderId: _currentUserId!,
             recipientId: widget.otherUser.id,
-            content: 'You changed the bg color of ${widget.otherUser.fullName}',
+            content: 'You changed the bg color of ${widget.otherUser.firstName}',
             messageType: 'system',
             timestamp: DateTime.now().toIso8601String(),
             timestampMs: DateTime.now().millisecondsSinceEpoch,
@@ -5682,14 +5698,19 @@ class _ChatScreenState extends State<ChatScreen>
       style: ElevatedButton.styleFrom(
         backgroundColor: backgroundColor,
         foregroundColor: foregroundColor,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         minimumSize: const Size(0, 46),
-        tapTargetSize: MaterialTapTargetSize.padded,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
         elevation: 0,
       ),
-      child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      child: Text(
+        label,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+      ),
     );
   }
 
@@ -5874,23 +5895,39 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          const spacing = 10.0;
-          const horizontalPadding = 20.0;
-          final itemWidth = math.max(
-            92.0,
-            (constraints.maxWidth - horizontalPadding - (spacing * 2)) / 3,
-          );
+          const int columns = 5;
+          const double hPad = 10.0;   // horizontal padding inside scroll
+          const double vPad = 12.0;   // vertical padding inside scroll
+          const double colSpacing = 8.0;
+          const double rowSpacing = 8.0;
+          const double rowHeight = 46.0; // matches button minimumSize height
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
-            child: Wrap(
-              spacing: spacing,
-              runSpacing: spacing,
-              children: actionButtons
-                  .map(
-                    (button) => SizedBox(width: itemWidth, child: button),
-                  )
-                  .toList(),
+          // Item width derived from available space so exactly 5 fit per row.
+          final itemW =
+              (constraints.maxWidth - hPad * 2 - colSpacing * (columns - 1)) /
+              columns;
+          final childAspectRatio = itemW / rowHeight;
+
+          // Visible area: exactly 2 rows + spacing + padding.
+          const double twoRowsH =
+              vPad * 2 + rowHeight * 2 + rowSpacing;
+
+          return SizedBox(
+            height: math.min(twoRowsH, maxPanelHeight),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(
+                horizontal: hPad,
+                vertical: vPad,
+              ),
+              child: GridView.count(
+                crossAxisCount: columns,
+                crossAxisSpacing: colSpacing,
+                mainAxisSpacing: rowSpacing,
+                childAspectRatio: childAspectRatio,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                children: actionButtons,
+              ),
             ),
           );
         },
