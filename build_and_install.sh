@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_NAME="com.example.flutter_messenger_v2"
 APK_PATH="$SCRIPT_DIR/build/app/outputs/flutter-apk/app-release.apk"
-PRODUCTION_URL="https://web.flask-call-app.site/"
+PRODUCTION_URL="https://check.flask-meet.site/"
 SKIP_INSTALL=false
 START_LOGCAT=false
 

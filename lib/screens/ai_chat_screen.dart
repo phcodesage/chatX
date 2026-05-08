@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
+import '../utils/chat_scroll_physics.dart';
 import '../widgets/reaction_picker.dart';
 import '../widgets/chat_composer_shell.dart';
 
@@ -2652,6 +2653,12 @@ class _AiChatScreenState extends State<AiChatScreen> {
                             _messages.length +
                             ((_isSending && !_hasStreamingAssistant) ? 1 : 0),
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        physics: const ChatScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
+                        ),
+                        cacheExtent: 1200,
+                        addAutomaticKeepAlives: false,
+                        addRepaintBoundaries: true,
                         itemBuilder: (context, index) {
                           if (_isSending && index == _messages.length) {
                             return _buildThinkingBubble();

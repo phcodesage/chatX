@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../widgets/chat_composer_shell.dart';
 
@@ -13,6 +14,8 @@ class ChatComposerPanel extends StatelessWidget {
     required this.showEmojiPicker,
     required this.stablePanelHeight,
     required this.onShowEmojiPickerModal,
+    required this.onClipboardPasteShortcut,
+    required this.onInputContextMenuOpened,
     required this.onTextChanged,
     required this.onSend,
     required this.messageController,
@@ -33,6 +36,8 @@ class ChatComposerPanel extends StatelessWidget {
   final bool showEmojiPicker;
   final double stablePanelHeight;
   final VoidCallback onShowEmojiPickerModal;
+  final VoidCallback onClipboardPasteShortcut;
+  final VoidCallback onInputContextMenuOpened;
   final void Function(String) onTextChanged;
   final VoidCallback onSend;
   final TextEditingController messageController;
@@ -151,53 +156,105 @@ class ChatComposerPanel extends StatelessWidget {
                                         thumbVisibility: false,
                                         thickness: 3,
                                         radius: const Radius.circular(2),
-                                        child: TextField(
-                                          key: const ValueKey('message_input'),
-                                          controller: messageController,
-                                          focusNode: inputFocusNode,
-                                          scrollController: inputScrollController,
-                                          onTapOutside: (_) {},
-                                          selectionControls:
-                                              compactSelectionControls,
-                                          cursorColor: const Color(0xFF25D366),
-                                          cursorHeight: 26 * scale,
-                                          cursorWidth: 2.6,
-                                          scrollPadding: EdgeInsets.only(
-                                            bottom: 220 * scale,
-                                          ),
-                                          style: messageTextStyle,
-                                          decoration: InputDecoration(
-                                            hintText: 'Type a message...',
-                                            hintStyle: TextStyle(
-                                              color: Colors.grey[600],
-                                              fontSize: 17 * scale,
-                                              fontFamily: 'Roboto',
-                                              height: 1.12,
+                                        child: Shortcuts(
+                                          shortcuts: const <ShortcutActivator, Intent>{
+                                            SingleActivator(
+                                              LogicalKeyboardKey.keyV,
+                                              meta: true,
+                                            ): _ComposerPasteImageIntent(),
+                                            SingleActivator(
+                                              LogicalKeyboardKey.keyV,
+                                              control: true,
+                                            ): _ComposerPasteImageIntent(),
+                                          },
+                                          child: Actions(
+                                            actions: <Type, Action<Intent>>{
+                                              _ComposerPasteImageIntent:
+                                                  CallbackAction<_ComposerPasteImageIntent>(
+                                                onInvoke: (intent) {
+                                                  onClipboardPasteShortcut();
+                                                  return null;
+                                                },
+                                              ),
+                                            },
+                                            child: TextField(
+                                              key: const ValueKey('message_input'),
+                                              controller: messageController,
+                                              focusNode: inputFocusNode,
+                                              scrollController:
+                                                  inputScrollController,
+                                              onTapOutside: (_) {},
+                                              contextMenuBuilder:
+                                                  (context, editableTextState) {
+                                                onInputContextMenuOpened();
+                                                final buttonItems =
+                                                    editableTextState
+                                                        .contextMenuButtonItems;
+                                                final customItems =
+                                                    <ContextMenuButtonItem>[
+                                                  ContextMenuButtonItem(
+                                                    label: 'Paste Image',
+                                                    onPressed: () {
+                                                      ContextMenuController
+                                                          .removeAny();
+                                                      onClipboardPasteShortcut();
+                                                    },
+                                                  ),
+                                                  ...buttonItems,
+                                                ];
+
+                                                return AdaptiveTextSelectionToolbar
+                                                    .buttonItems(
+                                                  anchors: editableTextState
+                                                      .contextMenuAnchors,
+                                                  buttonItems: customItems,
+                                                );
+                                              },
+                                              selectionControls:
+                                                  compactSelectionControls,
+                                              cursorColor:
+                                                  const Color(0xFF25D366),
+                                              cursorHeight: 26 * scale,
+                                              cursorWidth: 2.6,
+                                              scrollPadding: EdgeInsets.only(
+                                                bottom: 220 * scale,
+                                              ),
+                                              style: messageTextStyle,
+                                              decoration: InputDecoration(
+                                                hintText: 'Type a message...',
+                                                hintStyle: TextStyle(
+                                                  color: Colors.grey[600],
+                                                  fontSize: 17 * scale,
+                                                  fontFamily: 'Roboto',
+                                                  height: 1.12,
+                                                ),
+                                                border: InputBorder.none,
+                                                filled: false,
+                                                contentPadding:
+                                                    const EdgeInsets.only(
+                                                  left: 0,
+                                                  right: 4,
+                                                  top: 10,
+                                                  bottom: 10,
+                                                ),
+                                                isDense: true,
+                                              ),
+                                              onChanged: onTextChanged,
+                                              textAlign: TextAlign.start,
+                                              minLines: 1,
+                                              maxLines: 6,
+                                              textInputAction:
+                                                  TextInputAction.newline,
+                                              keyboardType:
+                                                  TextInputType.multiline,
+                                              textCapitalization:
+                                                  TextCapitalization.sentences,
+                                              enableInteractiveSelection: true,
+                                              autocorrect: true,
+                                              enableSuggestions: true,
+                                              stylusHandwritingEnabled: false,
                                             ),
-                                            border: InputBorder.none,
-                                            filled: false,
-                                            contentPadding:
-                                                const EdgeInsets.only(
-                                              left: 0,
-                                              right: 4,
-                                              top: 10,
-                                              bottom: 10,
-                                            ),
-                                            isDense: true,
                                           ),
-                                          onChanged: onTextChanged,
-                                          textAlign: TextAlign.start,
-                                          minLines: 1,
-                                          maxLines: 6,
-                                          textInputAction: TextInputAction.newline,
-                                          keyboardType:
-                                              TextInputType.multiline,
-                                          textCapitalization:
-                                              TextCapitalization.sentences,
-                                          enableInteractiveSelection: true,
-                                          autocorrect: true,
-                                          enableSuggestions: true,
-                                          stylusHandwritingEnabled: false,
                                         ),
                                       ),
                                     ),
@@ -281,4 +338,8 @@ class ChatComposerPanel extends StatelessWidget {
       tooltip: tooltip,
     );
   }
+}
+
+class _ComposerPasteImageIntent extends Intent {
+  const _ComposerPasteImageIntent();
 }

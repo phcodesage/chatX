@@ -9,11 +9,14 @@ import android.app.RemoteAction
 import android.content.ComponentName
 import android.content.ContentValues
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
@@ -43,9 +46,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.ByteArrayOutputStream
 
 class MainActivity : FlutterActivity() {
     private val TAG = "PiP"
+    private val CLIPBOARD_TAG = "ClipboardPaste"
     private val CHANNEL = "com.example.flutter_messenger_v2/pip"
     private val AUDIO_CHANNEL = "com.example.flutter_messenger_v2/audio_recorder"
     private val QUICK_REPLY_CHANNEL = "com.example.flutter_messenger_v2/quick_reply"
@@ -58,6 +63,9 @@ class MainActivity : FlutterActivity() {
     private var shareMethodChannel: MethodChannel? = null
     private var shortcutMethodChannel: MethodChannel? = null
     private var notificationPayloadChannel: MethodChannel? = null
+    private var fileOpsMethodChannel: MethodChannel? = null
+    private var clipboardManager: ClipboardManager? = null
+    private var clipboardListener: ClipboardManager.OnPrimaryClipChangedListener? = null
     private var pendingSharedItems: List<Map<String, String>> = emptyList()
     private var pendingSharedTargetUserId: String? = null
     private var pendingShortcutTargetUserId: String? = null
@@ -347,8 +355,11 @@ class MainActivity : FlutterActivity() {
             }
 
         // ── Native file save bridge (Downloads via MediaStore) ───────────
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILE_OPS_CHANNEL)
-            .setMethodCallHandler { call, result ->
+        fileOpsMethodChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            FILE_OPS_CHANNEL,
+        )
+        fileOpsMethodChannel?.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "saveToDownloads" -> {
                         try {
@@ -375,6 +386,15 @@ class MainActivity : FlutterActivity() {
                         } catch (e: Exception) {
                             Log.e(TAG, "saveToDownloads error: ${e.message}", e)
                             result.error("SAVE_FAILED", e.message, null)
+                        }
+                    }
+                    "getClipboardImagePngBytes" -> {
+                        try {
+                            val bytes = getClipboardImagePngBytes()
+                            result.success(bytes)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "getClipboardImagePngBytes error: ${e.message}", e)
+                            result.error("CLIPBOARD_READ_FAILED", e.message, null)
                         }
                     }
                     "openDownloadedFile" -> {
@@ -404,6 +424,7 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        registerClipboardListenerIfNeeded()
 
         // ── Native notification payload bridge ────────────────────────────
         notificationPayloadChannel = MethodChannel(
@@ -471,7 +492,76 @@ class MainActivity : FlutterActivity() {
         shareMethodChannel = null
         shortcutMethodChannel = null
         notificationPayloadChannel = null
+        fileOpsMethodChannel = null
+        removeClipboardListenerIfNeeded()
         super.onDestroy()
+    }
+
+    private fun registerClipboardListenerIfNeeded() {
+        if (clipboardListener != null) {
+            Log.d(CLIPBOARD_TAG, "listener already registered")
+            return
+        }
+
+        val manager = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: run {
+                Log.w(CLIPBOARD_TAG, "clipboard manager unavailable")
+                return
+            }
+
+        clipboardManager = manager
+        Log.d(CLIPBOARD_TAG, "registering clipboard listener")
+        clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
+            try {
+                Log.d(CLIPBOARD_TAG, "primary clip changed")
+                val hasImage = hasClipboardImage()
+                fileOpsMethodChannel?.invokeMethod(
+                    "onClipboardChanged",
+                    mapOf("hasImage" to hasImage),
+                )
+                if (hasImage) {
+                    Log.d(CLIPBOARD_TAG, "clipboard image detected; notifying flutter")
+                    fileOpsMethodChannel?.invokeMethod("onClipboardImageAvailable", null)
+                } else {
+                    Log.d(CLIPBOARD_TAG, "clipboard changed but no image detected")
+                }
+            } catch (e: Exception) {
+                Log.w(CLIPBOARD_TAG, "clipboard listener error: ${e.message}")
+            }
+        }
+        manager.addPrimaryClipChangedListener(clipboardListener)
+    }
+
+    private fun removeClipboardListenerIfNeeded() {
+        val manager = clipboardManager
+        val listener = clipboardListener
+        if (manager != null && listener != null) {
+            Log.d(CLIPBOARD_TAG, "removing clipboard listener")
+            manager.removePrimaryClipChangedListener(listener)
+        }
+        clipboardManager = null
+        clipboardListener = null
+    }
+
+    private fun hasClipboardImage(): Boolean {
+        val clipboard = clipboardManager ?: return false
+        if (!clipboard.hasPrimaryClip()) {
+            Log.d(CLIPBOARD_TAG, "hasClipboardImage: no primary clip")
+            return false
+        }
+
+        val clip = clipboard.primaryClip ?: return false
+        Log.d(CLIPBOARD_TAG, "hasClipboardImage: itemCount=${clip.itemCount}")
+        for (index in 0 until clip.itemCount) {
+            val item = clip.getItemAt(index)
+            Log.d(CLIPBOARD_TAG, "hasClipboardImage: checking item index=$index")
+            if (isLikelyImageClipItem(clip, index, item)) {
+                Log.d(CLIPBOARD_TAG, "hasClipboardImage: image-like item found at index=$index")
+                return true
+            }
+        }
+
+        return false
     }
 
     private fun saveBytesToDownloads(
@@ -534,6 +624,142 @@ class MainActivity : FlutterActivity() {
         val resolved = intent.resolveActivity(packageManager) ?: return false
         startActivity(intent)
         return resolved != null
+    }
+
+    private fun getClipboardImagePngBytes(): ByteArray? {
+        Log.d(CLIPBOARD_TAG, "getClipboardImagePngBytes called")
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: return null
+        if (!clipboard.hasPrimaryClip()) {
+            Log.d(CLIPBOARD_TAG, "getClipboardImagePngBytes: no primary clip")
+            return null
+        }
+
+        val clip = clipboard.primaryClip ?: return null
+        Log.d(CLIPBOARD_TAG, "getClipboardImagePngBytes: itemCount=${clip.itemCount}")
+        for (index in 0 until clip.itemCount) {
+            val item = clip.getItemAt(index)
+            val uriCandidates = mutableListOf<Uri>()
+            item.uri?.let { uriCandidates.add(it) }
+            item.intent?.data?.let { uriCandidates.add(it) }
+
+            val textUri = item.text?.toString()?.trim()
+            if (!textUri.isNullOrEmpty() &&
+                (textUri.startsWith("content://") || textUri.startsWith("file://"))) {
+                try {
+                    uriCandidates.add(Uri.parse(textUri))
+                } catch (_: Exception) {
+                    // Ignore malformed URIs from clipboard providers.
+                }
+            }
+
+            Log.d(CLIPBOARD_TAG, "getClipboardImagePngBytes: index=$index candidateCount=${uriCandidates.size}")
+
+            for (uri in uriCandidates) {
+                Log.d(CLIPBOARD_TAG, "getClipboardImagePngBytes: trying uri=$uri")
+                val maybeBytes = readImageBytesFromUri(uri)
+                if (maybeBytes != null && maybeBytes.isNotEmpty()) {
+                    Log.d(CLIPBOARD_TAG, "getClipboardImagePngBytes: extracted bytes=${maybeBytes.size} from uri=$uri")
+                    return maybeBytes
+                }
+            }
+        }
+
+        Log.d(CLIPBOARD_TAG, "getClipboardImagePngBytes: no image bytes extracted")
+        return null
+    }
+
+    private fun isLikelyImageClipItem(clip: ClipData, index: Int, item: ClipData.Item): Boolean {
+        val description = clip.description
+        if (description != null && index < description.mimeTypeCount) {
+            val mime = description.getMimeType(index)
+            if (!mime.isNullOrBlank() && mime.startsWith("image/")) {
+                return true
+            }
+        }
+
+        val uri = item.uri ?: item.intent?.data
+        if (uri != null && uriLooksLikeImage(uri)) {
+            return true
+        }
+
+        val text = item.text?.toString()?.trim().orEmpty()
+        if (text.startsWith("content://") || text.startsWith("file://")) {
+            return try {
+                uriLooksLikeImage(Uri.parse(text))
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        return false
+    }
+
+    private fun uriLooksLikeImage(uri: Uri): Boolean {
+        val mimeType = contentResolver.getType(uri)
+        if (mimeType?.startsWith("image/") == true) {
+            Log.d(CLIPBOARD_TAG, "uriLooksLikeImage: mime image for uri=$uri")
+            return true
+        }
+
+        val uriString = uri.toString().lowercase()
+        if (uriString.contains("image") || uriString.endsWith(".png") ||
+            uriString.endsWith(".jpg") || uriString.endsWith(".jpeg") ||
+            uriString.endsWith(".webp") || uriString.endsWith(".gif")) {
+            Log.d(CLIPBOARD_TAG, "uriLooksLikeImage: uri hint matched for uri=$uri")
+            return true
+        }
+
+        return try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                val options = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+                BitmapFactory.decodeStream(input, null, options)
+                val looksImage = options.outWidth > 0 && options.outHeight > 0
+                Log.d(CLIPBOARD_TAG, "uriLooksLikeImage: decode bounds for uri=$uri -> $looksImage (${options.outWidth}x${options.outHeight})")
+                looksImage
+            } ?: false
+        } catch (_: Exception) {
+            Log.d(CLIPBOARD_TAG, "uriLooksLikeImage: decode bounds failed for uri=$uri")
+            false
+        }
+    }
+
+    private fun readImageBytesFromUri(uri: Uri): ByteArray? {
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                val bitmap = BitmapFactory.decodeStream(input)
+                if (bitmap != null) {
+                    Log.d(CLIPBOARD_TAG, "readImageBytesFromUri: bitmap decoded for uri=$uri")
+                    return bitmap.toPngBytes()
+                }
+            }
+        } catch (_: Exception) {
+            Log.d(CLIPBOARD_TAG, "readImageBytesFromUri: bitmap decode failed for uri=$uri")
+            // Fallback below.
+        }
+
+        if (!uriLooksLikeImage(uri)) {
+            Log.d(CLIPBOARD_TAG, "readImageBytesFromUri: uri not image-like: $uri")
+            return null
+        }
+
+        return try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                Log.d(CLIPBOARD_TAG, "readImageBytesFromUri: using raw bytes fallback for uri=$uri")
+                input.readBytes()
+            }
+        } catch (_: Exception) {
+            Log.d(CLIPBOARD_TAG, "readImageBytesFromUri: raw bytes fallback failed for uri=$uri")
+            null
+        }
+    }
+
+    private fun Bitmap.toPngBytes(): ByteArray {
+        val output = ByteArrayOutputStream()
+        compress(Bitmap.CompressFormat.PNG, 100, output)
+        return output.toByteArray()
     }
 
     /**

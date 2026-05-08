@@ -57,6 +57,13 @@ class ChatMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final maxBubbleWidth = MediaQuery.of(context).size.width *
+      (scale < 0.9 ? 0.82 : 0.70);
+    final int imageCacheWidth = ((maxBubbleWidth *
+          MediaQuery.of(context).devicePixelRatio)
+        .round()
+        .clamp(320, 2048))
+      as int;
     final bool isImage = message.messageType == 'image' ||
         (message.fileType?.startsWith('image/') ?? false);
     final bool isVideo = message.messageType == 'video' ||
@@ -100,8 +107,7 @@ class ChatMessageBubble extends StatelessWidget {
       child: Container(
         margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width *
-              (scale < 0.9 ? 0.82 : 0.70),
+          maxWidth: maxBubbleWidth,
         ),
         decoration: BoxDecoration(
           color: isSentByMe ? const Color(0xFF420796) : const Color(0xFF3944BC),
@@ -135,7 +141,7 @@ class ChatMessageBubble extends StatelessWidget {
             if (message.replyToId != null || message.replyPreview != null)
               _buildReplyPreview(message, scale),
             if (isMedia && message.fileUrl != null)
-              _buildMediaContent(isImage, isVideo, message),
+              _buildMediaContent(isImage, isVideo, message, imageCacheWidth),
             if (isAudio && message.fileUrl != null)
               AudioMessagePlayer(
                 audioUrl: message.fileUrl!,
@@ -343,88 +349,106 @@ class ChatMessageBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildMediaContent(bool isImage, bool isVideo, Message message) {
-    return ClipRRect(
-      borderRadius: BorderRadius.only(
-        topLeft: const Radius.circular(16),
-        topRight: const Radius.circular(16),
-        bottomLeft: Radius.circular(
-          message.content.isNotEmpty && !isOnlyFilename(message.content)
-              ? 0
-              : (isSentByMe ? 16 : 4),
-        ),
-        bottomRight: Radius.circular(
-          message.content.isNotEmpty && !isOnlyFilename(message.content)
-              ? 0
-              : (isSentByMe ? 4 : 16),
-        ),
+  Widget _buildMediaContent(bool isImage, bool isVideo, Message message, int imageCacheWidth) {
+    // Fixed aspect ratio prevents layout shifts when the image loads,
+    // which is the primary cause of scroll momentum being broken.
+    const double mediaAspectRatio = 4 / 3;
+
+    final borderRadius = BorderRadius.only(
+      topLeft: const Radius.circular(16),
+      topRight: const Radius.circular(16),
+      bottomLeft: Radius.circular(
+        message.content.isNotEmpty && !isOnlyFilename(message.content)
+            ? 0
+            : (isSentByMe ? 16 : 4),
       ),
-      child: GestureDetector(
-        onTap: () => onOpenMediaViewer(message),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            if (isImage)
-              Image.network(
-                message.fileUrl!,
-                fit: BoxFit.cover,
-                width: double.infinity,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return Container(
-                    height: 150,
-                    color: Colors.grey[800],
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        value: loadingProgress.expectedTotalBytes != null
-                            ? loadingProgress.cumulativeBytesLoaded /
-                                loadingProgress.expectedTotalBytes!
-                            : null,
-                        color: Colors.white,
-                      ),
-                    ),
-                  );
-                },
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    height: 100,
-                    color: Colors.grey[800],
+      bottomRight: Radius.circular(
+        message.content.isNotEmpty && !isOnlyFilename(message.content)
+            ? 0
+            : (isSentByMe ? 4 : 16),
+      ),
+    );
+
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: GestureDetector(
+          onTap: () => onOpenMediaViewer(message),
+          child: AspectRatio(
+            aspectRatio: mediaAspectRatio,
+            child: Stack(
+              fit: StackFit.expand,
+              alignment: Alignment.center,
+              children: [
+                // Placeholder shown while image loads — same size as the
+                // final image so layout never shifts.
+                Container(color: Colors.grey[850]),
+
+                if (isImage)
+                  Image.network(
+                    message.fileUrl!,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: double.infinity,
+                    cacheWidth: imageCacheWidth,
+                    filterQuality: FilterQuality.low,
+                    // frameBuilder gives a smooth fade-in without blocking
+                    // the scroll thread the way loadingBuilder can.
+                    frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                      if (wasSynchronouslyLoaded || frame != null) {
+                        return child;
+                      }
+                      return AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        child: frame == null
+                            ? Container(
+                                key: const ValueKey('placeholder'),
+                                color: Colors.grey[850],
+                              )
+                            : child,
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        color: Colors.grey[800],
+                        child: const Center(
+                          child: Icon(
+                            Icons.broken_image,
+                            color: Colors.white54,
+                            size: 40,
+                          ),
+                        ),
+                      );
+                    },
+                  )
+                else if (isVideo)
+                  Container(
+                    color: Colors.black87,
                     child: const Center(
                       child: Icon(
-                        Icons.broken_image,
-                        color: Colors.white54,
-                        size: 40,
+                        Icons.play_circle_fill,
+                        color: Colors.white,
+                        size: 60,
                       ),
                     ),
-                  );
-                },
-              )
-            else if (isVideo)
-              Container(
-                height: 150,
-                color: Colors.black87,
-                child: const Center(
-                  child: Icon(
-                    Icons.play_circle_fill,
-                    color: Colors.white,
-                    size: 60,
                   ),
-                ),
-              ),
-            if (isVideo)
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black45,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.play_arrow,
-                  color: Colors.white,
-                  size: 36,
-                ),
-              ),
-          ],
+
+                if (isVideo)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: const BoxDecoration(
+                      color: Colors.black45,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow,
+                      color: Colors.white,
+                      size: 36,
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );

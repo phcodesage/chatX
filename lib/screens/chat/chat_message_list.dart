@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/message.dart';
+import '../../utils/chat_scroll_physics.dart';
 
 class ChatMessageList extends StatelessWidget {
   const ChatMessageList({
@@ -50,10 +51,10 @@ class ChatMessageList extends StatelessWidget {
               16 * scale,
               4 * scale,
             ),
-            physics: const BouncingScrollPhysics(
+            physics: const ChatScrollPhysics(
               parent: AlwaysScrollableScrollPhysics(),
             ),
-            cacheExtent: 500,
+            cacheExtent: MediaQuery.sizeOf(context).height * 2,
             itemCount: messages.length + (hasMoreMessages ? 1 : 0),
             addAutomaticKeepAlives: false,
             addRepaintBoundaries: true,

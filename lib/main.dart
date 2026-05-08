@@ -35,22 +35,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   if (kDebugMode) {
-    debugPrint('🚀 Performance debug logging enabled');
-    debugPrintRebuildDirtyWidgets = true;
-    debugProfileBuildsEnabled = true;
-    WidgetsBinding.instance.addTimingsCallback((timings) {
-      for (final timing in timings) {
-        final totalMs = timing.totalSpan.inMilliseconds;
-        if (totalMs > 16) {
-          debugPrint(
-            '🐢 Slow frame #${timing.frameNumber}: total=${totalMs}ms, '
-            'build=${timing.buildDuration.inMilliseconds}ms, '
-            'raster=${timing.rasterDuration.inMilliseconds}ms, '
-            'route=${PerformanceRouteObserver.currentRoute}',
-          );
-        }
-      }
-    });
+    debugPrintRebuildDirtyWidgets = false;
+    debugProfileBuildsEnabled = false;
   }
 
   // Set auth error navigation immediately; this does not require async setup.

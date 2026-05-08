@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -281,6 +282,8 @@ class _ChatScreenState extends State<ChatScreen>
   bool _actionsPanelFromKeyboard = false;
   double _actionsPanelInset = 0;
   bool _localNotificationsReady = false;
+  bool _isHandlingClipboardImagePaste = false;
+  DateTime? _lastClipboardPasteAttemptAt;
   double _lastMetricsViewInsetBottom = 0;
   double _lastMetricsViewPaddingBottom = 0;
   Timer? _metricsRefreshTimer;
@@ -368,6 +371,7 @@ class _ChatScreenState extends State<ChatScreen>
     _inputFocusNode.addListener(_onFocusChange);
     _scrollController.addListener(_onScroll);
     _messageController.addListener(_syncCommonPhrasesVisibility);
+    _fileOpsChannel.setMethodCallHandler(_handleFileOpsMethodCall);
 
     // Set this user as active to prevent FCM notifications
     ActiveChatService().setActiveUser(widget.otherUser.id);
@@ -544,7 +548,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Listen to scroll position to show/hide scroll-to-bottom button
-  Future<void> _onScroll() async {
+  void _onScroll() {
     // Since list is reversed, position 0 means we're at the bottom (newest messages)
     // We're "at bottom" if scroll offset is near 0
     final isAtBottom = _scrollController.offset < 100;
@@ -556,14 +560,6 @@ class _ChatScreenState extends State<ChatScreen>
           _markVisibleMessagesAsRead();
         }
       });
-      final currentUserId = await StorageService.getUserId();
-      if (currentUserId != null) {
-        await ChatCacheService.saveConversationMessages(
-          currentUserId,
-          widget.otherUser.id,
-          _messages.reversed.toList(),
-        );
-      }
     }
   }
 
@@ -5098,6 +5094,16 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _onTextChanged(String text) {
+    if (Platform.isAndroid && text.contains('\uFFFC')) {
+      debugPrint('[ClipboardPaste] detected Android rich-content marker (U+FFFC)');
+      final sanitized = text.replaceAll('\uFFFC', '');
+      if (sanitized != text) {
+        _replaceInputTextWithSanitized(sanitized);
+      }
+      unawaited(_tryHandleClipboardImagePaste(showNoImageBanner: true));
+      return;
+    }
+
     final normalizedText = _normalizeTextForEmojiCompatibility(text);
     if (normalizedText != text) {
       _replaceInputTextWithSanitized(normalizedText);
@@ -5839,6 +5845,14 @@ class _ChatScreenState extends State<ChatScreen>
         backgroundColor: const Color(0xFF10B981),
         onPressed: () => _runActionSheetAction(_pickFile),
       ),
+      if (Platform.isAndroid)
+        _buildActionSheetButton(
+          label: 'Paste Image',
+          backgroundColor: const Color(0xFF2563EB),
+          onPressed: () => _runActionSheetAction(
+            () => _tryHandleClipboardImagePaste(showNoImageBanner: true),
+          ),
+        ),
       _buildActionSheetButton(
         label: 'Camera',
         backgroundColor: const Color(0xFF3B82F6),
@@ -6541,6 +6555,140 @@ class _ChatScreenState extends State<ChatScreen>
 
   final ImagePicker _imagePicker = ImagePicker();
 
+  void _onComposerPasteShortcut() {
+    debugPrint('[ClipboardPaste] shortcut triggered');
+    unawaited(_tryHandleClipboardImagePaste());
+  }
+
+  void _onInputContextMenuOpened() {
+    debugPrint('[ClipboardPaste] input context menu opened');
+  }
+
+  Future<void> _handleFileOpsMethodCall(MethodCall call) async {
+    debugPrint('[ClipboardPaste] native callback: ${call.method}');
+    if (call.method == 'onClipboardChanged') {
+      final args = call.arguments;
+      final hasImage = args is Map ? args['hasImage'] == true : false;
+      debugPrint('[ClipboardPaste] native onClipboardChanged hasImage=$hasImage');
+      if (hasImage && Platform.isAndroid && mounted && _inputFocusNode.hasFocus) {
+        unawaited(_tryHandleClipboardImagePaste());
+      }
+      return;
+    }
+
+    if (call.method != 'onClipboardImageAvailable') {
+      return;
+    }
+
+    if (!Platform.isAndroid || !mounted || !_inputFocusNode.hasFocus) {
+      debugPrint(
+        '[ClipboardPaste] callback ignored: '
+        'android=${Platform.isAndroid}, mounted=$mounted, hasFocus=${_inputFocusNode.hasFocus}',
+      );
+      return;
+    }
+
+    if (_isHandlingClipboardImagePaste) {
+      debugPrint('[ClipboardPaste] callback ignored: already handling paste');
+      return;
+    }
+
+    final now = DateTime.now();
+    final lastAttempt = _lastClipboardPasteAttemptAt;
+    if (lastAttempt != null &&
+        now.difference(lastAttempt) < const Duration(milliseconds: 700)) {
+      debugPrint('[ClipboardPaste] callback ignored: debounce');
+      return;
+    }
+    _lastClipboardPasteAttemptAt = now;
+
+    _isHandlingClipboardImagePaste = true;
+    try {
+      debugPrint('[ClipboardPaste] callback accepted, trying paste now');
+      await _tryHandleClipboardImagePaste();
+    } finally {
+      _isHandlingClipboardImagePaste = false;
+      debugPrint('[ClipboardPaste] callback handling finished');
+    }
+  }
+
+  Future<void> _tryHandleClipboardImagePaste({
+    bool showNoImageBanner = false,
+  }) async {
+    debugPrint(
+      '[ClipboardPaste] tryHandle called: showNoImageBanner=$showNoImageBanner, '
+      'platform='
+      '${Platform.isAndroid ? 'android' : Platform.isMacOS ? 'macos' : Platform.isWindows ? 'windows' : Platform.isLinux ? 'linux' : 'other'}',
+    );
+
+    if (!(Platform.isMacOS ||
+        Platform.isWindows ||
+        Platform.isLinux ||
+        Platform.isAndroid)) {
+      debugPrint('[ClipboardPaste] unsupported platform, skipping');
+      return;
+    }
+
+    try {
+      debugPrint('[ClipboardPaste] requesting getClipboardImagePngBytes');
+      final bytes = await _fileOpsChannel.invokeMethod<Uint8List>(
+        'getClipboardImagePngBytes',
+      );
+      if (bytes == null || bytes.isEmpty) {
+        debugPrint('[ClipboardPaste] native returned no bytes');
+        if (showNoImageBanner && mounted) {
+          _showTopBanner(
+            'Clipboard has no image to paste.',
+            backgroundColor: const Color(0xFF1F2937),
+            icon: Icons.info_outline,
+            autoHideAfter: const Duration(seconds: 2),
+          );
+        }
+        return;
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final fileName = 'pasted_image_${DateTime.now().millisecondsSinceEpoch}.png';
+      final file = File('${tempDir.path}/$fileName');
+      await file.writeAsBytes(bytes, flush: true);
+      debugPrint(
+        '[ClipboardPaste] wrote temp image file: path=${file.path}, bytes=${bytes.length}',
+      );
+
+      if (!mounted) return;
+      debugPrint('[ClipboardPaste] opening file preview modal');
+      await _showFilePreviewModal(file, fileName, isFromCamera: false);
+      debugPrint('[ClipboardPaste] preview modal opened');
+    } on PlatformException catch (e) {
+      // Ignore unsupported platforms or empty clipboard image lookups.
+      if (e.code == 'NO_IMAGE' || e.code == 'UNAVAILABLE') {
+        debugPrint('[ClipboardPaste] native says no image/unavailable: ${e.code}');
+        return;
+      }
+      debugPrint('Clipboard image paste failed: ${e.code} ${e.message}');
+      if (mounted) {
+        _showTopBanner(
+          'Paste image failed: ${e.message ?? e.code}',
+          backgroundColor: const Color(0xFFB91C1C),
+          icon: Icons.error_outline,
+          autoHideAfter: const Duration(seconds: 3),
+        );
+      }
+    } on MissingPluginException {
+      debugPrint('Clipboard image paste failed: missing native plugin method');
+      if (mounted) {
+        _showTopBanner(
+          'Paste image not available yet. Please restart the app once.',
+          backgroundColor: const Color(0xFFB91C1C),
+          icon: Icons.error_outline,
+          autoHideAfter: const Duration(seconds: 4),
+        );
+      }
+    } catch (e) {
+      debugPrint('Clipboard image paste failed: $e');
+    }
+  }
+
   /// Pick a file from device storage
   Future<void> _pickFile() async {
     try {
@@ -6678,10 +6826,14 @@ class _ChatScreenState extends State<ChatScreen>
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (modalContext) {
         final media = MediaQuery.of(modalContext);
-        final bottomInset = media.viewInsets.bottom;
+        final bottomInset = math.max(
+          media.viewInsets.bottom,
+          media.viewPadding.bottom,
+        );
 
         return Container(
           height: media.size.height * 0.86,
@@ -8422,6 +8574,7 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   void dispose() {
     unawaited(_persistConversationCacheSnapshot());
+    _fileOpsChannel.setMethodCallHandler(null);
     _inputModeSwitchTimer?.cancel();
     _metricsRefreshTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -8693,6 +8846,8 @@ class _ChatScreenState extends State<ChatScreen>
                         showEmojiPicker: _showEmojiPicker,
                       stablePanelHeight: stablePanelHeight,
                       onShowEmojiPickerModal: () => _showEmojiPickerModal(context),
+                      onClipboardPasteShortcut: _onComposerPasteShortcut,
+                      onInputContextMenuOpened: _onInputContextMenuOpened,
                       onTextChanged: _onTextChanged,
                       onSend: _sendMessage,
                       messageController: _messageController,
