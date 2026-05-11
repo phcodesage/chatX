@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:shimmer/shimmer.dart';
 import '../models/lobby_user.dart';
 import '../models/group.dart';
 import '../models/message.dart';
@@ -31,6 +30,7 @@ import '../services/share_intent_service.dart';
 import '../services/shortcut_service.dart';
 import '../services/version_service.dart';
 import '../utils/notification_handler.dart';
+import '../utils/chat_scroll_physics.dart';
 import 'share_target_screen.dart';
 import 'ai_chat_screen.dart';
 
@@ -2230,29 +2230,42 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         )
                       : ListView.builder(
                           controller: scrollController,
+                          physics: const ChatScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
+                          cacheExtent: 900,
+                          addAutomaticKeepAlives: false,
+                          addRepaintBoundaries: true,
                           itemCount: contacts.length,
                           itemBuilder: (_, index) {
                             final user = contacts[index];
                             final avatarColor = _getAvatarColor(user.avatarColorIndex);
+                            final s = _compactScale(context);
                             return ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 4,
+                              dense: true,
+                              visualDensity: const VisualDensity(
+                                horizontal: -1,
+                                vertical: -2,
+                              ),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: _cs(context, 20),
+                                vertical: _cs(context, 2),
                               ),
                               leading: CircleAvatar(
-                                radius: 24,
+                                radius: _cs(context, 22),
                                 backgroundColor: avatarColor,
                                 child: user.avatarUrl != null
                                     ? ClipOval(
                                         child: Image.network(
                                           user.avatarUrl!,
-                                          width: 48,
-                                          height: 48,
+                                          width: _cs(context, 44),
+                                          height: _cs(context, 44),
                                           fit: BoxFit.cover,
                                           errorBuilder: (_, __, ___) => Text(
                                             user.initials,
-                                            style: const TextStyle(
+                                            style: TextStyle(
                                               color: Colors.white,
+                                              fontSize: 13 * s,
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
@@ -2260,16 +2273,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                       )
                                     : Text(
                                         user.initials,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           color: Colors.white,
+                                          fontSize: 13 * s,
                                           fontWeight: FontWeight.bold,
                                         ),
                                       ),
                               ),
                               title: Text(
                                 user.fullName,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   color: Colors.white,
+                                  fontSize: 14 * s,
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
@@ -2279,14 +2294,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                   color: user.isOnline
                                       ? const Color(0xFF00E676)
                                       : Colors.grey[500],
-                                  fontSize: 12,
+                                  fontSize: 11 * s,
                                 ),
                               ),
                               trailing: user.isOnline
-                                  ? const Icon(
+                                  ? Icon(
                                       Icons.circle,
                                       color: Color(0xFF00E676),
-                                      size: 10,
+                                      size: _cs(context, 10),
                                     )
                                   : null,
                               onTap: () {
@@ -2362,6 +2377,35 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
+  double _compactScale(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final width = media.size.width;
+    final dpr = media.devicePixelRatio;
+
+    var scale = 1.0;
+    if (width >= 480) {
+      scale *= 0.82;
+    } else if (width >= 430) {
+      scale *= 0.86;
+    } else if (width >= 390) {
+      scale *= 0.90;
+    } else if (width >= 360) {
+      scale *= 0.95;
+    }
+
+    if (dpr >= 4.0) {
+      scale *= 0.94;
+    } else if (dpr >= 3.5) {
+      scale *= 0.96;
+    }
+
+    return scale.clamp(0.80, 1.0);
+  }
+
+  double _cs(BuildContext context, double value) {
+    return value * _compactScale(context);
+  }
+
   void _setActiveFilter(int index) {
     setState(() {
       switch (index) {
@@ -2382,29 +2426,35 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _buildSectionHeader(String title, int count, Color color) {
+    final s = _compactScale(context);
     return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 6),
+      padding: EdgeInsets.only(
+        left: _cs(context, 16),
+        right: _cs(context, 16),
+        top: _cs(context, 16),
+        bottom: _cs(context, 6),
+      ),
       child: Row(
         children: [
           Container(
-            width: 8,
-            height: 8,
+            width: _cs(context, 8),
+            height: _cs(context, 8),
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: _cs(context, 8)),
           Text(
             title,
             style: TextStyle(
               color: Colors.grey[400],
-              fontSize: 12,
+              fontSize: 12 * s,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
           ),
-          const SizedBox(width: 6),
+          SizedBox(width: _cs(context, 6)),
           Text(
             '($count)',
-            style: TextStyle(color: Colors.grey[600], fontSize: 11),
+            style: TextStyle(color: Colors.grey[600], fontSize: 11 * s),
           ),
         ],
       ),
@@ -2412,32 +2462,38 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _buildGroupsSectionHeader() {
+    final s = _compactScale(context);
     return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 6),
+      padding: EdgeInsets.only(
+        left: _cs(context, 16),
+        right: _cs(context, 16),
+        top: _cs(context, 16),
+        bottom: _cs(context, 6),
+      ),
       child: Row(
         children: [
           Container(
-            width: 8,
-            height: 8,
+            width: _cs(context, 8),
+            height: _cs(context, 8),
             decoration: const BoxDecoration(
               color: Color(0xFF00D9FF),
               shape: BoxShape.circle,
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: _cs(context, 8)),
           Text(
             'GROUPS',
             style: TextStyle(
               color: Colors.grey[400],
-              fontSize: 12,
+              fontSize: 12 * s,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
           ),
-          const SizedBox(width: 6),
+          SizedBox(width: _cs(context, 6)),
           Text(
             '(${_filteredGroups.length})',
-            style: TextStyle(color: Colors.grey[600], fontSize: 11),
+            style: TextStyle(color: Colors.grey[600], fontSize: 11 * s),
           ),
           const Spacer(),
           // Create group button (only for admin users)
@@ -2579,18 +2635,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
-  Widget _buildLoadingShimmer() {
+  Widget _buildLoadingPlaceholder() {
     return ListView.builder(
       itemCount: 8,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      physics: const ChatScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
+      addAutomaticKeepAlives: false,
+      addRepaintBoundaries: true,
       itemBuilder: (_, __) {
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Shimmer.fromColors(
-            baseColor: const Color(0xFF1F1F30),
-            highlightColor: const Color(0xFF2C2C45),
-            child: _buildShimmerTile(),
-          ),
+          child: _buildShimmerTile(),
         );
       },
     );
@@ -2766,7 +2823,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
           Expanded(
             child: (_isLoading && _lobbyUsers.isEmpty && _groups.isEmpty)
-                ? _buildLoadingShimmer()
+                ? _buildLoadingPlaceholder()
                 : !hasVisibleResults
                 ? Center(
                     child: Text(
@@ -2784,6 +2841,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     backgroundColor: const Color(0xFF252542),
                     child: ListView.builder(
                       padding: EdgeInsets.zero,
+                      physics: const ChatScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
+                      cacheExtent: MediaQuery.sizeOf(context).height * 2,
+                      addAutomaticKeepAlives: false,
+                      addRepaintBoundaries: true,
                       itemCount: lobbyItemBuilders.length,
                       itemBuilder: (context, index) {
                         return lobbyItemBuilders[index]();
@@ -3020,19 +3083,23 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _buildGroupTile(Group group) {
+    final s = _compactScale(context);
     final lastMessageText = group.lastMessage?.content ?? 'No messages yet';
     final lastMessageTime = group.lastMessage?.formattedTime ?? '';
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      margin: EdgeInsets.symmetric(
+        horizontal: _cs(context, 12),
+        vertical: _cs(context, 4),
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF252542),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(_cs(context, 12)),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(_cs(context, 12)),
           onTap: () {
             Navigator.push(
               context,
@@ -3042,32 +3109,36 @@ class _LobbyScreenState extends State<LobbyScreen> {
             );
           },
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.all(_cs(context, 12)),
             child: Row(
               children: [
                 // Group avatar
                 CircleAvatar(
-                  radius: 26,
+                  radius: _cs(context, 26),
                   backgroundColor: const Color(0xFF00D9FF),
                   child: group.avatarUrl != null
                       ? ClipOval(
                           child: Image.network(
                             group.avatarUrl!,
-                            width: 52,
-                            height: 52,
+                            width: _cs(context, 52),
+                            height: _cs(context, 52),
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {
-                              return const Icon(
+                              return Icon(
                                 Icons.group,
                                 color: Colors.white,
-                                size: 26,
+                                size: _cs(context, 26),
                               );
                             },
                           ),
                         )
-                      : const Icon(Icons.group, color: Colors.white, size: 26),
+                      : Icon(
+                          Icons.group,
+                          color: Colors.white,
+                          size: _cs(context, 26),
+                        ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: _cs(context, 12)),
                 // Group info
                 Expanded(
                   child: Column(
@@ -3083,17 +3154,23 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
+                      SizedBox(height: _cs(context, 2)),
                       // Member count
                       Text(
                         '${group.memberCount} members',
-                        style: TextStyle(color: Colors.grey[500], fontSize: 13),
+                        style: TextStyle(
+                          color: Colors.grey[500],
+                          fontSize: 13 * s,
+                        ),
                       ),
-                      const SizedBox(height: 2),
+                      SizedBox(height: _cs(context, 2)),
                       // Last message preview
                       Text(
                         lastMessageText,
-                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                        style: TextStyle(
+                          color: Colors.grey[400],
+                          fontSize: 12 * s,
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
@@ -3110,7 +3187,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         lastMessageTime,
                         style: TextStyle(
                           color: Colors.grey[500],
-                          fontSize: 11,
+                          fontSize: 11 * s,
                           fontWeight: FontWeight.normal,
                         ),
                       ),
@@ -3125,6 +3202,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _buildUserTile(LobbyUser user, {bool isOnlineSection = false}) {
+    final s = _compactScale(context);
     final avatarColor = _getAvatarColor(user.avatarColorIndex);
     final effectiveStatus = _getEffectiveStatus(user);
     final hasCrossDeviceCall = _crossDeviceActiveCallRoomByUserId.containsKey(user.id);
@@ -3145,15 +3223,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      margin: EdgeInsets.symmetric(
+        horizontal: _cs(context, 12),
+        vertical: _cs(context, 4),
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF252542),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(_cs(context, 12)),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(_cs(context, 12)),
           onTap: () {
             // Navigate to chat screen
             Navigator.push(
@@ -3194,28 +3275,28 @@ class _LobbyScreenState extends State<LobbyScreen> {
             });
           },
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.all(_cs(context, 12)),
             child: Row(
               children: [
                 // Avatar with online indicator
                 Stack(
                   children: [
                     CircleAvatar(
-                      radius: 26,
+                      radius: _cs(context, 26),
                       backgroundColor: avatarColor,
                       child: user.avatarUrl != null
                           ? ClipOval(
                               child: Image.network(
                                 user.avatarUrl!,
-                                width: 52,
-                                height: 52,
+                                width: _cs(context, 52),
+                                height: _cs(context, 52),
                                 fit: BoxFit.cover,
                                 errorBuilder: (context, error, stackTrace) {
                                   return Text(
                                     user.initials,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       color: Colors.white,
-                                      fontSize: 18,
+                                      fontSize: 18 * s,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   );
@@ -3224,9 +3305,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                             )
                           : Text(
                               user.initials,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 18,
+                                fontSize: 18 * s,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -3236,8 +3317,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       right: 2,
                       bottom: 2,
                       child: Container(
-                        width: 12,
-                        height: 12,
+                        width: _cs(context, 12),
+                        height: _cs(context, 12),
                         decoration: BoxDecoration(
                           color: hasCrossDeviceCall
                               ? const Color(0xFFF59E0B)
@@ -3252,7 +3333,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: _cs(context, 12)),
                 // User info
                 Expanded(
                   child: Column(
@@ -3261,9 +3342,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       // Name
                       Text(
                         user.fullName,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: Colors.white,
-                          fontSize: 16,
+                          fontSize: 16 * s,
                           fontWeight: FontWeight.w600,
                         ),
                         overflow: TextOverflow.ellipsis,
@@ -3274,11 +3355,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           user.email,
                           style: TextStyle(
                             color: Colors.grey[500],
-                            fontSize: 11,
+                            fontSize: 11 * s,
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
-                      const SizedBox(height: 2),
+                      SizedBox(height: _cs(context, 2)),
                       // Online/Away/Offline status with relative time
                       Text(
                         hasCrossDeviceCall
@@ -3294,10 +3375,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
                               : effectiveStatus == 'away'
                                 ? const Color(0xFFFFC107)
                                 : Colors.grey[500],
-                          fontSize: 13,
+                          fontSize: 13 * s,
                         ),
                       ),
-                      const SizedBox(height: 2),
+                      SizedBox(height: _cs(context, 2)),
                       // Last message preview OR typing indicator
                       _typingUsers.containsKey(user.id)
                           ? const _TypingIndicator()
@@ -3305,7 +3386,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                               _getLastMessagePreview(),
                               style: TextStyle(
                                 color: Colors.grey[400],
-                                fontSize: 12,
+                                fontSize: 12 * s,
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -3325,28 +3406,28 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           color: displayUnreadCount > 0
                               ? const Color(0xFF00D9FF)
                               : Colors.grey[500],
-                          fontSize: 11,
+                          fontSize: 11 * s,
                           fontWeight: displayUnreadCount > 0
                               ? FontWeight.w600
                               : FontWeight.normal,
                         ),
                       ),
                     if (displayUnreadCount > 0) ...[
-                      const SizedBox(height: 6),
+                      SizedBox(height: _cs(context, 6)),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: _cs(context, 8),
+                          vertical: _cs(context, 4),
                         ),
                         decoration: BoxDecoration(
                           color: const Color(0xFFE91E63),
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(_cs(context, 12)),
                         ),
                         child: Text(
                           displayUnreadCount > 99 ? '99+' : '$displayUnreadCount',
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Colors.white,
-                            fontSize: 12,
+                            fontSize: 12 * s,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -3363,21 +3444,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   Widget _buildAiChatTile() {
+    final s = _compactScale(context);
     final preview = _aiLastMessagePreview ?? 'Start a conversation';
     final timeLabel = _aiLastMessageTime != null
         ? _formatTime(_aiLastMessageTime!)
         : '';
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      margin: EdgeInsets.symmetric(
+        horizontal: _cs(context, 12),
+        vertical: _cs(context, 4),
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF252542),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(_cs(context, 12)),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(_cs(context, 12)),
           onTap: () {
             Navigator.push(
               context,
@@ -3390,46 +3475,46 @@ class _LobbyScreenState extends State<LobbyScreen> {
             });
           },
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.all(_cs(context, 12)),
             child: Row(
               children: [
                 // Bot avatar — gradient circle with smart_toy icon
                 Container(
-                  width: 52,
-                  height: 52,
+                  width: _cs(context, 52),
+                  height: _cs(context, 52),
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
                       colors: [Color(0xFF00C9A7), Color(0xFF845EC2)],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
-                    borderRadius: BorderRadius.circular(26),
+                    borderRadius: BorderRadius.circular(_cs(context, 26)),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.smart_toy_rounded,
                     color: Colors.white,
-                    size: 28,
+                    size: _cs(context, 28),
                   ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: _cs(context, 12)),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          const Text(
+                          Text(
                             'AI Chat',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 15,
+                              fontSize: 15 * s,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(width: 6),
+                          SizedBox(width: _cs(context, 6)),
                           Container(
-                            width: 8,
-                            height: 8,
+                            width: _cs(context, 8),
+                            height: _cs(context, 8),
                             decoration: const BoxDecoration(
                               color: Color(0xFF00E676),
                               shape: BoxShape.circle,
@@ -3437,12 +3522,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 2),
+                      SizedBox(height: _cs(context, 2)),
                       Text(
                         preview,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                        style: TextStyle(
+                          color: Colors.grey[400],
+                          fontSize: 12 * s,
+                        ),
                       ),
                     ],
                   ),
@@ -3452,14 +3540,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   children: [
                     Text(
                       timeLabel,
-                      style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                      style: TextStyle(color: Colors.grey[500], fontSize: 11 * s),
                     ),
-                    const SizedBox(height: 4),
+                    SizedBox(height: _cs(context, 4)),
                     Text(
                       'Always on',
                       style: TextStyle(
                         color: const Color(0xFF00E676),
-                        fontSize: 10,
+                        fontSize: 10 * s,
                       ),
                     ),
                   ],

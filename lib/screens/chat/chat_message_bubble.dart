@@ -4,7 +4,7 @@ import '../../models/message.dart';
 import 'audio_message_player.dart';
 import 'contact_card_widget.dart';
 
-class ChatMessageBubble extends StatelessWidget {
+class ChatMessageBubble extends StatefulWidget {
   const ChatMessageBubble({
     super.key,
     required this.message,
@@ -15,6 +15,7 @@ class ChatMessageBubble extends StatelessWidget {
     required this.messageReactions,
     required this.messageTranslations,
     required this.onTapUp,
+    this.onDoubleTap,
     required this.onLongPress,
     required this.onShowReactionPicker,
     required this.onOpenMediaViewer,
@@ -37,6 +38,7 @@ class ChatMessageBubble extends StatelessWidget {
   final Map<int, Map<String, Set<String>>> messageReactions;
   final Map<int, String> messageTranslations;
   final void Function(TapUpDetails details) onTapUp;
+  final VoidCallback? onDoubleTap;
   final VoidCallback onLongPress;
   final void Function(BuildContext context, int messageId, Offset position)
       onShowReactionPicker;
@@ -56,41 +58,46 @@ class ChatMessageBubble extends StatelessWidget {
   final Widget Function(String status, double scale) buildStatusIndicator;
 
   @override
+  State<ChatMessageBubble> createState() => _ChatMessageBubbleState();
+}
+
+class _ChatMessageBubbleState extends State<ChatMessageBubble> {
+  @override
   Widget build(BuildContext context) {
     final maxBubbleWidth = MediaQuery.of(context).size.width *
-      (scale < 0.9 ? 0.82 : 0.70);
+      (widget.scale < 0.9 ? 0.82 : 0.70);
     final int imageCacheWidth = ((maxBubbleWidth *
           MediaQuery.of(context).devicePixelRatio)
         .round()
         .clamp(320, 2048))
       as int;
-    final bool isImage = message.messageType == 'image' ||
-        (message.fileType?.startsWith('image/') ?? false);
-    final bool isVideo = message.messageType == 'video' ||
-        (message.fileType?.startsWith('video/') ?? false);
-    final bool isAudio = message.messageType == 'voice' ||
-        message.messageType == 'audio' ||
-        (message.fileType?.startsWith('audio/') ?? false);
+    final bool isImage = widget.message.messageType == 'image' ||
+        (widget.message.fileType?.startsWith('image/') ?? false);
+    final bool isVideo = widget.message.messageType == 'video' ||
+        (widget.message.fileType?.startsWith('video/') ?? false);
+    final bool isAudio = widget.message.messageType == 'voice' ||
+        widget.message.messageType == 'audio' ||
+        (widget.message.fileType?.startsWith('audio/') ?? false);
     final bool isMedia = isImage || isVideo;
-    final bool isContact = message.messageType == 'contact';
+    final bool isContact = widget.message.messageType == 'contact';
     final bool isGenericFile =
         (!isMedia && !isAudio && !isContact) &&
-            ((message.messageType == 'file' ||
-                    message.messageType == 'document') ||
-                (message.fileUrl != null && message.fileUrl!.isNotEmpty));
+            ((widget.message.messageType == 'file' ||
+                widget.message.messageType == 'document') ||
+              (widget.message.fileUrl != null && widget.message.fileUrl!.isNotEmpty));
     final bool canSaveAttachment =
-      message.fileUrl != null &&
-      message.fileUrl!.isNotEmpty &&
+          widget.message.fileUrl != null &&
+          widget.message.fileUrl!.isNotEmpty &&
       (isMedia || isAudio || isGenericFile);
 
     final hasReactions =
-        messageReactions[message.id] != null &&
-            messageReactions[message.id]!.isNotEmpty;
-    final isTaskMessage = message.isTask;
-    final bool isTaskCompleted = message.taskCompletedAt != null;
+          widget.messageReactions[widget.message.id] != null &&
+            widget.messageReactions[widget.message.id]!.isNotEmpty;
+        final isTaskMessage = widget.message.isTask;
+        final bool isTaskCompleted = widget.message.taskCompletedAt != null;
     final bool isPinnedExcalidraw =
-        canQuickToggleExcalidrawPin(message) &&
-            message.excalidrawPinnedAt != null;
+          widget.canQuickToggleExcalidrawPin(widget.message) &&
+            widget.message.excalidrawPinnedAt != null;
     const excalidrawAccentColor = Color(0xFFB794F6);
     final taskAccentColor = isTaskCompleted
         ? const Color(0xFF22C55E)
@@ -101,16 +108,17 @@ class ChatMessageBubble extends StatelessWidget {
 
     final bubbleWidget = GestureDetector(
       onTapUp: (details) {
-        onTapUp(details);
+        widget.onTapUp(details);
       },
-      onLongPress: onLongPress,
+      onDoubleTap: widget.onDoubleTap,
+      onLongPress: widget.onLongPress,
       child: Container(
         margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
         constraints: BoxConstraints(
           maxWidth: maxBubbleWidth,
         ),
         decoration: BoxDecoration(
-          color: isSentByMe ? const Color(0xFF420796) : const Color(0xFF3944BC),
+          color: widget.isSentByMe ? const Color(0xFF420796) : const Color(0xFF3944BC),
           border: bubbleAccentColor != null
               ? Border.all(
                   color: bubbleAccentColor.withValues(alpha:  0.85),
@@ -129,68 +137,68 @@ class ChatMessageBubble extends StatelessWidget {
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(16),
             topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isSentByMe ? 16 : 4),
-            bottomRight: Radius.circular(isSentByMe ? 4 : 16),
+            bottomLeft: Radius.circular(widget.isSentByMe ? 16 : 4),
+            bottomRight: Radius.circular(widget.isSentByMe ? 4 : 16),
           ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (isPinnedExcalidraw)
-              _buildPinnedExcalidrawLabel(scale, excalidrawAccentColor),
-            if (message.replyToId != null || message.replyPreview != null)
-              _buildReplyPreview(message, scale),
-            if (isMedia && message.fileUrl != null)
-              _buildMediaContent(isImage, isVideo, message, imageCacheWidth),
-            if (isAudio && message.fileUrl != null)
+              _buildPinnedExcalidrawLabel(widget.scale, excalidrawAccentColor),
+            if (widget.message.replyToId != null || widget.message.replyPreview != null)
+              _buildReplyPreview(widget.message, widget.scale),
+            if (isMedia && widget.message.fileUrl != null)
+              _buildMediaContent(isImage, isVideo, widget.message, imageCacheWidth),
+            if (isAudio && widget.message.fileUrl != null)
               AudioMessagePlayer(
-                audioUrl: message.fileUrl!,
-                fileSize: message.fileSize,
+                audioUrl: widget.message.fileUrl!,
+                fileSize: widget.message.fileSize,
               ),
             if (isContact)
               ContactCardWidget(
-                vcard: message.content,
-                isSentByMe: isSentByMe,
+                vcard: widget.message.content,
+                isSentByMe: widget.isSentByMe,
               ),
             if (isGenericFile)
-              _buildGenericFileContent(message, taskAccentColor, scale),
+              _buildGenericFileContent(widget.message, taskAccentColor, widget.scale),
             if (!isContact &&
                 ((!isMedia && !isAudio && !isGenericFile) ||
-                    (message.content.isNotEmpty &&
-                        !isOnlyFilename(message.content) &&
+                    (widget.message.content.isNotEmpty &&
+                        !widget.isOnlyFilename(widget.message.content) &&
                         !isAudio &&
                         !isGenericFile)))
               _buildTextContent(
-                message,
+                widget.message,
                 isTaskMessage,
                 taskAccentColor,
-                scale,
+                widget.scale,
               )
             else if (isMedia || isAudio)
               const SizedBox(height: 8),
-            if (isSentByMe)
+            if (widget.isSentByMe)
               _buildSentStatusRow(
-                message,
-                scale,
+                widget.message,
+                widget.scale,
                 canSaveAttachment: canSaveAttachment,
               )
             else
               _buildIncomingTimeRow(
-                message,
-                scale,
+                widget.message,
+                widget.scale,
                 canSaveAttachment: canSaveAttachment,
               ),
-            if (showTimestamps)
+            if (widget.showTimestamps)
               Padding(
                 padding: EdgeInsets.symmetric(
-                  horizontal: 16 * scale,
-                  vertical: 6 * scale,
+                  horizontal: 16 * widget.scale,
+                  vertical: 6 * widget.scale,
                 ),
                 child: Text(
-                  message.formattedTimestampFull,
+                  widget.message.formattedTimestampFull,
                   style: TextStyle(
                     color: const Color(0xFFFF69B4),
-                    fontSize: 12 * scale,
+                    fontSize: 12 * widget.scale,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -203,14 +211,14 @@ class ChatMessageBubble extends StatelessWidget {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 150),
       curve: Curves.easeOut,
-      color: isSelected
+      color: widget.isSelected
           ? Colors.white.withValues(alpha:  0.07)
           : Colors.transparent,
       child: Align(
-        alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
+        alignment: widget.isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
         child: Column(
           crossAxisAlignment:
-              isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              widget.isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
             Builder(
@@ -220,21 +228,21 @@ class ChatMessageBubble extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     bubbleWidget,
-                    if (!isSentByMe)
+                    if (!widget.isSentByMe)
                       GestureDetector(
                         onTap: () {
                           final renderBox = rowContext.findRenderObject() as RenderBox?;
                           if (renderBox != null) {
                             final position = renderBox.localToGlobal(Offset.zero);
-                            onShowReactionPicker(context, message.id, position);
+                            widget.onShowReactionPicker(context, widget.message.id, position);
                           }
                         },
                         child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 4 * scale),
+                          padding: EdgeInsets.symmetric(horizontal: 4 * widget.scale),
                           child: Icon(
                             Icons.sentiment_satisfied_alt_outlined,
                             color: Colors.white.withValues(alpha:  0.6),
-                            size: 22 * scale,
+                            size: 22 * widget.scale,
                           ),
                         ),
                       ),
@@ -245,12 +253,12 @@ class ChatMessageBubble extends StatelessWidget {
             if (hasReactions)
               Padding(
                 padding: EdgeInsets.only(
-                  left: isSentByMe ? 0 : 8,
-                  right: isSentByMe ? 8 : 0,
+                  left: widget.isSentByMe ? 0 : 8,
+                  right: widget.isSentByMe ? 8 : 0,
                   top: 0,
                   bottom: 6,
                 ),
-                child: buildReactionPills(message.id),
+                child: widget.buildReactionPills(widget.message.id),
               ),
           ],
         ),
@@ -358,14 +366,14 @@ class ChatMessageBubble extends StatelessWidget {
       topLeft: const Radius.circular(16),
       topRight: const Radius.circular(16),
       bottomLeft: Radius.circular(
-        message.content.isNotEmpty && !isOnlyFilename(message.content)
+        message.content.isNotEmpty && !widget.isOnlyFilename(message.content)
             ? 0
-            : (isSentByMe ? 16 : 4),
+            : (widget.isSentByMe ? 16 : 4),
       ),
       bottomRight: Radius.circular(
-        message.content.isNotEmpty && !isOnlyFilename(message.content)
+        message.content.isNotEmpty && !widget.isOnlyFilename(message.content)
             ? 0
-            : (isSentByMe ? 4 : 16),
+            : (widget.isSentByMe ? 4 : 16),
       ),
     );
 
@@ -373,7 +381,7 @@ class ChatMessageBubble extends StatelessWidget {
       child: ClipRRect(
         borderRadius: borderRadius,
         child: GestureDetector(
-          onTap: () => onOpenMediaViewer(message),
+          onTap: () => widget.onOpenMediaViewer(message),
           child: AspectRatio(
             aspectRatio: mediaAspectRatio,
             child: Stack(
@@ -498,7 +506,7 @@ class ChatMessageBubble extends StatelessWidget {
                     Text(
                       message.fileUrl != null
                           ? ((message.fileSize != null && message.fileSize! > 0)
-                              ? formatFileSize(message.fileSize!)
+                            ? widget.formatFileSize(message.fileSize!)
                               : 'Unknown size')
                           : 'File not available',
                       style: TextStyle(
@@ -509,9 +517,9 @@ class ChatMessageBubble extends StatelessWidget {
                   ],
                 ),
               ),
-              if (message.fileUrl != null && isSentByMe)
+              if (message.fileUrl != null && widget.isSentByMe)
                 IconButton(
-                  onPressed: () => onOpenMessageUrl(message.fileUrl!),
+                  onPressed: () => widget.onOpenMessageUrl(message.fileUrl!),
                   icon: const Icon(
                     Icons.open_in_new,
                     color: Colors.white70,
@@ -540,12 +548,12 @@ class ChatMessageBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          buildLinkifiedMessageText(
+          widget.buildLinkifiedMessageText(
             text: isMediaDescription(message, isMedia: false),
             isTaskMessage: isTaskMessage,
             taskAccentColor: taskAccentColor,
           ),
-          if (messageTranslations.containsKey(message.id)) ...[
+          if (widget.messageTranslations.containsKey(message.id)) ...[
             const SizedBox(height: 8),
             Container(
               height: 1,
@@ -573,7 +581,7 @@ class ChatMessageBubble extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              messageTranslations[message.id]!,
+              widget.messageTranslations[message.id]!,
               style: TextStyle(
                 color: Colors.white.withValues(alpha:  0.9),
                 fontSize: 14,
@@ -613,7 +621,7 @@ class ChatMessageBubble extends StatelessWidget {
               ),
             ),
             SizedBox(width: 4 * scale),
-            buildStatusIndicator(statusForUi(message), scale),
+            widget.buildStatusIndicator(widget.statusForUi(message), scale),
           ],
         ),
       );
@@ -635,7 +643,7 @@ class ChatMessageBubble extends StatelessWidget {
             ),
           ),
           SizedBox(width: 4 * scale),
-          buildStatusIndicator(statusForUi(message), scale),
+          widget.buildStatusIndicator(widget.statusForUi(message), scale),
           const Spacer(),
           _buildFooterSaveAction(message, scale),
         ],
@@ -693,7 +701,7 @@ class ChatMessageBubble extends StatelessWidget {
 
   Widget _buildFooterSaveAction(Message message, double scale) {
     return TextButton(
-      onPressed: () => onDownloadIncomingFile(message),
+      onPressed: () => widget.onDownloadIncomingFile(message),
       style: TextButton.styleFrom(
         foregroundColor: Colors.white,
         minimumSize: Size.zero,

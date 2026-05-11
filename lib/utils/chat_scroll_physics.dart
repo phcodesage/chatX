@@ -17,7 +17,20 @@ class ChatScrollPhysics extends ScrollPhysics {
   // Flutter default is 0.015. Lower = less drag = longer glide.
   // WhatsApp-like feel sits around 0.010–0.012.
   @override
+  double get minFlingVelocity => 50.0;
+
+  @override
+  double get maxFlingVelocity => 9000.0;
+
+  @override
   double get dragStartDistanceMotionThreshold => 3.5;
+
+  // Keep momentum between repeated flings so quick successive swipes feel heavier.
+  @override
+  double carriedMomentum(double existingVelocity) {
+    final base = super.carriedMomentum(existingVelocity);
+    return base.clamp(-1600.0, 1600.0);
+  }
 
   @override
   Simulation? createBallisticSimulation(

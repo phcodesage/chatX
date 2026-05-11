@@ -19,7 +19,6 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart' hi
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:open_filex/open_filex.dart';
 import '../models/lobby_user.dart';
@@ -519,7 +518,7 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
-  Widget _buildChatShimmer() {
+  Widget _buildChatLoadingPlaceholder() {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: 6,
@@ -529,16 +528,12 @@ class _ChatScreenState extends State<ChatScreen>
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
-            child: Shimmer.fromColors(
-              baseColor: const Color(0xFF3A3A4F),
-              highlightColor: const Color(0xFF4A4A60),
-              child: Container(
-                width: 180,
-                height: 20,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                ),
+            child: Container(
+              width: 180,
+              height: 20,
+              decoration: BoxDecoration(
+                color: const Color(0xFF3A3A4F),
+                borderRadius: BorderRadius.circular(16),
               ),
             ),
           ),
@@ -674,8 +669,12 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _initialize() async {
-    _currentUserId = await StorageService.getUserId();
-    _currentUserIsAdmin = await StorageService.getIsAdmin();
+    final initResults = await Future.wait<dynamic>([
+      StorageService.getUserId(),
+      StorageService.getIsAdmin(),
+    ]);
+    _currentUserId = initResults[0] as int?;
+    _currentUserIsAdmin = initResults[1] as bool? ?? false;
 
     if (widget.initialCallInProgressOnOtherDevice) {
       _callInProgressOnOtherDevice = true;
@@ -700,22 +699,26 @@ class _ChatScreenState extends State<ChatScreen>
       baseUrl: ApiConfig.baseUrl,
     );
 
-    // Load saved chat color for this conversation partner
-    await _loadSavedChatColor();
+    _joinChatRoom();
+    _setupRealtimeListeners();
 
-    await _loadTimestampPreference();
-    await _loadAutoCorrectionPreferences();
-    await _loadStampPreference();
     await _loadCachedMessages();
-    await _loadMessages();
-    _loadPinnedExcalidrawLinks();
+
+    // Kick network refresh in background to make room switching feel instant.
+    unawaited(_loadMessages());
+
+    // Defer non-critical UI prefs and side data so first paint is fast.
+    unawaited(_loadSavedChatColor());
+    unawaited(_loadTimestampPreference());
+    unawaited(_loadAutoCorrectionPreferences());
+    unawaited(_loadStampPreference());
+    unawaited(_loadPinnedExcalidrawLinks());
+
     // Load common phrases in background
     unawaited(_loadCommonPhrases());
     // Fetch all task-marked messages for this conversation in the background
     // so the task modal shows the full count, not just the loaded page.
     unawaited(_loadConversationTasks());
-    _joinChatRoom();
-    _setupRealtimeListeners();
   }
 
   Future<void> _clearIncomingCallNotificationsForCurrentChat() async {
@@ -2605,9 +2608,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     _isLoadingMessages = true;
-    if (_isLoading) {
-      setState(() => _isLoading = true);
-    }
     try {
       debugPrint('ðŸ”„ Loading messages for user ${widget.otherUser.id}...');
       final messages = await MessageService.getConversationMessages(
@@ -4615,6 +4615,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildUnifiedActionsBar() {
     final allButtons = <Widget>[
+      // Row 1: Camera, Send File, Voice Message, Auto Correction, Translate Off, Stamp Off
       _buildCompressedActionChip(
         label: 'Camera',
         backgroundColor: const Color(0xFF3B82F6),
@@ -4636,6 +4637,13 @@ class _ChatScreenState extends State<ChatScreen>
         onPressed: _showAutoCorrectionDictionaryModal,
       ),
       _buildCompressedActionChip(
+        label: _autoTranslate ? 'Translate On' : 'Translate Off',
+        backgroundColor: _autoTranslate
+            ? const Color(0xFF059669)
+            : const Color(0xFF0891B2),
+        onPressed: _toggleAutoTranslate,
+      ),
+      _buildCompressedActionChip(
         label: _stampEnabled ? 'Stamp On' : 'Stamp Off',
         backgroundColor: _stampEnabled
             ? const Color(0xFF0F766E)
@@ -4654,6 +4662,7 @@ class _ChatScreenState extends State<ChatScreen>
           }
         },
       ),
+      // Row 2 extras (after username + paste): Change Color, [Reset Color], Export Chat, Show Timestamps, [Delete Messages]
       _buildCompressedActionChip(
         label: 'Change Color',
         backgroundColor: const Color(0xFFA855F7),
@@ -4665,13 +4674,6 @@ class _ChatScreenState extends State<ChatScreen>
           backgroundColor: const Color(0xFF6B7280),
           onPressed: _resetColor,
         ),
-      _buildCompressedActionChip(
-        label: _autoTranslate ? 'Translate On' : 'Translate Off',
-        backgroundColor: _autoTranslate
-            ? const Color(0xFF059669)
-            : const Color(0xFF0891B2),
-        onPressed: _toggleAutoTranslate,
-      ),
       _buildCompressedActionChip(
         label: 'Export Chat',
         backgroundColor: const Color(0xFF475569),
@@ -4711,14 +4713,58 @@ class _ChatScreenState extends State<ChatScreen>
     _replaceInputTextWithSanitized(newText);
   }
 
+  Future<void> _pasteFromClipboard() async {
+    // Try image first (via native channel), then fall back to plain text.
+    // Check if there's an image on the clipboard by attempting the native call.
+    try {
+      final bytes = await _fileOpsChannel.invokeMethod<Uint8List>(
+        'getClipboardImagePngBytes',
+      );
+      if (bytes != null && bytes.isNotEmpty) {
+        // Hand off to the existing image paste flow.
+        await _tryHandleClipboardImagePaste();
+        return;
+      }
+    } on PlatformException catch (e) {
+      if (e.code != 'NO_IMAGE' && e.code != 'UNAVAILABLE') {
+        debugPrint('[Paste] native image check failed: ${e.code} ${e.message}');
+      }
+    } on MissingPluginException {
+      // Native method not available — fall through to text paste.
+    } catch (e) {
+      debugPrint('[Paste] unexpected error checking clipboard image: $e');
+    }
+
+    // Fall back to plain text.
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text != null && text.isNotEmpty) {
+      final current = _messageController.text;
+      final newText = current.isEmpty ? text : '$current$text';
+      _replaceInputTextWithSanitized(newText);
+    } else if (mounted) {
+      _showTopBanner(
+        'Clipboard is empty.',
+        backgroundColor: const Color(0xFF1F2937),
+        icon: Icons.info_outline,
+        autoHideAfter: const Duration(seconds: 2),
+      );
+    }
+  }
+
   Widget _buildTwoRowActions(List<Widget> allButtons) {
-    const int itemsPerRow = 5;
+    const int itemsPerRow = 6;
     final topRow = allButtons.take(itemsPerRow).toList();
     final bottomRow = <Widget>[
       _buildCompressedActionChip(
         label: widget.otherUser.firstName,
         backgroundColor: const Color(0xFF0D9488),
         onPressed: _insertOtherUserFirstName,
+      ),
+      _buildCompressedActionChip(
+        label: 'Paste',
+        backgroundColor: const Color(0xFF7C3AED),
+        onPressed: _pasteFromClipboard,
       ),
       ...allButtons.skip(itemsPerRow),
     ];
@@ -5433,11 +5479,30 @@ class _ChatScreenState extends State<ChatScreen>
     return _partnerStatus;
   }
 
-  /// Returns a UI scale factor (0.80–1.0) so elements shrink gracefully on
-  /// small screens (< 360 dp wide) while staying full-size on normal screens.
+  /// Returns a UI scale factor that keeps large/high-DPI phones visually
+  /// compact while preserving readability on smaller displays.
   double _uiScale(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    return (width / 411.0).clamp(0.78, 1.0);
+    final media = MediaQuery.of(context);
+    final width = media.size.width;
+    final dpr = media.devicePixelRatio;
+
+    var scale = (width / 411.0).clamp(0.76, 1.0);
+
+    if (width >= 480) {
+      scale = scale * 0.88;
+    } else if (width >= 430) {
+      scale = scale * 0.91;
+    } else if (width >= 390) {
+      scale = scale * 0.95;
+    }
+
+    if (dpr >= 4.0) {
+      scale = scale * 0.95;
+    } else if (dpr >= 3.5) {
+      scale = scale * 0.97;
+    }
+
+    return scale.clamp(0.74, 1.0);
   }
 
   void _clearIncomingCallNotificationsForPeer({String? callRoomId}) {
@@ -8439,6 +8504,9 @@ class _ChatScreenState extends State<ChatScreen>
           autoHideAfter: const Duration(seconds: 2),
         );
 
+        // Refocus the text input field after sending voice message
+        unawaited(_hideSystemKeyboardPreservingFocus());
+
         // Clean up recording file
         try {
           await file.delete();
@@ -8555,6 +8623,9 @@ class _ChatScreenState extends State<ChatScreen>
           icon: Icons.check_circle_outline,
           autoHideAfter: const Duration(seconds: 2),
         );
+
+        // Refocus the text input field after sending image
+        unawaited(_hideSystemKeyboardPreservingFocus());
       } else {
         throw Exception(result?['error'] ?? 'Upload failed');
       }
@@ -8669,7 +8740,7 @@ class _ChatScreenState extends State<ChatScreen>
                         hasMoreMessages: _hasMoreMessages,
                         isLoadingMore: _isLoadingMore,
                         onLoadMoreMessages: _loadMoreMessages,
-                        loadingWidgetBuilder: (_) => _buildChatShimmer(),
+                        loadingWidgetBuilder: (_) => _buildChatLoadingPlaceholder(),
                         itemBuilder: (context, index) {
                       // "Load more" button is handled inside ChatMessageList.
                       final message = _messages[index];
@@ -12179,6 +12250,8 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildMessageBubble(Message message, bool isSentByMe) {
     final scale = _uiScale(context);
+    final canDoubleTapEdit =
+        isSentByMe && message.messageType == 'text' && !message.isDeleted;
 
     return ChatMessageBubble(
       message: message,
@@ -12190,6 +12263,9 @@ class _ChatScreenState extends State<ChatScreen>
       messageTranslations: _messageTranslations,
       onTapUp: (details) =>
           _toggleTaskActionForMessage(message, details.globalPosition),
+        onDoubleTap: canDoubleTapEdit
+          ? () => _showEditMessageDialog(message)
+          : null,
       onLongPress: () => _showMessageContextMenu(message, isSentByMe),
       onShowReactionPicker: _showReactionPicker,
       onOpenMediaViewer: _openMediaViewer,
