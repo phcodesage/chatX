@@ -13,11 +13,16 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
+import '../models/link_preview.dart';
+import '../services/link_preview_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
 import '../utils/chat_scroll_physics.dart';
 import '../widgets/reaction_picker.dart';
 import '../widgets/chat_composer_shell.dart';
+import '../widgets/youtube_preview_card.dart';
+import '../widgets/link_preview_card.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AiChatScreen extends StatefulWidget {
   final String? initialPrompt;
@@ -2058,114 +2063,256 @@ class _AiChatScreenState extends State<AiChatScreen> {
     final hasReactions =
         _messageReactions[messageId] != null && _messageReactions[messageId]!.isNotEmpty;
 
-    final bubbleWidget = GestureDetector(
-      onLongPress: () => _showMessageContextMenu(message, isUser),
-      child: Container(
-        margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.70,
-        ),
-        decoration: BoxDecoration(
-          color: isUser ? const Color(0xFF420796) : const Color(0xFF3944BC),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isUser ? 16 : 4),
-            bottomRight: Radius.circular(isUser ? 4 : 16),
-          ),
-        ),
+    return _AiMessageBubble(
+      message: message,
+      showTimestamps: _showTimestamps,
+      buildBubbleContent: (LinkPreview? linkPreview) => Align(
+        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: _buildFormattedContent(
-                message['content'] ?? '',
-                isUser: isUser,
-              ),
-            ),
-            if (isUser)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
+            Builder(
+              builder: (rowContext) {
+                return Row(
                   mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.end,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(
-                      timestamp,
-                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    GestureDetector(
+                      onLongPress: () => _showMessageContextMenu(message, isUser),
+                      child: Container(
+                        margin: EdgeInsets.only(bottom: hasReactions ? 2 : 12),
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(context).size.width * 0.70,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isUser ? const Color(0xFF420796) : const Color(0xFF3944BC),
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(16),
+                            topRight: const Radius.circular(16),
+                            bottomLeft: Radius.circular(isUser ? 16 : 4),
+                            bottomRight: Radius.circular(isUser ? 4 : 16),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              child: _buildFormattedContent(
+                                message['content'] ?? '',
+                                isUser: isUser,
+                              ),
+                            ),
+                            // Link preview — inside the bubble
+                            if (linkPreview != null)
+                              _buildInlineLinkPreview(linkPreview, isUser),
+                            if (isUser)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      timestamp,
+                                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Icon(
+                                      Icons.done_all,
+                                      size: 16,
+                                      color: Color(0xFF00BCD4),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (_showTimestamps)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                                child: Text(
+                                  fullTimestamp,
+                                  style: const TextStyle(
+                                    color: Color(0xFFFF69B4),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
-                    const SizedBox(width: 4),
-                    const Icon(
-                      Icons.done_all,
-                      size: 16,
-                      color: Color(0xFF00BCD4),
-                    ),
+                    if (!isUser)
+                      GestureDetector(
+                        onTapDown: (details) {
+                          _showReactionPicker(
+                            context,
+                            messageId,
+                            details.globalPosition,
+                          );
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: Icon(
+                            Icons.sentiment_satisfied_alt_outlined,
+                            color: Colors.white.withValues(alpha: 0.6),
+                            size: 22,
+                          ),
+                        ),
+                      ),
                   ],
-                ),
-              ),
-            if (_showTimestamps)
+                );
+              },
+            ),
+            if (hasReactions)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Text(
-                  fullTimestamp,
-                  style: const TextStyle(
-                    color: Color(0xFFFF69B4),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
+                padding: EdgeInsets.only(
+                  left: isUser ? 0 : 8,
+                  right: isUser ? 8 : 0,
+                  bottom: 6,
                 ),
+                child: _buildReactionPills(messageId),
               ),
           ],
         ),
       ),
     );
+  }
 
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+  /// Renders link preview content inline inside the AI bubble container.
+  Widget _buildInlineLinkPreview(LinkPreview preview, bool isUser) {
+    if (preview.isYouTube) {
+      final uri = Uri.tryParse(preview.imageUrl ?? '');
+      final segments = uri?.pathSegments ?? [];
+      final videoId = (segments.length >= 2 && segments[0] == 'vi') ? segments[1] : '';
+      if (videoId.isEmpty) return const SizedBox.shrink();
+
+      final watchUrl = 'https://www.youtube.com/watch?v=$videoId';
+      final thumbUrl = 'https://img.youtube.com/vi/$videoId/hqdefault.jpg';
+      final fallbackUrl = 'https://img.youtube.com/vi/$videoId/mqdefault.jpg';
+
+      return GestureDetector(
+        onTap: () async {
+          try {
+            final u = Uri.parse(watchUrl);
+            // ignore: deprecated_member_use
+            if (await canLaunchUrl(u)) await launchUrl(u, mode: LaunchMode.externalApplication);
+          } catch (_) {}
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.network(
+                    thumbUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Image.network(
+                      fallbackUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(color: Colors.grey[850]),
+                    ),
+                  ),
+                  Center(
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.play_arrow, color: Colors.white, size: 30),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.play_circle_fill, color: Color(0xFFFF0000), size: 12),
+                      SizedBox(width: 4),
+                      Text('YouTube', style: TextStyle(color: Color(0xFFFF0000), fontSize: 10, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                  if (preview.title != null && preview.title!.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      preview.title!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600, height: 1.3),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // General OG preview
+    final domain = (Uri.tryParse(preview.url)?.host ?? preview.url).replaceFirst('www.', '').toUpperCase();
+    return GestureDetector(
+      onTap: () async {
+        try {
+          final u = Uri.parse(preview.url);
+          // ignore: deprecated_member_use
+          if (await canLaunchUrl(u)) await launchUrl(u, mode: LaunchMode.externalApplication);
+        } catch (_) {}
+      },
       child: Column(
-        crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Builder(
-            builder: (rowContext) {
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  bubbleWidget,
-                  if (!isUser)
-                    GestureDetector(
-                      onTapDown: (details) {
-                        // Use the exact tap position for stable overlay placement.
-                        _showReactionPicker(
-                          context,
-                          messageId,
-                          details.globalPosition,
-                        );
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: Icon(
-                          Icons.sentiment_satisfied_alt_outlined,
-                          color: Colors.white.withValues(alpha: 0.6),
-                          size: 22,
-                        ),
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-          if (hasReactions)
-            Padding(
-              padding: EdgeInsets.only(
-                left: isUser ? 0 : 8,
-                right: isUser ? 8 : 0,
-                bottom: 6,
+          if (preview.imageUrl != null)
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Image.network(
+                preview.imageUrl!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
               ),
-              child: _buildReactionPills(messageId),
             ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (preview.faviconUrl != null) ...[
+                      Image.network(preview.faviconUrl!, width: 12, height: 12, errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+                      const SizedBox(width: 4),
+                    ],
+                    Flexible(child: Text(domain, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFFa78bfa), fontSize: 10, fontWeight: FontWeight.w600))),
+                  ],
+                ),
+                if (preview.title != null && preview.title!.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(preview.title!, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600, height: 1.35)),
+                ],
+                if (preview.description != null && preview.description!.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(preview.description!, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 11, height: 1.4)),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -2771,5 +2918,50 @@ class _ThinkingDotsState extends State<_ThinkingDots>
         );
       },
     );
+  }
+}
+
+/// Wraps an AI chat bubble with async link preview fetching.
+class _AiMessageBubble extends StatefulWidget {
+  final Map<String, String> message;
+  final bool showTimestamps;
+  final Widget Function(LinkPreview? linkPreview) buildBubbleContent;
+
+  const _AiMessageBubble({
+    required this.message,
+    required this.showTimestamps,
+    required this.buildBubbleContent,
+  });
+
+  @override
+  State<_AiMessageBubble> createState() => _AiMessageBubbleState();
+}
+
+class _AiMessageBubbleState extends State<_AiMessageBubble> {
+  LinkPreview? _linkPreview;
+  bool _previewLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPreview();
+  }
+
+  Future<void> _fetchPreview() async {
+    final content = widget.message['content'] ?? '';
+    final preview = await LinkPreviewService().getPreview(content);
+    if (mounted) {
+      setState(() {
+        _linkPreview = preview;
+        _previewLoaded = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Pass the preview (or null while loading) into the bubble builder so it
+    // renders inside the bubble container rather than as a separate card.
+    return widget.buildBubbleContent(_previewLoaded ? _linkPreview : null);
   }
 }

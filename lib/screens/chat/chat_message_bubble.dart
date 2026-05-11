@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../models/link_preview.dart';
 import '../../models/message.dart';
+import '../../services/link_preview_service.dart';
+import '../../widgets/link_preview_card.dart';
+import '../../widgets/youtube_preview_card.dart';
 import 'audio_message_player.dart';
 import 'contact_card_widget.dart';
 
@@ -62,6 +67,40 @@ class ChatMessageBubble extends StatefulWidget {
 }
 
 class _ChatMessageBubbleState extends State<ChatMessageBubble> {
+  LinkPreview? _linkPreview;
+  bool _previewLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Only fetch previews for non-deleted text messages
+    if (widget.message.messageType == 'text' && !widget.message.isDeleted) {
+      _fetchPreview();
+    }
+  }
+
+  Future<void> _fetchPreview() async {
+    final preview = await LinkPreviewService().getPreview(widget.message.content);
+    if (mounted) {
+      setState(() {
+        _linkPreview = preview;
+        _previewLoaded = true;
+      });
+    }
+  }
+
+  String _extractYouTubeIdFromThumbnail(String thumbnailUrl) {
+    // URL format: https://img.youtube.com/vi/{videoId}/hqdefault.jpg
+    final uri = Uri.tryParse(thumbnailUrl);
+    if (uri == null) return '';
+    final segments = uri.pathSegments;
+    // pathSegments for /vi/{videoId}/hqdefault.jpg → ['vi', '{videoId}', 'hqdefault.jpg']
+    if (segments.length >= 2 && segments[0] == 'vi') {
+      return segments[1];
+    }
+    return '';
+  }
+
   @override
   Widget build(BuildContext context) {
     final maxBubbleWidth = MediaQuery.of(context).size.width *
@@ -176,6 +215,9 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
               )
             else if (isMedia || isAudio)
               const SizedBox(height: 8),
+            // Link preview card — rendered inside the bubble, above the status row
+            if (_previewLoaded && _linkPreview != null)
+              _buildInlineLinkPreview(_linkPreview!),
             if (widget.isSentByMe)
               _buildSentStatusRow(
                 widget.message,
@@ -596,6 +638,209 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
 
   String isMediaDescription(Message message, {required bool isMedia}) {
     return message.content;
+  }
+
+  /// Renders the link preview content inline inside the bubble container.
+  /// No separate card background — the bubble itself is the container.
+  Widget _buildInlineLinkPreview(LinkPreview preview) {
+    final scale = widget.scale;
+    if (preview.isYouTube) {
+      final videoId = _extractYouTubeIdFromThumbnail(preview.imageUrl ?? '');
+      if (videoId.isEmpty) return const SizedBox.shrink();
+      return _buildInlineYouTubePreview(videoId, preview.title, scale);
+    }
+    return _buildInlineOgPreview(preview, scale);
+  }
+
+  Widget _buildInlineYouTubePreview(String videoId, String? title, double scale) {
+    final thumbUrl = 'https://img.youtube.com/vi/$videoId/hqdefault.jpg';
+    final fallbackUrl = 'https://img.youtube.com/vi/$videoId/mqdefault.jpg';
+    final watchUrl = 'https://www.youtube.com/watch?v=$videoId';
+
+    return GestureDetector(
+      onTap: () async {
+        try {
+          final uri = Uri.parse(watchUrl);
+          // ignore: deprecated_member_use
+          if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (_) {}
+      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Thumbnail with play overlay — flush to bubble edges
+          ClipRRect(
+            borderRadius: BorderRadius.zero,
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.network(
+                    thumbUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Image.network(
+                      fallbackUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(color: Colors.grey[850]),
+                    ),
+                  ),
+                  Center(
+                    child: Container(
+                      width: 48 * scale,
+                      height: 48 * scale,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.6),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.play_arrow, color: Colors.white, size: 30 * scale),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // YouTube branding + title
+          Padding(
+            padding: EdgeInsets.fromLTRB(12 * scale, 6 * scale, 12 * scale, 4 * scale),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.play_circle_fill, color: const Color(0xFFFF0000), size: 12 * scale),
+                    SizedBox(width: 4 * scale),
+                    Text(
+                      'YouTube',
+                      style: TextStyle(
+                        color: const Color(0xFFFF0000),
+                        fontSize: 10 * scale,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ],
+                ),
+                if (title != null && title.isNotEmpty) ...[
+                  SizedBox(height: 2 * scale),
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12 * scale,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInlineOgPreview(LinkPreview preview, double scale) {
+    final domain = (Uri.tryParse(preview.url)?.host ?? preview.url)
+        .replaceFirst('www.', '')
+        .toUpperCase();
+
+    return GestureDetector(
+      onTap: () async {
+        try {
+          final uri = Uri.parse(preview.url);
+          // ignore: deprecated_member_use
+          if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (_) {}
+      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // OG image — flush to bubble edges
+          if (preview.imageUrl != null)
+            ClipRRect(
+              borderRadius: BorderRadius.zero,
+              child: AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Image.network(
+                  preview.imageUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          // Domain + title + description
+          Padding(
+            padding: EdgeInsets.fromLTRB(12 * scale, 6 * scale, 12 * scale, 4 * scale),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (preview.faviconUrl != null) ...[
+                      Image.network(
+                        preview.faviconUrl!,
+                        width: 12 * scale,
+                        height: 12 * scale,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                      SizedBox(width: 4 * scale),
+                    ],
+                    Flexible(
+                      child: Text(
+                        domain,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: const Color(0xFFa78bfa),
+                          fontSize: 10 * scale,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (preview.title != null && preview.title!.isNotEmpty) ...[
+                  SizedBox(height: 3 * scale),
+                  Text(
+                    preview.title!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12 * scale,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+                if (preview.description != null && preview.description!.isNotEmpty) ...[
+                  SizedBox(height: 2 * scale),
+                  Text(
+                    preview.description!,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 11 * scale,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildSentStatusRow(

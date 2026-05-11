@@ -97,4 +97,10 @@ class ApiConfig {
   // Translation endpoints
   static const String translateMessageUrl =
       '$baseUrl$mobilePrefix/translate_message';
+
+  // Link preview endpoints
+  static String get linkPreviewUrl {
+    final base = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+    return '$base/api/link_preview';
+  }
 }
