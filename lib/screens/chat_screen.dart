@@ -254,6 +254,9 @@ class _ChatScreenState extends State<ChatScreen>
   // Reply state
   Message? _replyingToMessage;
 
+  // Edit state
+  Message? _editingMessage;
+
   // Reaction state: { messageId: { emoji: Set<userId> } }
   final Map<int, Map<String, Set<String>>> _messageReactions = {};
 
@@ -3730,6 +3733,17 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _sendMessage() async {
+    // ── EDIT MODE ──────────────────────────────────────────────
+    if (_editingMessage != null) {
+      final editTarget = _editingMessage!;
+      final newContent = _messageController.text.trim();
+      if (newContent.isNotEmpty && newContent != editTarget.content) {
+        _editMessage(editTarget, newContent);
+      }
+      _clearEdit();
+      return;
+    }
+    // ── NORMAL SEND MODE (unchanged below) ────────────────────
     final rawContent = _withStampPrefix(_messageController.text);
     final content = _applyAutoCorrectionOnSend(rawContent);
     if (rawContent != content) {
@@ -8935,6 +8949,7 @@ class _ChatScreenState extends State<ChatScreen>
                         padding: padding,
                       ),
                       isComposerMultiline: _isComposerMultiline,
+                      editPreview: _buildEditPreview(),
                       replyPreview: _buildReplyPreview(),
                       sendToManyQuickAction: _buildSendToManyQuickAction(),
                       unifiedActionsBar: _buildUnifiedActionsBar(),
@@ -8967,6 +8982,69 @@ class _ChatScreenState extends State<ChatScreen>
     });
     // Give haptic feedback
     _inputFocusNode.requestFocus();
+  }
+
+  /// Clear edit state
+  void _clearEdit() {
+    setState(() {
+      _editingMessage = null;
+    });
+    _messageController.clear();
+  }
+
+  /// Start inline edit mode for a message
+  void _startInlineEdit(Message message) {
+    // Draft protection: if composer has unsent text, prompt before overwriting
+    if (_messageController.text.trim().isNotEmpty) {
+      _confirmDiscardDraftThenEdit(message);
+      return;
+    }
+    setState(() {
+      _editingMessage = message;
+      _replyingToMessage = null; // edit and reply modes are mutually exclusive
+    });
+    _messageController.text = message.content;
+    // Place cursor at end
+    _messageController.selection = TextSelection.collapsed(
+      offset: message.content.length,
+    );
+    _inputFocusNode.requestFocus();
+  }
+
+  /// Show confirmation dialog before discarding a draft to start an edit
+  void _confirmDiscardDraftThenEdit(Message message) {
+    showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2E),
+        title: const Text(
+          'Discard draft?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'You have unsent text. Discard it and edit this message instead?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep draft', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF420796),
+            ),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    ).then((confirmed) {
+      if (confirmed == true && mounted) {
+        _messageController.clear();
+        _startInlineEdit(message);
+      }
+    });
   }
 
   /// Build swipeable message wrapper with slide animation
@@ -9279,7 +9357,7 @@ class _ChatScreenState extends State<ChatScreen>
                   onTap: () {
                     closeWithAction(
                       sheetContext,
-                      () => _showEditMessageDialog(message),
+                      () => _startInlineEdit(message),
                     );
                   },
                 ),
@@ -9543,62 +9621,6 @@ class _ChatScreenState extends State<ChatScreen>
         backgroundColor: Color(0xFF4CAF50),
       ),
     );
-  }
-
-  /// Show edit message dialog
-  void _showEditMessageDialog(Message message) {
-    final editController = TextEditingController(text: message.content);
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text(
-          'Edit Message',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: TextField(
-          controller: editController,
-          style: const TextStyle(color: Colors.white),
-          maxLines: 5,
-          minLines: 1,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: 'Edit your message...',
-            hintStyle: TextStyle(color: Colors.grey[500]),
-            filled: true,
-            fillColor: const Color(0xFF252542),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final newContent = editController.text.trim();
-              if (newContent.isNotEmpty && newContent != message.content) {
-                Navigator.pop(context);
-                _editMessage(message, newContent);
-              } else {
-                Navigator.pop(context);
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF420796),
-            ),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    editController.dispose;
   }
 
   /// Edit message via socket
@@ -11979,6 +12001,63 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Build edit preview widget (shown above input when editing a message)
+  Widget _buildEditPreview() {
+    if (_editingMessage == null) return const SizedBox.shrink();
+
+    final message = _editingMessage!;
+    final content = message.content.length > 50
+        ? '${message.content.substring(0, 50)}...'
+        : message.content;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2D2D44),
+        borderRadius: BorderRadius.circular(8),
+        border: const Border(
+          left: BorderSide(color: Color(0xFF7C3AED), width: 4),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.edit_rounded, color: Color(0xFF7C3AED), size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Editing message',
+                  style: TextStyle(
+                    color: Color(0xFF7C3AED),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  content,
+                  style: TextStyle(color: Colors.grey[400], fontSize: 13),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: _clearEdit,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              child: const Icon(Icons.close, color: Colors.grey, size: 18),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Check if two timestamps are on the same day
   bool _isSameDay(String timestamp1, String timestamp2) {
     try {
@@ -12264,7 +12343,7 @@ class _ChatScreenState extends State<ChatScreen>
       onTapUp: (details) =>
           _toggleTaskActionForMessage(message, details.globalPosition),
         onDoubleTap: canDoubleTapEdit
-          ? () => _showEditMessageDialog(message)
+          ? () => _startInlineEdit(message)
           : null,
       onLongPress: () => _showMessageContextMenu(message, isSentByMe),
       onShowReactionPicker: _showReactionPicker,

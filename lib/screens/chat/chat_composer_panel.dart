@@ -24,6 +24,7 @@ class ChatComposerPanel extends StatelessWidget {
     required this.compactSelectionControls,
     required this.buildDoorbellComposerButton,
     required this.isComposerMultiline,
+    required this.editPreview,
     required this.replyPreview,
     required this.sendToManyQuickAction,
     required this.unifiedActionsBar,
@@ -46,6 +47,7 @@ class ChatComposerPanel extends StatelessWidget {
   final TextSelectionControls compactSelectionControls;
   final Widget Function({required bool showLabel, required double iconSize, required EdgeInsets padding}) buildDoorbellComposerButton;
   final bool Function(String, TextStyle, double) isComposerMultiline;
+  final Widget editPreview;
   final Widget replyPreview;
   final Widget sendToManyQuickAction;
   final Widget unifiedActionsBar;
@@ -66,6 +68,7 @@ class ChatComposerPanel extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            editPreview,
             replyPreview,
             sendToManyQuickAction,
             if (!showEmojiPicker) unifiedActionsBar,
