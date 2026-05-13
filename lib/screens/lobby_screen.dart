@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/lobby_user.dart';
 import '../models/group.dart';
 import '../models/message.dart';
+import '../services/background_update_service.dart';
 import '../services/lobby_service.dart';
 import '../services/group_service.dart';
 import '../services/auth_service.dart';
@@ -106,6 +107,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _setupShortcutLaunchListener();
     unawaited(_loadDeferredUpdateEntry());
     VersionService.deferredUpdateSignal.addListener(_handleDeferredUpdateSignal);
+    // Listen for background download state changes (downloading / ready)
+    BackgroundUpdateService().state.addListener(_handleBgUpdateStateChange);
+    // Listen for in-app "Update available" prompt
+    BackgroundUpdateService().pendingInAppPrompt.addListener(_handleInAppPrompt);
+    // Handle any existing background update state (e.g. restored from persistence)
+    _handleBgUpdateStateChange();
     // Periodically refresh "last seen" relative labels (like the web app does)
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted) setState(() {});
@@ -119,6 +126,117 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _startPendingNotificationRetryWindow();
   }
 
+  void _handleBgUpdateStateChange() {
+    if (mounted) setState(() {});
+  }
+
+  /// Fires when BackgroundUpdateService emits a pending in-app prompt.
+  void _handleInAppPrompt() {
+    final prompt = BackgroundUpdateService().pendingInAppPrompt.value;
+    if (prompt == null || !mounted) return;
+    // Clear it immediately so it only shows once
+    BackgroundUpdateService().pendingInAppPrompt.value = null;
+    _showUpdateDialog(prompt);
+  }
+
+  /// Shows a modal dialog with [Download Now] and [Later] buttons.
+  /// The dialog cannot be dismissed by tapping outside — the user must choose.
+  Future<void> _showUpdateDialog(InAppUpdatePrompt prompt) async {
+    final version = prompt.info.version;
+    final releaseNotes = prompt.info.releaseNotes;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E1E2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              const Icon(Icons.system_update_alt_rounded, color: Color(0xFF00D9FF), size: 28),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Update v$version Available',
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'A new version of the app is ready.',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              if (releaseNotes.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  "What's new:",
+                  style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 120),
+                  child: SingleChildScrollView(
+                    child: Text(
+                      releaseNotes,
+                      style: const TextStyle(color: Colors.white60, fontSize: 13),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                // Defer the update — save payload so the lobby badge stays visible
+                VersionService().deferUpdatePayload({
+                  'version': prompt.info.version,
+                  'build_number': prompt.info.buildNumber,
+                  'download_url': prompt.downloadUrl,
+                  'force_update': prompt.info.forceUpdate,
+                  'release_notes': prompt.info.releaseNotes,
+                });
+                unawaited(_loadDeferredUpdateEntry());
+              },
+              child: const Text(
+                'Later',
+                style: TextStyle(color: Colors.white54, fontSize: 14),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(dialogContext).pop();
+                await BackgroundUpdateService().startBackgroundDownload(
+                  prompt.info,
+                  prompt.downloadUrl,
+                );
+                // Clear the deferred payload — download is now managed by BackgroundUpdateService
+                await VersionService().clearDeferredUpdatePayload();
+                await _loadDeferredUpdateEntry();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00D9FF),
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: const Text(
+                'Download Now',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _loadDeferredUpdateEntry() async {
     final payload = await VersionService().getDeferredUpdatePayloadIfRelevant();
     if (!mounted) return;
@@ -127,12 +245,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
   }
 
+  /// Called when the user taps the update icon in the idle ("update available") state.
+  /// Brings up the modal dialog so the user can choose to update or defer.
   Future<void> _openDeferredUpdatePrompt() async {
     final payload = _deferredUpdatePayload;
-    if (payload == null) {
-      return;
+    if (payload == null) return;
+
+    try {
+      final info = AppVersionInfo.fromJson(payload);
+      final resolvedUrl = payload['download_url']?.toString().trim() ?? '';
+      if (info.version.isNotEmpty && resolvedUrl.isNotEmpty) {
+        // Bring up the modal again instead of starting download immediately
+        _showUpdateDialog(InAppUpdatePrompt(info: info, downloadUrl: resolvedUrl));
+        return;
+      }
+    } catch (e) {
+      debugPrint('Failed to show update dialog from deferred payload: $e');
     }
 
+    // Fallback: show the dialog if we couldn't start the background download
     await VersionService().promptUpdateFromPush(context, payload);
     await _loadDeferredUpdateEntry();
   }
@@ -141,7 +272,57 @@ class _LobbyScreenState extends State<LobbyScreen> {
     unawaited(_loadDeferredUpdateEntry());
   }
 
+  /// Builds the update icon in the AppBar — one of three states:
+  ///   idle (deferred payload)  → cyan icon + red dot
+  ///   downloading              → spinning progress ring around icon
+  ///   readyToInstall           → pulsing green icon + green dot
   Widget _buildDeferredUpdateIndicator() {
+    final bgState = BackgroundUpdateService().state.value;
+
+    // ── Downloading state ──────────────────────────────────────────────────
+    if (bgState.status == BackgroundUpdateStatus.downloading) {
+      final progress = bgState.progress;
+      return SizedBox(
+        width: 40,
+        height: 40,
+        child: Tooltip(
+          message: 'Downloading update… ${(progress * 100).truncate()}%',
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(
+                  value: progress > 0 ? progress : null,
+                  strokeWidth: 2.5,
+                  color: const Color(0xFF00D9FF),
+                  backgroundColor: Colors.white12,
+                ),
+              ),
+              const Icon(
+                Icons.download_rounded,
+                color: Color(0xFF00D9FF),
+                size: 15,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ── Ready to install state ─────────────────────────────────────────────
+    if (bgState.status == BackgroundUpdateStatus.readyToInstall) {
+      final version = bgState.versionInfo?.version ?? '';
+      return _PulsingUpdateButton(
+        tooltip: version.isEmpty
+            ? 'Update ready — tap to install'
+            : 'v$version ready — tap to install',
+        onPressed: () => BackgroundUpdateService().launchInstaller(),
+      );
+    }
+
+    // ── Idle: deferred payload available ──────────────────────────────────
     final payload = _deferredUpdatePayload;
     if (payload == null) {
       return const SizedBox(width: 40);
@@ -149,8 +330,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     final version = (payload['version'] ?? '').toString().trim();
     final tooltip = version.isEmpty
-        ? 'Update available'
-        : 'Update available: v$version';
+        ? 'Update available — tap to download'
+        : 'v$version available — tap to download';
 
     return IconButton(
       tooltip: tooltip,
@@ -1666,6 +1847,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     VersionService.deferredUpdateSignal.removeListener(
       _handleDeferredUpdateSignal,
     );
+    BackgroundUpdateService().state.removeListener(_handleBgUpdateStateChange);
+    BackgroundUpdateService().pendingInAppPrompt.removeListener(_handleInAppPrompt);
     // Clear all lobby socket listeners to prevent memory leaks
     _socketService.removeListenersForKey('lobby');
     super.dispose();
@@ -3573,6 +3756,83 @@ class _TypingIndicator extends StatelessWidget {
         color: Color(0xFF00D9FF),
         fontSize: 12,
         fontStyle: FontStyle.italic,
+      ),
+    );
+  }
+}
+
+/// Pulsing green icon button shown when an update APK is downloaded and ready.
+class _PulsingUpdateButton extends StatefulWidget {
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  const _PulsingUpdateButton({
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  @override
+  State<_PulsingUpdateButton> createState() => _PulsingUpdateButtonState();
+}
+
+class _PulsingUpdateButtonState extends State<_PulsingUpdateButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _opacity = Tween<double>(begin: 0.55, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      child: IconButton(
+        onPressed: widget.onPressed,
+        icon: FadeTransition(
+          opacity: _opacity,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(
+                Icons.system_update_alt_rounded,
+                color: Color(0xFF00E676),
+                size: 24,
+              ),
+              Positioned(
+                right: -1,
+                top: -1,
+                child: Container(
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00E676),
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(
+                      color: const Color(0xFF1A1A2E),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

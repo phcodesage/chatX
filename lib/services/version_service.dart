@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/api_config.dart';
+import 'background_update_service.dart';
 import 'storage_service.dart';
 
 class AppVersionInfo {
@@ -261,19 +262,14 @@ class VersionService {
     return shouldUpdate || info.forceUpdate;
   }
 
+  /// Handle an app_update push payload.
+  ///
+  /// - If [force_update] is true: shows the blocking [UpdateDialog] as before.
+  /// - Otherwise: silently starts a background download via [BackgroundUpdateService].
   Future<void> promptUpdateFromPush(
     BuildContext context,
     Map<String, dynamic> payload,
   ) async {
-    if (!context.mounted) {
-      _log('Skipped push prompt: context is not mounted.');
-      return;
-    }
-    if (_dialogVisible) {
-      _log('Skipped push prompt: update dialog is already visible.');
-      return;
-    }
-
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       final currentVersion = packageInfo.version;
@@ -303,21 +299,34 @@ class VersionService {
         return;
       }
 
-      _dialogVisible = true;
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: !info.forceUpdate,
-        builder: (dialogContext) {
-          return UpdateDialog(
-            info: info,
-            currentVersion: currentVersion,
-            currentBuild: currentBuild,
-            downloadUrl: resolvedDownloadUrl,
-            downloader: ApkDownloader(),
-          );
-        },
-      );
+      // Force update: show blocking dialog as before
+      if (info.forceUpdate) {
+        if (!context.mounted) return;
+        if (_dialogVisible) return;
+        _dialogVisible = true;
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) {
+            return UpdateDialog(
+              info: info,
+              currentVersion: currentVersion,
+              currentBuild: currentBuild,
+              downloadUrl: resolvedDownloadUrl,
+              downloader: ApkDownloader(),
+            );
+          },
+        );
+        _lastPromptedVersion = info.version;
+        return;
+      }
 
+      // Non-forced: show notification, let user decide to download
+      _log('Showing update-available notification for v${info.version}.');
+      await BackgroundUpdateService().notifyUpdateAvailable(
+        info,
+        resolvedDownloadUrl,
+      );
       _lastPromptedVersion = info.version;
     } catch (e) {
       _log('Push update prompt failed: $e');
@@ -326,11 +335,11 @@ class VersionService {
     }
   }
 
-  Future<void> checkAndPromptUpdate(BuildContext context) async {
-    if (!context.mounted) {
-      _log('Skipped check: context is not mounted.');
-      return;
-    }
+  /// Polls the version API and, if a newer version is available:
+  /// - **force_update = true** → shows the blocking [UpdateDialog] (context required).
+  /// - **force_update = false** → silently starts a background download via
+  ///   [BackgroundUpdateService]; no dialog is shown.
+  Future<void> checkAndPromptUpdate(BuildContext? context) async {
     if (_isChecking) {
       _log('Skipped check: another check is already running.');
       return;
@@ -394,35 +403,56 @@ class VersionService {
         serverBuild: info.buildNumber,
       );
 
-      _log('Should show update dialog: $shouldUpdate');
       if (!shouldUpdate) {
-        _log('No update available. Dialog will not be shown.');
+        _log('No update available.');
+        // If an update is currently downloading or already downloaded, keep it.
+        // Otherwise we may erase a pending APK that is still waiting for install.
+        if (BackgroundUpdateService().state.value.status ==
+            BackgroundUpdateStatus.idle) {
+          await BackgroundUpdateService().clearStaleState();
+          await clearDeferredUpdatePayload();
+        } else {
+          _log('Keeping existing background update state while install is pending.');
+        }
         return;
       }
       if (_lastPromptedVersion == info.version && !info.forceUpdate) {
-        _log('Skipping dialog: same version already prompted in this session.');
+        _log('Skipping: same version already handled in this session.');
         return;
       }
 
-      _dialogVisible = true;
-      _log('Showing update dialog for version ${info.version}.');
+      // ── Force update: show blocking dialog ──────────────────────────────
+      if (info.forceUpdate) {
+        final ctx = context;
+        if (ctx == null || !ctx.mounted) {
+          _log('Skipped force-update dialog: no valid context.');
+          return;
+        }
+        _dialogVisible = true;
+        _log('Showing FORCE update dialog for v${info.version}.');
+        await showDialog<void>(
+          context: ctx,
+          barrierDismissible: false,
+          builder: (dialogContext) {
+            return UpdateDialog(
+              info: info,
+              currentVersion: currentVersion,
+              currentBuild: currentBuild,
+              downloadUrl: resolvedDownloadUrl,
+              downloader: ApkDownloader(),
+            );
+          },
+        );
+        _lastPromptedVersion = info.version;
+        return;
+      }
 
-      if (!context.mounted) return;
-
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: !info.forceUpdate,
-        builder: (dialogContext) {
-          return UpdateDialog(
-            info: info,
-            currentVersion: currentVersion,
-            currentBuild: currentBuild,
-            downloadUrl: resolvedDownloadUrl,
-            downloader: ApkDownloader(),
-          );
-        },
+      // ── Normal update: show notification so user can choose ────────────────────────
+      _log('Notifying user of available update v${info.version} (user-choice download).');
+      await BackgroundUpdateService().notifyUpdateAvailable(
+        info,
+        resolvedDownloadUrl,
       );
-
       _lastPromptedVersion = info.version;
     } catch (e) {
       _log('Version check failed: $e');

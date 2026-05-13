@@ -16,6 +16,7 @@ import 'screens/home_page.dart';
 import 'screens/lobby_screen.dart';
 import 'screens/share_target_screen.dart';
 import 'screens/chat_screen.dart';
+import 'services/background_update_service.dart';
 import 'services/firebase_messaging_service.dart';
 import 'services/fcm_service.dart';
 import 'services/auth_error_handler.dart';
@@ -153,6 +154,9 @@ Future<void> _bootstrapAppServices() async {
       }
     }
 
+    // Restore any APK that was fully downloaded in a previous session
+    unawaited(BackgroundUpdateService().restorePersistedState());
+
     unawaited(FirebaseMessagingService.instance.checkInitialMessage());
   } catch (e) {
     debugPrint('Firebase bootstrap failed: $e');
@@ -245,16 +249,9 @@ class _MessengerAppState extends State<MessengerApp>
         return;
       }
 
+      // Pass context only for the force-update dialog path; non-forced updates
+      // no longer need a context (background download is context-free).
       final checkContext = NotificationHandler.navigatorKey.currentContext;
-      if (checkContext == null) {
-        if (retryCount < 3) {
-          Future<void>.delayed(const Duration(milliseconds: 450), () {
-            _scheduleUpdateCheck(retryCount: retryCount + 1);
-          });
-        }
-        return;
-      }
-
       VersionService().checkAndPromptUpdate(checkContext);
 
       if (retryCount < 3) {

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'background_update_service.dart';
 import 'fcm_service.dart';
 import 'active_chat_service.dart';
 import 'storage_service.dart';
@@ -132,6 +133,21 @@ Future<void> _showAppUpdateNotification(
     ongoing: isForced,
     autoCancel: !isForced,
     icon: '@mipmap/ic_launcher',
+    actions: <AndroidNotificationAction>[
+      const AndroidNotificationAction(
+        'update_now',
+        'Download Now',
+        showsUserInterface: false,
+        cancelNotification: true,
+      ),
+      if (!isForced)
+        const AndroidNotificationAction(
+          'update_later',
+          'Later',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+    ],
   );
 
   const iosDetails = DarwinNotificationDetails(
@@ -1074,33 +1090,40 @@ class FirebaseMessagingService {
     Map<String, dynamic> data,
     String? actionId,
   ) async {
-    final updateNowActionId = _readActionId(
-      data,
-      'action_update_now',
-      'update_now',
-    );
-    final updateLaterActionId = _readActionId(
-      data,
-      'action_update_later',
-      'update_later',
-    );
+    final updateNowActionId = _readActionId(data, 'action_update_now', 'update_now');
+    final updateLaterActionId = _readActionId(data, 'action_update_later', 'update_later');
 
     final normalizedAction = actionId?.trim();
+
     if (normalizedAction == updateLaterActionId) {
+      // User swiped/tapped "Later" — defer but keep the icon badge
       await VersionService().deferUpdatePayload(data);
       await _localNotifications.cancel(_appUpdateNotificationId);
       return;
     }
 
+    // "Download Now" or body tap — start background download
+    await _localNotifications.cancel(_appUpdateNotificationId);
+
     if (normalizedAction == null ||
         normalizedAction.isEmpty ||
         normalizedAction == updateNowActionId) {
-      await _localNotifications.cancel(_appUpdateNotificationId);
+      try {
+        final info = AppVersionInfo.fromJson(data);
+        final resolvedUrl = data['download_url']?.toString().trim() ?? '';
+        if (info.version.isNotEmpty && resolvedUrl.isNotEmpty) {
+          await BackgroundUpdateService().startBackgroundDownload(
+            info,
+            resolvedUrl,
+          );
+          return;
+        }
+      } catch (e) {
+        debugPrint('[FCM] Failed to start background download from notification: $e');
+      }
+      // Fallback: open the update dialog via nav
       _handleNotificationTap(data);
-      return;
     }
-
-    _handleNotificationTap(data);
   }
 
   Future<void> _handleQuickReplyAction(
