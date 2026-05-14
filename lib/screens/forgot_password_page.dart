@@ -83,7 +83,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             controller: _userOrEmail,
             focusNode: _fieldFocus,
             textInputAction: TextInputAction.done,
-            onSubmitted: (_) => _isLoading ? null : _handleForgotPassword(),
+            onSubmitted: (_) {
+              if (!_isLoading) {
+                FocusScope.of(context).unfocus(); // Hide keyboard
+                _handleForgotPassword();
+              }
+            },
           ),
           const SizedBox(height: 24),
           PrimaryButton(

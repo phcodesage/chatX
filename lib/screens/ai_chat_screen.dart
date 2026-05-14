@@ -24,6 +24,8 @@ import '../widgets/youtube_preview_card.dart';
 import '../widgets/link_preview_card.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+enum _LoadResult { success, sessionNotFound, networkError }
+
 class AiChatScreen extends StatefulWidget {
   final String? initialPrompt;
 
@@ -292,6 +294,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
           final incomingRole   = msg['role']?.toString() ?? '';
           if (incomingContent.isNotEmpty &&
               _messages.any((m) =>
+                  m['id'] != null &&
+                  m['id']!.startsWith('-') &&
                   m['role'] == incomingRole &&
                   (m['content'] ?? '').trim() == incomingContent)) {
             break;
@@ -373,21 +377,42 @@ class _AiChatScreenState extends State<AiChatScreen> {
       }
 
       final userId = await StorageService.getUserId() ?? 0;
-      final prefs = await SharedPreferences.getInstance();
-      final sessionKey = 'ai_session_id_$userId';
-      final savedSessionId = prefs.getInt(sessionKey);
+      final savedSessionId = await StorageService.getAiSessionId(userId);
+
+      debugPrint('[AiChatScreen] User ID: $userId, Saved session ID: $savedSessionId');
 
       if (savedSessionId != null) {
-        final loaded = await _loadMessages(token, savedSessionId);
-        if (loaded) {
+        _log('Attempting to load messages for saved session ID: $savedSessionId');
+        final loadResult = await _loadMessages(token, savedSessionId);
+        _log('Load result for session $savedSessionId: $loadResult');
+        if (loadResult == _LoadResult.success) {
+          _sessionId = savedSessionId;
+          _log('Successfully loaded existing session: $savedSessionId');
+        } else if (loadResult == _LoadResult.sessionNotFound) {
+          // Session was deleted, clear the saved ID and recover from server
+          _log('Session $savedSessionId not found, clearing saved ID and recovering from server');
+          await StorageService.clearAiSessionId(userId);
+        } else {
+          // Network error, keep the saved session ID for retry
+          _log('Network error loading session $savedSessionId, keeping for retry');
           _sessionId = savedSessionId;
         }
       }
 
+      // If no valid local session, recover the most recent one from the server
+      // (or let the server create one if the user has no sessions at all).
+      // This prevents creating duplicate empty sessions after app updates
+      // wipe local storage.
       if (_sessionId == null) {
-        _sessionId = await _createSession(token);
+        _log('Recovering current session from server (local ID lost or absent)');
+        _sessionId = await _fetchCurrentSession(token);
         if (_sessionId != null) {
-          await prefs.setInt(sessionKey, _sessionId!);
+          _log('Recovered session from server: $_sessionId');
+          await StorageService.saveAiSessionId(userId, _sessionId!);
+          // Load the messages for the recovered session
+          await _loadMessages(token, _sessionId!);
+        } else {
+          _log('Failed to recover session from server');
         }
       }
 
@@ -415,7 +440,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
     }
   }
 
-  Future<bool> _loadMessages(String token, int sessionId) async {
+  Future<_LoadResult> _loadMessages(String token, int sessionId) async {
+    _log('Loading messages for session ID: $sessionId');
     try {
       final response = await http
           .get(
@@ -427,8 +453,16 @@ class _AiChatScreenState extends State<AiChatScreen> {
           )
           .timeout(ApiConfig.connectionTimeout);
 
+      _log('Load messages response status: ${response.statusCode} for session $sessionId');
+
+      if (response.statusCode == 404) {
+        _log('Session $sessionId not found (404) - will create new session');
+        return _LoadResult.sessionNotFound;
+      }
+
       if (response.statusCode != 200) {
-        return false;
+        _log('Failed to load messages for session $sessionId - status: ${response.statusCode}');
+        return _LoadResult.networkError;
       }
 
       final payload = jsonDecode(response.body) as Map<String, dynamic>;
@@ -452,19 +486,20 @@ class _AiChatScreenState extends State<AiChatScreen> {
           )
           .toList();
 
-      if (!mounted) return true;
+      if (!mounted) return _LoadResult.networkError;
       setState(() {
         _messages
           ..clear()
           ..addAll(parsed);
       });
-      return true;
+      return _LoadResult.success;
     } catch (_) {
-      return false;
+      return _LoadResult.networkError;
     }
   }
 
   Future<int?> _createSession(String token) async {
+    _log('Creating new AI session');
     try {
       final response = await http
           .post(
@@ -477,16 +512,60 @@ class _AiChatScreenState extends State<AiChatScreen> {
           )
           .timeout(ApiConfig.connectionTimeout);
 
+      _log('Create session response status: ${response.statusCode}');
+
       if (response.statusCode != 200 && response.statusCode != 201) {
+        _log('Failed to create session - status: ${response.statusCode}');
         return null;
       }
 
       final payload = jsonDecode(response.body) as Map<String, dynamic>;
       final session = payload['session'] as Map<String, dynamic>?;
       final id = session?['id'] ?? payload['id'];
-      return id is int ? id : int.tryParse(id?.toString() ?? '');
-    } catch (_) {
+      final sessionId = id is int ? id : int.tryParse(id?.toString() ?? '');
+      _log('Created session with ID: $sessionId');
+      return sessionId;
+    } catch (e) {
+      _log('Error creating session: $e');
       return null;
+    }
+  }
+
+  /// Fetch the user's most recent AI session from the server, or let the
+  /// server create one if none exist. This is used to recover the active
+  /// session after an app update wipes local storage.
+  Future<int?> _fetchCurrentSession(String token) async {
+    _log('Fetching current session from server');
+    try {
+      final response = await http
+          .get(
+            _aiUri('/sessions/current'),
+            headers: <String, String>{
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(ApiConfig.connectionTimeout);
+
+      _log('Fetch current session response status: ${response.statusCode}');
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        _log('Failed to fetch current session - status: ${response.statusCode}');
+        // Fall back to creating a new session the old way
+        return _createSession(token);
+      }
+
+      final payload = jsonDecode(response.body) as Map<String, dynamic>;
+      final session = payload['session'] as Map<String, dynamic>?;
+      final id = session?['id'] ?? payload['id'];
+      final sessionId = id is int ? id : int.tryParse(id?.toString() ?? '');
+      final wasCreated = payload['created'] == true;
+      _log('Fetched current session: $sessionId (created: $wasCreated)');
+      return sessionId;
+    } catch (e) {
+      _log('Error fetching current session: $e');
+      // Fall back to creating a new session the old way
+      return _createSession(token);
     }
   }
 
@@ -584,11 +663,16 @@ class _AiChatScreenState extends State<AiChatScreen> {
         });
       }
     } catch (e) {
-      await _sendMessageViaLegacy(
-        token: token,
-        sessionId: sessionId,
-        content: content,
-      );
+      if (!mounted) return;
+      setState(() {
+        _messages.add(<String, String>{
+          'id': '-${_nextLocalMessageId++}',
+          'role': 'assistant',
+          'content': 'Sorry, I encountered an error while connecting to the AI. Please try again.',
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+      });
+      _scrollToBottom();
     } finally {
       if (!mounted) return;
       setState(() {
@@ -1095,9 +1179,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
       if (response.statusCode == 404) {
         final newSessionId = await _createSession(token);
         final userId = await StorageService.getUserId() ?? 0;
-        final prefs = await SharedPreferences.getInstance();
         if (newSessionId != null) {
-          await prefs.setInt('ai_session_id_$userId', newSessionId);
+          await StorageService.saveAiSessionId(userId, newSessionId);
         }
         if (!mounted) return;
         setState(() {
@@ -1182,6 +1265,10 @@ class _AiChatScreenState extends State<AiChatScreen> {
         }
       });
     }
+  }
+
+  void _log(String message) {
+    debugPrint('[AiChatScreen] $message');
   }
 
   void _showError(String message) {

@@ -141,7 +141,12 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
             controller: _confirmPassword,
             focusNode: _confirmPasswordFocus,
             textInputAction: TextInputAction.done,
-            onSubmitted: (_) => _isLoading ? null : _handleResetPassword(),
+            onSubmitted: (_) {
+              if (!_isLoading) {
+                FocusScope.of(context).unfocus(); // Hide keyboard
+                _handleResetPassword();
+              }
+            },
           ),
           const SizedBox(height: 24),
           PrimaryButton(

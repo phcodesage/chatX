@@ -199,7 +199,12 @@ class _RegisterPageState extends State<RegisterPage> {
                     controller: _confirm,
                     focusNode: _confirmFocus,
                     textInputAction: TextInputAction.done,
-                    onSubmitted: (_) => _isLoading ? null : _handleRegister(),
+                    onSubmitted: (_) {
+                      if (!_isLoading) {
+                        FocusScope.of(context).unfocus(); // Hide keyboard
+                        _handleRegister();
+                      }
+                    },
                   ),
                 ),
               ],
@@ -217,7 +222,12 @@ class _RegisterPageState extends State<RegisterPage> {
               controller: _confirm,
               focusNode: _confirmFocus,
               textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _isLoading ? null : _handleRegister(),
+              onSubmitted: (_) {
+                if (!_isLoading) {
+                  FocusScope.of(context).unfocus(); // Hide keyboard
+                  _handleRegister();
+                }
+              },
             ),
           ],
           const SizedBox(height: 20),

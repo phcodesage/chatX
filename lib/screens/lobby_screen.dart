@@ -1945,13 +1945,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
 
     final prefs = await SharedPreferences.getInstance();
-    final sessionId = prefs.getInt('ai_session_id_$userId');
     final aiLastMessageTime = prefs.getString('ai_last_message_time_$userId');
     final aiLastMessagePreview = prefs.getString('ai_last_message_preview_$userId');
 
     if (!mounted) return;
     setState(() {
-      _hasAiSession = sessionId != null;
+      // Always show the AI chat tile — the session will be recovered from the
+      // server when the user opens it.  Previously this was gated on the local
+      // session ID, which caused the tile to vanish after app updates wiped
+      // SharedPreferences / Android Keystore.
+      _hasAiSession = true;
       _aiLastMessageTime = aiLastMessageTime;
       _aiLastMessagePreview = aiLastMessagePreview;
     });

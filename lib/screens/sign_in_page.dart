@@ -134,7 +134,12 @@ class _SignInPageState extends State<SignInPage> {
               autofillHints: const [AutofillHints.password],
               focusNode: _passwordFocus,
               textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _isLoading ? null : _handleSignIn(),
+              onSubmitted: (_) {
+                if (!_isLoading) {
+                  FocusScope.of(context).unfocus(); // Hide keyboard
+                  _handleSignIn();
+                }
+              },
             ),
             SizedBox(height: smallGap),
             Align(

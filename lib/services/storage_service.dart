@@ -265,6 +265,7 @@ class StorageService {
       await prefs.remove(_isAdminKey);
       if (userId != null) {
         await ChatCacheService.clearUserCache(userId);
+        await clearAiSessionId(userId);
       }
     } catch (e) {
       debugPrint('Error clearing storage: $e');
@@ -314,6 +315,108 @@ class StorageService {
       await prefs.setBool(_useMilitaryTimeKey, value);
     } catch (e) {
       debugPrint('Error saving useMilitaryTime: $e');
+    }
+  }
+
+  /// Save AI session ID with dual storage for persistence across app updates
+  static Future<void> saveAiSessionId(int userId, int sessionId) async {
+    final sessionKey = 'ai_session_id_$userId';
+    final sessionValue = sessionId.toString();
+
+    debugPrint('[StorageService] Saving AI session ID: $sessionId for user: $userId');
+
+    // Always write to SharedPreferences first so a secure-storage failure
+    // (e.g. Android Keystore invalidation after an APK update) cannot prevent
+    // the session ID from being persisted.
+    try {
+      final prefs = await _getPrefs();
+      if (prefs.getInt(sessionKey) != sessionId) {
+        await prefs.setInt(sessionKey, sessionId);
+        debugPrint('[StorageService] AI session ID saved to SharedPreferences: $sessionId');
+      } else {
+        debugPrint('[StorageService] AI session ID already saved in SharedPreferences: $sessionId');
+      }
+      debugPrint('[StorageService] Post-save SharedPreferences value: ${prefs.getInt(sessionKey)}');
+    } catch (e) {
+      debugPrint('[StorageService] Error saving AI session ID to prefs: $e');
+    }
+
+    // Also store in secure storage for additional persistence
+    try {
+      await _secureStorage.write(key: sessionKey, value: sessionValue);
+      final readBack = await _secureStorage.read(key: sessionKey);
+      debugPrint('[StorageService] AI session ID saved to secure storage: $sessionId, read back: $readBack');
+    } catch (e) {
+      debugPrint('[StorageService] Error saving AI session ID to secure storage: $e');
+    }
+  }
+
+  /// Get AI session ID with fallback from secure storage
+  static Future<int?> getAiSessionId(int userId) async {
+    final sessionKey = 'ai_session_id_$userId';
+
+    debugPrint('[StorageService] Retrieving AI session ID for user: $userId');
+
+    // Try secure storage first
+    String? secureSessionId;
+    try {
+      secureSessionId = await _secureStorage.read(key: sessionKey);
+      debugPrint('[StorageService] Secure storage result: $secureSessionId');
+    } catch (e) {
+      debugPrint('[StorageService] Secure storage read failed for AI session, falling back to SharedPreferences: $e');
+    }
+
+    if (secureSessionId != null && secureSessionId.isNotEmpty) {
+      final sessionId = int.tryParse(secureSessionId);
+      if (sessionId != null) {
+        debugPrint('[StorageService] Using AI session ID from secure storage: $sessionId');
+        try {
+          final prefs = await _getPrefs();
+          // Keep SharedPreferences in sync
+          if (prefs.getInt(sessionKey) != sessionId) {
+            await prefs.setInt(sessionKey, sessionId);
+          }
+        } catch (_) {}
+        return sessionId;
+      }
+    }
+
+    // Fallback to SharedPreferences
+    try {
+      final prefs = await _getPrefs();
+      final legacySessionId = prefs.getInt(sessionKey);
+      debugPrint('[StorageService] SharedPreferences result: $legacySessionId');
+      if (legacySessionId != null) {
+        debugPrint('[StorageService] Using AI session ID from SharedPreferences: $legacySessionId');
+        // Migrate to secure storage
+        try {
+          await _secureStorage.write(key: sessionKey, value: legacySessionId.toString());
+        } catch (e) {
+          debugPrint('[StorageService] Could not migrate AI session ID to secure storage: $e');
+        }
+      } else {
+        debugPrint('[StorageService] No AI session ID found in SharedPreferences');
+      }
+      return legacySessionId;
+    } catch (e) {
+      debugPrint('[StorageService] Error getting AI session ID from SharedPreferences: $e');
+      return null;
+    }
+  }
+
+  /// Clear AI session ID for a user
+  static Future<void> clearAiSessionId(int userId) async {
+    final sessionKey = 'ai_session_id_$userId';
+    try {
+      final prefs = await _getPrefs();
+      await prefs.remove(sessionKey);
+    } catch (e) {
+      debugPrint('Error clearing AI session ID from prefs: $e');
+    }
+    try {
+      await _secureStorage.delete(key: sessionKey);
+    } catch (e) {
+      debugPrint('Error clearing AI session ID from secure storage: $e');
     }
   }
 }
