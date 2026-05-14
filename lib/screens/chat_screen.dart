@@ -4726,6 +4726,11 @@ class _ChatScreenState extends State<ChatScreen>
     final firstName = widget.otherUser.firstName;
     final newText = current.isEmpty ? firstName : '$current $firstName';
     _replaceInputTextWithSanitized(newText);
+    
+    // Ensure the cursor is at the end of the newly inserted text
+    _messageController.selection = TextSelection.collapsed(
+      offset: _messageController.text.length,
+    );
   }
 
   Future<void> _pasteFromClipboard() async {
