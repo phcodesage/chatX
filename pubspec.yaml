@@ -87,6 +87,7 @@ dependencies:
   # URL launcher for opening external links
   url_launcher: ^6.2.5
   connectivity_plus: ^6.1.4
+  flutter_tts: ^3.8.3
 
   # Local caching & skeleton animations
   hive: ^2.2.3

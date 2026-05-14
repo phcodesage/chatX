@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
@@ -28,6 +28,7 @@ import '../services/lobby_service.dart';
 import '../services/common_phrases_api.dart';
 import '../services/message_service.dart';
 import '../services/socket_service.dart';
+import '../services/tts_service.dart';
 import '../services/storage_service.dart';
 import '../services/chat_cache_service.dart';
 import '../services/translation_service.dart';
@@ -9285,6 +9286,26 @@ class _ChatScreenState extends State<ChatScreen>
                     closeWithAction(
                       sheetContext,
                       () => _jumpToRepliedMessage(message.replyToId!),
+                    );
+                  },
+                ),
+              if (message.messageType == 'text' && !message.isDeleted && message.content.isNotEmpty)
+                ValueListenableBuilder<String?>(
+                  valueListenable: TtsService().readingMessageId,
+                  builder: (context, readingId, child) {
+                    final isReadingThis = readingId == message.id.toString();
+                    return _buildContextMenuActionTile(
+                      icon: isReadingThis ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
+                      label: isReadingThis ? 'Stop Reading' : 'Read Aloud',
+                      iconColor: isReadingThis ? const Color(0xFFF87171) : const Color(0xFF60A5FA),
+                      onTap: () {
+                        // Don't close the menu, just start/stop
+                        if (isReadingThis) {
+                          TtsService().stop();
+                        } else {
+                          TtsService().speak(message.id.toString(), message.content);
+                        }
+                      },
                     );
                   },
                 ),

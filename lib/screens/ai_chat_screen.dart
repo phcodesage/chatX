@@ -17,6 +17,7 @@ import '../models/link_preview.dart';
 import '../services/link_preview_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
+import '../services/tts_service.dart';
 import '../utils/chat_scroll_physics.dart';
 import '../widgets/reaction_picker.dart';
 import '../widgets/chat_composer_shell.dart';
@@ -1695,6 +1696,26 @@ class _AiChatScreenState extends State<AiChatScreen> {
                 ],
               ),
               const SizedBox(height: 10),
+              if (message['content']?.isNotEmpty ?? false)
+                ValueListenableBuilder<String?>(
+                  valueListenable: TtsService().readingMessageId,
+                  builder: (context, readingId, child) {
+                    final isReadingThis = readingId == message['id'];
+                    return _buildContextMenuActionTile(
+                      icon: isReadingThis ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
+                      label: isReadingThis ? 'Stop Reading' : 'Read Aloud',
+                      iconColor: isReadingThis ? const Color(0xFFF87171) : const Color(0xFF60A5FA),
+                      onTap: () {
+                        // Don't close the menu, just start/stop
+                        if (isReadingThis) {
+                          TtsService().stop();
+                        } else {
+                          TtsService().speak(message['id'] ?? '', message['content'] ?? '');
+                        }
+                      },
+                    );
+                  },
+                ),
               _buildContextMenuActionTile(
                 icon: Icons.copy_rounded,
                 label: 'Copy',
