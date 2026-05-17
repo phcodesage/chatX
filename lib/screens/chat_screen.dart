@@ -5140,10 +5140,44 @@ class _ChatScreenState extends State<ChatScreen>
                 ),
               ),
             // The actual button
-            _buildCompressedActionChip(
-              label: 'Send File',
-              backgroundColor: const Color(0xFF10B981),
-              onPressed: _showAttachmentMenu,
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                _buildCompressedActionChip(
+                  label: 'Send File',
+                  backgroundColor: const Color(0xFF10B981),
+                  onPressed: _pendingMediaItems != null && _pendingMediaItems!.isNotEmpty
+                      ? _resumePendingMedia
+                      : _showAttachmentMenu,
+                ),
+                // Badge showing pending file count
+                if (_pendingMediaItems != null && _pendingMediaItems!.isNotEmpty)
+                  Positioned(
+                    top: -4,
+                    right: -4,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      constraints: const BoxConstraints(
+                        minWidth: 18,
+                        minHeight: 18,
+                      ),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${_pendingMediaItems!.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ],
         );
@@ -6910,6 +6944,40 @@ class _ChatScreenState extends State<ChatScreen>
       });
     } else if (result is List<AssetEntity> && result.isNotEmpty) {
       // Back navigation — re-open the picker with selection preserved
+      await _handleAttachmentGallery(preSelectedAssets: result);
+    }
+  }
+
+  /// Resumes the pending media preview screen with previously minimized items.
+  Future<void> _resumePendingMedia() async {
+    final items = _pendingMediaItems;
+    if (items == null || items.isEmpty || !mounted) return;
+
+    // Clear pending state before navigating
+    setState(() {
+      _pendingMediaItems = null;
+    });
+
+    final result = await Navigator.of(context).push<Object>(
+      MaterialPageRoute(
+        builder: (_) => MediaPreviewScreen(
+          selectedAssets: items,
+          recipientId: widget.otherUser.id,
+          fromCamera: false,
+          mediaUploadState: _mediaUploadState,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (result is MinimizedMediaResult) {
+      // Minimized again
+      setState(() {
+        _pendingMediaItems = result.items;
+        _pendingMediaCaption = result.caption;
+      });
+    } else if (result is List<AssetEntity> && result.isNotEmpty) {
       await _handleAttachmentGallery(preSelectedAssets: result);
     }
   }
