@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import '../config/api_config.dart';
 import '../models/bulk_send_response.dart';
 import '../models/message.dart';
@@ -369,7 +372,7 @@ class MessageService {
       }
 
       final streamedResponse = await request.send().timeout(
-        const Duration(minutes: 2),
+        const Duration(minutes: 5),
       );
       final response = await http.Response.fromStream(streamedResponse);
 
@@ -387,6 +390,98 @@ class MessageService {
       }
     } catch (e) {
       debugPrint('Upload file error: $e');
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Upload a file with progress tracking.
+  /// [onProgress] receives (bytesSent, totalBytes) for real-time progress.
+  static Future<Map<String, dynamic>?> uploadFileWithProgress({
+    required String filePath,
+    required String fileName,
+    required String mimeType,
+    required int recipientId,
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    try {
+      final token = await StorageService.getToken();
+      if (token == null) {
+        throw Exception('No authentication token found');
+      }
+
+      final uri = Uri.parse(
+        '${ApiConfig.baseUrl}${ApiConfig.mobilePrefix}/messages/upload',
+      );
+
+      final fileToUpload = File(filePath);
+      final fileLength = await fileToUpload.length();
+
+      final request = http.MultipartRequest('POST', uri);
+      request.headers['Authorization'] = 'Bearer $token';
+      request.fields['recipient_id'] = recipientId.toString();
+
+      // Use stream-based file reading to avoid loading entire file into memory
+      final multipartFile = http.MultipartFile(
+        'file',
+        fileToUpload.openRead(),
+        fileLength,
+        filename: fileName,
+        contentType: MediaType.parse(mimeType),
+      );
+      request.files.add(multipartFile);
+
+      // Get the byte stream and track progress
+      final byteStream = request.finalize();
+      final totalBytes = request.contentLength;
+
+      int bytesSent = 0;
+      // Throttle: only report progress every 256KB to avoid flooding the UI
+      const reportInterval = 256 * 1024;
+      int lastReported = 0;
+
+      final progressStream = byteStream.transform(
+        StreamTransformer<List<int>, List<int>>.fromHandlers(
+          handleData: (data, sink) {
+            bytesSent += data.length;
+            if (bytesSent - lastReported >= reportInterval || bytesSent >= totalBytes) {
+              lastReported = bytesSent;
+              onProgress?.call(bytesSent, totalBytes);
+            }
+            sink.add(data);
+          },
+        ),
+      );
+
+      final streamedRequest = http.StreamedRequest('POST', uri);
+      streamedRequest.headers.addAll(request.headers);
+      streamedRequest.contentLength = totalBytes;
+
+      // Pipe the progress-tracked stream into the request
+      progressStream.listen(
+        streamedRequest.sink.add,
+        onDone: streamedRequest.sink.close,
+        onError: streamedRequest.sink.addError,
+      );
+
+      final streamedResponse = await streamedRequest.send().timeout(
+        const Duration(minutes: 10),
+      );
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        return {
+          'success': true,
+          'file_url': data['file_url'] ?? data['url'],
+          'file_id': data['file_id'] ?? data['id'],
+          ...data,
+        };
+      } else {
+        final error = jsonDecode(response.body);
+        throw Exception(error['error'] ?? 'Upload failed');
+      }
+    } catch (e) {
+      debugPrint('Upload file with progress error: $e');
       return {'success': false, 'error': e.toString()};
     }
   }

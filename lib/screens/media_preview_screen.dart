@@ -76,6 +76,9 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
   bool _isSending = false;
   CompressionProgress? _compressionProgress;
   List<CompressionResult>? _compressedResults;
+  double _uploadProgress = 0.0;
+  int _uploadFileIndex = 0;
+  int _uploadTotalFiles = 0;
 
   final TextEditingController _captionController = TextEditingController();
 
@@ -116,10 +119,24 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
 
   AssetEntity get _currentItem => _items[_currentIndex];
 
-  bool get _isCurrentItemVideo => _currentItem.type == AssetType.video;
+  bool get _isCurrentItemVideo =>
+      _items.isNotEmpty && _currentItem.type == AssetType.video;
 
   @override
   Widget build(BuildContext context) {
+    // Guard against empty items — pop immediately if nothing to preview
+    if (_items.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop(null);
+      });
+      return const Scaffold(
+        backgroundColor: Color(0xFF121212),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF7C3AED)),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
@@ -208,13 +225,61 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
 
   /// Gets the file name and size string for a given asset.
   Future<String> _getFileInfo(AssetEntity asset) async {
-    final title = asset.title ?? 'Unknown';
+    final title = _formatAssetName(asset);
     final file = await asset.file;
     if (file == null) return title;
 
     final bytes = await file.length();
     final sizeStr = _formatFileSize(bytes);
     return '$title • $sizeStr';
+  }
+
+  /// Returns a human-friendly name for the asset.
+  /// If the title is a UUID-like string (camera capture), replace it
+  /// with a readable name based on capture date and type.
+  String _formatAssetName(AssetEntity asset) {
+    final rawTitle = asset.title ?? '';
+    final hasExtension = rawTitle.contains('.');
+
+    // UUID pattern: 8-4-4-4-12 hex characters
+    final uuidPattern = RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}',
+    );
+
+    final isUuid = uuidPattern.hasMatch(rawTitle);
+    final isLongHexish = rawTitle.length > 30 &&
+        RegExp(r'^[0-9a-fA-F-]+').hasMatch(rawTitle);
+
+    if (rawTitle.isEmpty || isUuid || isLongHexish) {
+      // Generate a friendlier name based on type and capture date
+      final dt = asset.createDateTime;
+      final stamp =
+          '${dt.year}${_pad2(dt.month)}${_pad2(dt.day)}_${_pad2(dt.hour)}${_pad2(dt.minute)}${_pad2(dt.second)}';
+      final prefix = asset.type == AssetType.video ? 'VID' : 'IMG';
+      final ext = _extractExtension(rawTitle) ??
+          (asset.type == AssetType.video ? 'mp4' : 'jpg');
+      return '${prefix}_$stamp.$ext';
+    }
+
+    if (!hasExtension) {
+      final ext = asset.type == AssetType.video ? 'mp4' : 'jpg';
+      return '$rawTitle.$ext';
+    }
+
+    return rawTitle;
+  }
+
+  String _pad2(int n) => n.toString().padLeft(2, '0');
+
+  String? _extractExtension(String name) {
+    final dotIndex = name.lastIndexOf('.');
+    if (dotIndex == -1 || dotIndex == name.length - 1) return null;
+    final ext = name.substring(dotIndex + 1);
+    // Sanity check — extensions are usually 2-5 chars and alphanumeric
+    if (ext.length > 5 || !RegExp(r'^[a-zA-Z0-9]+$').hasMatch(ext)) {
+      return null;
+    }
+    return ext.toLowerCase();
   }
 
   /// Formats a byte count into a human-readable file size string.
@@ -684,19 +749,27 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFF333333),
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: TextField(
                   controller: _captionController,
                   maxLength: 1024,
                   maxLines: 1,
-                  style: const TextStyle(color: Colors.white),
+                  cursorColor: const Color(0xFF7C3AED),
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400,
+                  ),
                   decoration: const InputDecoration(
                     hintText: 'Add a caption...',
-                    hintStyle: TextStyle(color: Colors.grey),
+                    hintStyle: TextStyle(
+                      color: Color(0xFF666666),
+                      fontSize: 15,
+                    ),
                     border: InputBorder.none,
-                    counterText: '', // Hide the character counter
+                    counterText: '',
                     contentPadding: EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 12,
@@ -835,9 +908,10 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
     }
   }
 
-  /// Builds the compression progress overlay shown during the send flow.
+  /// Builds the send progress overlay shown during the send flow.
   Widget _buildCompressionOverlay() {
     final progress = _compressionProgress!;
+    final isUploading = progress.completed >= progress.total;
     return Container(
       color: Colors.black54,
       child: Center(
@@ -850,12 +924,43 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const CircularProgressIndicator(
-                color: Color(0xFF7C3AED),
-              ),
+              if (isUploading) ...[
+                SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      CircularProgressIndicator(
+                        value: _uploadProgress > 0 ? _uploadProgress : null,
+                        color: const Color(0xFF7C3AED),
+                        strokeWidth: 4,
+                      ),
+                      Center(
+                        child: Text(
+                          '${(_uploadProgress * 100).toInt()}%',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else ...[
+                const CircularProgressIndicator(
+                  color: Color(0xFF7C3AED),
+                ),
+              ],
               const SizedBox(height: 16),
               Text(
-                'Compressing ${progress.completed + 1} of ${progress.total}',
+                isUploading
+                    ? _uploadTotalFiles > 1
+                        ? 'Sending ${_uploadFileIndex + 1} of $_uploadTotalFiles'
+                        : 'Sending...'
+                    : 'Preparing ${progress.completed + 1} of ${progress.total}',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 16,
@@ -863,13 +968,36 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              Text(
-                '${progress.completed} of ${progress.total} completed',
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 13,
+              if (isUploading) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: SizedBox(
+                    width: 180,
+                    child: LinearProgressIndicator(
+                      value: _uploadProgress > 0 ? _uploadProgress : null,
+                      backgroundColor: Colors.white10,
+                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF7C3AED)),
+                      minHeight: 5,
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 8),
+                Text(
+                  '${(_uploadProgress * 100).toInt()}% uploaded',
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 13,
+                  ),
+                ),
+              ] else ...[
+                Text(
+                  '${progress.completed} of ${progress.total} ready',
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -894,19 +1022,32 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
 
   /// Handles the send button press.
   /// Disables the button to prevent duplicate submissions,
-  /// then triggers the compression → upload pipeline.
+  /// then triggers the compression → upload pipeline with visible progress.
   Future<void> _handleSend() async {
     if (_isSending || _items.isEmpty) return;
 
     setState(() {
       _isSending = true;
+      _compressionProgress = CompressionProgress(
+        completed: 0,
+        total: _items.length,
+      );
     });
 
     try {
-      // Phase 1: Compression
+      // Phase 1: Prepare/compress files
       await _compressItems();
 
-      // Phase 2: Upload
+      // Phase 2: Upload — update overlay to show "Sending"
+      if (mounted) {
+        setState(() {
+          _compressionProgress = CompressionProgress(
+            completed: _items.length,
+            total: _items.length,
+          );
+        });
+      }
+
       await _uploadCompressedItems();
     } catch (e) {
       // Handle errors
@@ -988,6 +1129,15 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
       }
     }
 
+    // Initialize upload progress tracking for the overlay
+    if (mounted) {
+      setState(() {
+        _uploadTotalFiles = compressed.length;
+        _uploadFileIndex = 0;
+        _uploadProgress = 0.0;
+      });
+    }
+
     final results = await MediaUploadService.uploadBatch(
       files: compressed,
       recipientId: widget.recipientId,
@@ -995,6 +1145,13 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
       onProgress: (progress) {
         if (uploadState != null && progress.fileIndex < fileIds.length) {
           uploadState.updateProgress(fileIds[progress.fileIndex], progress);
+        }
+        // Update local overlay progress
+        if (mounted) {
+          setState(() {
+            _uploadFileIndex = progress.fileIndex;
+            _uploadProgress = progress.fileProgress;
+          });
         }
       },
     );

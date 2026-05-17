@@ -10,7 +10,28 @@ class MediaUploadState extends ChangeNotifier {
   final Map<String, _UploadEntry> _uploads = {};
 
   /// Updates the progress for a specific file upload.
+  ///
+  /// Enforces monotonic progress: ignores stale values where progress
+  /// decreases without a retry reset. Allows progress to decrease only
+  /// when the status indicates a retry (transitioning to retrying or
+  /// uploading from a different status).
   void updateProgress(String fileId, UploadProgress progress) {
+    final existing = _uploads[fileId];
+
+    // Allow progress reset only on retry (status change to retrying/uploading from a different status)
+    final isRetryReset = existing != null &&
+        progress.fileProgress < existing.progress.fileProgress &&
+        (progress.status == UploadStatus.retrying ||
+            (progress.status == UploadStatus.uploading &&
+                existing.progress.status == UploadStatus.retrying));
+
+    // Ignore stale values (lower progress without a retry reset)
+    if (existing != null &&
+        progress.fileProgress < existing.progress.fileProgress &&
+        !isRetryReset) {
+      return;
+    }
+
     _uploads[fileId] = _UploadEntry(progress: progress);
     notifyListeners();
   }

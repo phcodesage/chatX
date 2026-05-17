@@ -1,9 +1,6 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
+import 'package:dio/dio.dart';
 
 import '../config/api_config.dart';
 import '../models/message.dart';
@@ -101,6 +98,12 @@ class MediaUploadService {
   }) async {
     int retryCount = 0;
 
+    final dio = Dio(BaseOptions(
+      connectTimeout: timeout,
+      receiveTimeout: timeout,
+      validateStatus: (_) => true,
+    ));
+
     while (true) {
       try {
         // Report upload starting
@@ -115,38 +118,38 @@ class MediaUploadService {
           );
         }
 
-        final uri = Uri.parse('${ApiConfig.baseUrl}$_uploadPath');
+        final url = '${ApiConfig.baseUrl}$_uploadPath';
 
-        final request = http.MultipartRequest('POST', uri);
-        request.headers['Authorization'] = 'Bearer $token';
-        request.fields['recipient_id'] = recipientId.toString();
-
-        if (caption != null && caption.isNotEmpty) {
-          request.fields['caption'] = caption;
-        }
-
-        // Parse MIME type for the multipart file
-        final mediaType = _parseMediaType(file.mimeType);
-
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            'file',
+        final formData = FormData.fromMap({
+          'recipient_id': recipientId.toString(),
+          if (caption != null && caption.isNotEmpty) 'caption': caption,
+          'file': MultipartFile.fromBytes(
             file.bytes,
             filename: file.fileName,
-            contentType: mediaType,
+            contentType: _parseMediaType(file.mimeType),
           ),
+        });
+
+        final response = await dio.post(
+          url,
+          data: formData,
+          options: Options(
+            headers: {'Authorization': 'Bearer $token'},
+          ),
+          onSendProgress: (int sent, int total) {
+            if (total > 0) {
+              onProgress?.call(sent / total);
+            }
+          },
         );
 
-        // Send the request with timeout
-        final streamedResponse = await request.send().timeout(timeout);
-        final response = await http.Response.fromStream(streamedResponse);
-
-        // Report upload complete (we don't have granular stream progress
-        // with the standard http package, so we go 0% → 100%)
+        // Report upload complete
         onProgress?.call(1.0);
 
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final statusCode = response.statusCode ?? 0;
+
+        if (statusCode == 200 || statusCode == 201) {
+          final data = response.data as Map<String, dynamic>;
 
           // Parse the message object from the response
           final messageJson = data['message'] as Map<String, dynamic>?;
@@ -165,7 +168,7 @@ class MediaUploadService {
             errorMessage: 'Upload succeeded but no message object in response',
             retryCount: retryCount,
           );
-        } else if (_isRetryableStatusCode(response.statusCode)) {
+        } else if (_isRetryableStatusCode(statusCode)) {
           // Server error (5xx) — retry if attempts remain
           if (retryCount < maxRetries) {
             await _backoff(retryCount);
@@ -176,14 +179,14 @@ class MediaUploadService {
           return UploadResult(
             success: false,
             errorMessage:
-                'Server error ${response.statusCode} after $retryCount retries',
+                'Server error $statusCode after $retryCount retries',
             retryCount: retryCount,
           );
         } else {
           // Client error (4xx) — don't retry
-          String errorMsg = 'Upload failed with status ${response.statusCode}';
+          String errorMsg = 'Upload failed with status $statusCode';
           try {
-            final errorData = jsonDecode(response.body);
+            final errorData = response.data;
             if (errorData is Map && errorData['error'] != null) {
               errorMsg = errorData['error'].toString();
             }
@@ -194,7 +197,34 @@ class MediaUploadService {
             retryCount: retryCount,
           );
         }
-      } on TimeoutException {
+      } on DioException catch (e) {
+        if (e.type == DioExceptionType.cancel) {
+          // Cancellation is non-retryable
+          return UploadResult(
+            success: false,
+            errorMessage: 'Upload cancelled',
+            retryCount: retryCount,
+          );
+        }
+
+        // connectionTimeout, receiveTimeout, connectionError are retryable
+        if (e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.receiveTimeout ||
+            e.type == DioExceptionType.connectionError) {
+          if (retryCount < maxRetries) {
+            await _backoff(retryCount);
+            retryCount++;
+            onProgress?.call(0.0);
+            continue;
+          }
+          return UploadResult(
+            success: false,
+            errorMessage: 'Upload timed out after $retryCount retries',
+            retryCount: retryCount,
+          );
+        }
+
+        // Other DioException types — retry if attempts remain
         if (retryCount < maxRetries) {
           await _backoff(retryCount);
           retryCount++;
@@ -203,11 +233,11 @@ class MediaUploadService {
         }
         return UploadResult(
           success: false,
-          errorMessage: 'Upload timed out after $retryCount retries',
+          errorMessage: 'Upload failed: ${e.message}',
           retryCount: retryCount,
         );
       } catch (e) {
-        // Network error or other exception — retry if attempts remain
+        // Other unexpected exceptions — retry if attempts remain
         if (retryCount < maxRetries) {
           await _backoff(retryCount);
           retryCount++;
@@ -388,12 +418,12 @@ class MediaUploadService {
     await Future.delayed(Duration(seconds: delaySeconds));
   }
 
-  /// Parses a MIME type string into a [MediaType] for the multipart request.
-  static MediaType _parseMediaType(String mimeType) {
+  /// Parses a MIME type string into a [DioMediaType] for the multipart request.
+  static DioMediaType _parseMediaType(String mimeType) {
     final parts = mimeType.split('/');
     if (parts.length == 2) {
-      return MediaType(parts[0], parts[1]);
+      return DioMediaType(parts[0], parts[1]);
     }
-    return MediaType('application', 'octet-stream');
+    return DioMediaType('application', 'octet-stream');
   }
 }

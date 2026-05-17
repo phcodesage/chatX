@@ -236,6 +236,22 @@ class _ChatScreenState extends State<ChatScreen>
   List<AssetEntity>? _pendingMediaItems;
   String _pendingMediaCaption = '';
 
+  // Active file upload state (for single-file preview modal with progress)
+  File? _activeUploadFile;
+  String? _activeUploadFileName;
+  String? _activeUploadDisplayName;
+  String? _activeUploadMimeType;
+  final ValueNotifier<double> _activeUploadProgressNotifier = ValueNotifier(0.0);
+  double _activeUploadProgress = 0.0;
+  bool _isActivelyUploading = false;
+  bool _isFromCamera = false;
+
+  // Pending file (minimized before sending from file preview)
+  File? _pendingFile;
+  String? _pendingFileName;
+  String? _pendingFileMimeType;
+  bool _pendingFileIsFromCamera = false;
+
   // Timestamp visibility toggle (hidden by default like web)
   bool _showTimestamps = false;
 
@@ -5144,13 +5160,23 @@ class _ChatScreenState extends State<ChatScreen>
               clipBehavior: Clip.none,
               children: [
                 _buildCompressedActionChip(
-                  label: 'Send File',
-                  backgroundColor: const Color(0xFF10B981),
-                  onPressed: _pendingMediaItems != null && _pendingMediaItems!.isNotEmpty
-                      ? _resumePendingMedia
-                      : _showAttachmentMenu,
+                  label: _isActivelyUploading
+                      ? '${(_activeUploadProgress * 100).toInt()}%'
+                      : isUploading && progress != null
+                          ? '${(progress * 100).toInt()}%'
+                          : 'Send File',
+                  backgroundColor: _isActivelyUploading
+                      ? const Color(0xFF7C3AED)
+                      : isUploading
+                          ? const Color(0xFF7C3AED)
+                          : const Color(0xFF10B981),
+                  onPressed: _isActivelyUploading || _pendingFile != null
+                      ? _reopenFileUploadModal
+                      : _pendingMediaItems != null && _pendingMediaItems!.isNotEmpty
+                          ? _resumePendingMedia
+                          : _showAttachmentMenu,
                 ),
-                // Badge showing pending file count
+                // Badge showing pending file count (pending media or pending file)
                 if (_pendingMediaItems != null && _pendingMediaItems!.isNotEmpty)
                   Positioned(
                     top: -4,
@@ -5169,6 +5195,32 @@ class _ChatScreenState extends State<ChatScreen>
                         child: Text(
                           '${_pendingMediaItems!.length}',
                           style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                else if (_pendingFile != null && !_isActivelyUploading)
+                  Positioned(
+                    top: -4,
+                    right: -4,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      constraints: const BoxConstraints(
+                        minWidth: 18,
+                        minHeight: 18,
+                      ),
+                      decoration: const BoxDecoration(
+                        color: Colors.orange,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Center(
+                        child: Text(
+                          '1',
+                          style: TextStyle(
                             color: Colors.white,
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
@@ -6881,16 +6933,73 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Handles the Camera option from the attachment menu.
-  /// Opens the device camera via MediaPickerService and navigates
-  /// to the preview screen on successful capture.
+  /// Shows a bottom sheet with Photo/Video capture options and recent media.
   Future<void> _handleAttachmentCamera() async {
     if (!mounted) return;
 
-    final asset = await MediaPickerService.captureFromCamera(context);
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 8),
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[600],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.white),
+              title: const Text('Take Photo', style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.pop(ctx, 'photo'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam, color: Colors.white),
+              title: const Text('Record Video', style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.pop(ctx, 'video'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.white),
+              title: const Text('Recent Media', style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.pop(ctx, 'recent'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null || !mounted) return;
+
+    if (result == 'recent') {
+      // Small delay to let the bottom sheet dismiss fully before opening picker
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      if (!mounted) return;
+      await _handleAttachmentGallery();
+      return;
+    }
+
+    final preferVideo = result == 'video';
+    final asset = await MediaPickerService.captureFromCamera(
+      context,
+      preferVideo: preferVideo,
+    );
     if (asset == null || !mounted) return;
 
-    // Navigate to the MediaPreviewScreen with the captured asset
-    await Navigator.of(context).push(
+    // Navigate to the MediaPreviewScreen with the captured asset.
+    // Result can be MinimizedMediaResult if user minimizes — store it for the badge.
+    final navResult = await Navigator.of(context).push<Object>(
       MaterialPageRoute(
         builder: (_) => MediaPreviewScreen(
           selectedAssets: [asset],
@@ -6900,6 +7009,15 @@ class _ChatScreenState extends State<ChatScreen>
         ),
       ),
     );
+
+    if (!mounted) return;
+
+    if (navResult is MinimizedMediaResult) {
+      setState(() {
+        _pendingMediaItems = navResult.items;
+        _pendingMediaCaption = navResult.caption;
+      });
+    }
   }
 
   /// Handles the Gallery option from the attachment menu.
@@ -6992,30 +7110,213 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  /// Pick a file from device storage
+  /// Shows a WhatsApp-style document selection menu with options:
+  /// Browse documents, Choose from gallery, Scan document, Browse audio.
   Future<void> _pickFile() async {
+    _restoreInputFocusOnResume = false;
+    _keepInputUnfocused();
     try {
-      _restoreInputFocusOnResume = false;
-      _keepInputUnfocused();
-      try {
-        await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
-      } catch (_) {
-        // Ignore transient platform timing issues while hiding the IME.
-      }
+      await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    } catch (_) {}
 
+    if (!mounted) return;
+
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Drag handle
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 4),
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[600],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            // Title
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Files',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            _buildDocMenuOption(
+              ctx,
+              icon: Icons.description_outlined,
+              iconColor: const Color(0xFF7C3AED),
+              title: 'Browse documents',
+              subtitle: 'Select files up to 2 GB in size',
+              value: 'documents',
+            ),
+            _buildDocMenuOption(
+              ctx,
+              icon: Icons.photo_library_outlined,
+              iconColor: const Color(0xFF7C3AED),
+              title: 'Choose from gallery',
+              subtitle: 'Select original quality photos or videos',
+              value: 'gallery',
+            ),
+            _buildDocMenuOption(
+              ctx,
+              icon: Icons.document_scanner_outlined,
+              iconColor: const Color(0xFF7C3AED),
+              title: 'Scan document',
+              subtitle: 'Take photos of a document',
+              value: 'scan',
+            ),
+            _buildDocMenuOption(
+              ctx,
+              icon: Icons.headphones_outlined,
+              iconColor: const Color(0xFF7C3AED),
+              title: 'Browse audio',
+              subtitle: 'Select audio or music files',
+              value: 'audio',
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null || !mounted) return;
+
+    switch (result) {
+      case 'documents':
+        await _browseDocuments();
+        break;
+      case 'gallery':
+        await _handleAttachmentGallery();
+        break;
+      case 'scan':
+        // Use camera to scan a document (photo mode)
+        final asset = await MediaPickerService.captureFromCamera(context);
+        if (asset != null && mounted) {
+          final navResult = await Navigator.of(context).push<Object>(
+            MaterialPageRoute(
+              builder: (_) => MediaPreviewScreen(
+                selectedAssets: [asset],
+                recipientId: widget.otherUser.id,
+                fromCamera: true,
+                mediaUploadState: _mediaUploadState,
+              ),
+            ),
+          );
+          if (mounted && navResult is MinimizedMediaResult) {
+            setState(() {
+              _pendingMediaItems = navResult.items;
+              _pendingMediaCaption = navResult.caption;
+            });
+          }
+        }
+        break;
+      case 'audio':
+        await _browseAudio();
+        break;
+    }
+  }
+
+  Widget _buildDocMenuOption(
+    BuildContext ctx, {
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required String value,
+  }) {
+    return InkWell(
+      onTap: () => Navigator.pop(ctx, value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: iconColor, size: 22),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.grey[400],
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Browse documents using the system file picker (multi-select).
+  Future<void> _browseDocuments() async {
+    try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.any,
-        allowMultiple: false,
+        allowMultiple: true,
       );
 
       if (result != null && result.files.isNotEmpty) {
-        final file = result.files.first;
-        if (file.path != null) {
-          await _showFilePreviewModal(
-            File(file.path!),
-            file.name,
-            isFromCamera: false,
-          );
+        if (result.files.length == 1) {
+          final file = result.files.first;
+          if (file.path != null) {
+            await _showFilePreviewModal(
+              File(file.path!),
+              file.name,
+              isFromCamera: false,
+            );
+          }
+        } else {
+          final files = result.files
+              .where((f) => f.path != null)
+              .map((f) => File(f.path!))
+              .toList();
+          final names = result.files
+              .where((f) => f.path != null)
+              .map((f) => f.name)
+              .toList();
+          if (files.isNotEmpty) {
+            await _showMultiFilePreviewModal(files, names);
+          }
         }
       }
     } catch (e) {
@@ -7029,6 +7330,292 @@ class _ChatScreenState extends State<ChatScreen>
         );
       }
     }
+  }
+
+  /// Browse audio files using the system file picker (multi-select).
+  Future<void> _browseAudio() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+        allowMultiple: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        if (result.files.length == 1) {
+          final file = result.files.first;
+          if (file.path != null) {
+            await _showFilePreviewModal(
+              File(file.path!),
+              file.name,
+              isFromCamera: false,
+            );
+          }
+        } else {
+          final files = result.files
+              .where((f) => f.path != null)
+              .map((f) => File(f.path!))
+              .toList();
+          final names = result.files
+              .where((f) => f.path != null)
+              .map((f) => f.name)
+              .toList();
+          if (files.isNotEmpty) {
+            await _showMultiFilePreviewModal(files, names);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error picking audio: $e');
+      if (mounted) {
+        _showTopBanner(
+          'Error picking audio: $e',
+          backgroundColor: const Color(0xFFB91C1C),
+          icon: Icons.error_outline,
+          autoHideAfter: const Duration(seconds: 3),
+        );
+      }
+    }
+  }
+
+  /// Shows a multi-file preview modal for sending multiple documents at once.
+  Future<void> _showMultiFilePreviewModal(List<File> files, List<String> names) async {
+    if (!mounted) return;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (modalContext) {
+        final media = MediaQuery.of(modalContext);
+        final bottomInset = math.max(
+          media.viewInsets.bottom,
+          media.viewPadding.bottom,
+        );
+
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Container(
+              height: media.size.height * 0.86,
+              decoration: const BoxDecoration(
+                color: Color(0xFF121733),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                boxShadow: [
+                  BoxShadow(color: Colors.black54, blurRadius: 14, spreadRadius: 2),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 10, bottom: 6),
+                    width: 52,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.28),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 6, 10, 14),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF7C3AED).withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.insert_drive_file,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Send ${files.length} Files',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              Text(
+                                'Preview before sending',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.62),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white70),
+                          onPressed: () => Navigator.pop(modalContext),
+                          splashRadius: 22,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(color: Colors.white10, height: 1, thickness: 1),
+                  // File list
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      itemCount: files.length,
+                      itemBuilder: (context, index) {
+                        final file = files[index];
+                        final name = names[index];
+                        final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
+                        final fileSize = file.lengthSync();
+                        final isImage = mimeType.startsWith('image/');
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF373B43),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              // Thumbnail or icon
+                              Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: isImage
+                                      ? Image.file(file, fit: BoxFit.cover)
+                                      : Icon(
+                                          _getFileIcon(mimeType),
+                                          color: Colors.white,
+                                          size: 24,
+                                        ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _truncateMiddle(name, maxChars: 36),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _formatFileSize(fileSize),
+                                      style: TextStyle(
+                                        color: Colors.grey[400],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  // Send button
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.02),
+                      border: Border(
+                        top: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+                      ),
+                    ),
+                    padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomInset),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 54,
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(modalContext);
+                                _pickFile();
+                              },
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Replace', style: TextStyle(fontSize: 15)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.white,
+                                side: BorderSide(
+                                  color: Colors.white.withValues(alpha: 0.24),
+                                  width: 1.4,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: SizedBox(
+                            height: 54,
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(modalContext);
+                                // Send all files
+                                for (int i = 0; i < files.length; i++) {
+                                  final mimeType = lookupMimeType(files[i].path) ?? 'application/octet-stream';
+                                  final uploadName = _resolveOutgoingFileName(
+                                    originalName: names[i],
+                                    mimeType: mimeType,
+                                    isFromCamera: false,
+                                  );
+                                  _uploadAndSendFile(files[i], uploadName, mimeType);
+                                }
+                              },
+                              icon: const Icon(Icons.send_rounded),
+                              label: Text(
+                                'Send ${files.length}',
+                                style: const TextStyle(fontSize: 15),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF7C3AED),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                elevation: 0,
+                                padding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   bool _useFrontCamera = false;
@@ -7100,7 +7687,9 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  /// Show file preview modal before sending
+  /// Show file preview modal before sending.
+  /// Modal stays open during upload to show progress.
+  /// Has a minimize button to close modal while upload continues in background.
   Future<void> _showFilePreviewModal(
     File file,
     String fileName, {
@@ -7110,9 +7699,7 @@ class _ChatScreenState extends State<ChatScreen>
     _keepInputUnfocused();
     try {
       await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
-    } catch (_) {
-      // Ignore transient platform timing issues while hiding the IME.
-    }
+    } catch (_) {}
 
     final mimeType = lookupMimeType(file.path) ?? 'application/octet-stream';
     final isImage = mimeType.startsWith('image/');
@@ -7130,284 +7717,222 @@ class _ChatScreenState extends State<ChatScreen>
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      isDismissible: !_isActivelyUploading,
+      enableDrag: !_isActivelyUploading,
       backgroundColor: Colors.transparent,
       builder: (modalContext) {
-        final media = MediaQuery.of(modalContext);
-        final bottomInset = math.max(
-          media.viewInsets.bottom,
-          media.viewPadding.bottom,
-        );
-
-        return Container(
-          height: media.size.height * 0.86,
-          decoration: const BoxDecoration(
-            color: Color(0xFF121733),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            boxShadow: [
-              BoxShadow(color: Colors.black54, blurRadius: 14, spreadRadius: 2),
-            ],
-          ),
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 10, bottom: 6),
-                width: 52,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.28),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 6, 10, 14),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF7C3AED).withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(
-                        isImage
-                            ? Icons.image_outlined
-                            : isVideo
-                            ? Icons.videocam_outlined
-                            : _getFileIcon(mimeType),
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Send File',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 27,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          Text(
-                            'Preview before sending',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.62),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white70),
-                      onPressed: () => Navigator.pop(modalContext),
-                      splashRadius: 22,
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(color: Colors.white10, height: 1, thickness: 1),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        constraints: BoxConstraints(
-                          minHeight: 220,
-                          maxHeight: media.size.height * 0.46,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0F1326),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.08),
-                            width: 1,
-                          ),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(15),
-                          child: isImage
-                              ? InteractiveViewer(
-                                  maxScale: 4,
-                                  minScale: 1,
-                                  child: Center(
-                                    child: Image.file(file, fit: BoxFit.contain),
-                                  ),
-                                )
-                              : isVideo
-                              ? _VideoPreviewWidget(filePath: file.path)
-                              : Center(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        _getFileIcon(mimeType),
-                                        color: Colors.white,
-                                        size: 68,
-                                      ),
-                                      const SizedBox(height: 10),
-                                      Text(
-                                        displayFileName,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.02),
-                  border: Border(
-                    top: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
-                  ),
-                ),
-                padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomInset),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF373B43),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 34,
-                            height: 34,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Icon(
-                              _getFileIcon(mimeType),
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  displayFileName,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${_formatFileSize(fileSize)} | $mimeType',
-                                  style: TextStyle(
-                                    color: Colors.grey[300],
-                                    fontSize: 12,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 54,
-                            child: OutlinedButton.icon(
-                              onPressed: () {
-                                Navigator.pop(modalContext);
-                                if (isFromCamera) {
-                                  unawaited(_retakePhotoFromPreview());
-                                } else {
-                                  _pickFile();
-                                }
-                              },
-                              icon: Icon(
-                                isFromCamera
-                                    ? Icons.camera_alt_outlined
-                                    : Icons.refresh,
-                              ),
-                              label: Text(
-                                isFromCamera ? 'Take Another' : 'Replace',
-                                style: const TextStyle(fontSize: 15),
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.white,
-                                side: BorderSide(
-                                  color: Colors.white.withValues(alpha: 0.24),
-                                  width: 1.4,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: SizedBox(
-                            height: 54,
-                            child: ElevatedButton.icon(
-                              onPressed: () {
-                                Navigator.pop(modalContext);
-                                _uploadAndSendFile(file, uploadFileName, mimeType);
-                              },
-                              icon: const Icon(Icons.send_rounded),
-                              label: const Text(
-                                'Send',
-                                style: TextStyle(fontSize: 15),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF7C3AED),
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                elevation: 0,
-                                padding: EdgeInsets.zero,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        return _FilePreviewModalContent(
+          file: file,
+          fileName: uploadFileName,
+          displayFileName: displayFileName,
+          mimeType: mimeType,
+          isImage: isImage,
+          isVideo: isVideo,
+          fileSize: fileSize,
+          isFromCamera: isFromCamera,
+          isUploading: _isActivelyUploading,
+          uploadProgressNotifier: _activeUploadProgressNotifier,
+          onMinimize: () {
+            // If not uploading, store as pending file
+            if (!_isActivelyUploading) {
+              setState(() {
+                _pendingFile = file;
+                _pendingFileName = uploadFileName;
+                _pendingFileMimeType = mimeType;
+                _pendingFileIsFromCamera = isFromCamera;
+              });
+            }
+            Navigator.pop(modalContext);
+          },
+          onClose: () {
+            // Only allow close if not uploading
+            if (!_isActivelyUploading) {
+              setState(() {
+                _pendingFile = null;
+                _pendingFileName = null;
+                _pendingFileMimeType = null;
+              });
+            }
+            Navigator.pop(modalContext);
+          },
+          onReplace: () {
+            setState(() {
+              _pendingFile = null;
+              _pendingFileName = null;
+              _pendingFileMimeType = null;
+            });
+            Navigator.pop(modalContext);
+            if (isFromCamera) {
+              unawaited(_retakePhotoFromPreview());
+            } else {
+              _pickFile();
+            }
+          },
+          onSend: () {
+            // Start upload in the chat screen state (survives modal dismiss)
+            _startFileUpload(file, uploadFileName, displayFileName, mimeType);
+          },
+          getFileIcon: _getFileIcon,
         );
       },
     );
+  }
+
+  /// Starts the file upload in the chat screen state so it survives modal minimize.
+  void _startFileUpload(File file, String uploadFileName, String displayName, String mimeType) {
+    setState(() {
+      _activeUploadFile = file;
+      _activeUploadFileName = uploadFileName;
+      _activeUploadDisplayName = displayName;
+      _activeUploadMimeType = mimeType;
+      _activeUploadProgress = 0.0;
+      _activeUploadProgressNotifier.value = 0.0;
+      _isActivelyUploading = true;
+      // Clear pending state since we're now uploading
+      _pendingFile = null;
+      _pendingFileName = null;
+      _pendingFileMimeType = null;
+    });
+
+    // Throttle: only update UI when progress changes by at least 1%
+    double _lastReportedProgress = 0.0;
+
+    // Run upload asynchronously — not awaited so modal can be dismissed
+    _uploadAndSendFileWithProgress(
+      file,
+      uploadFileName,
+      mimeType,
+      onProgress: (progress) {
+        // Only trigger setState when progress changes by ≥1% to avoid
+        // rebuilding the entire chat screen on every network chunk
+        if (mounted && (progress - _lastReportedProgress) >= 0.01 || progress >= 1.0) {
+          _lastReportedProgress = progress;
+          _activeUploadProgressNotifier.value = progress;
+          // Use microtask to batch with other pending state updates
+          scheduleMicrotask(() {
+            if (mounted) {
+              setState(() {
+                _activeUploadProgress = progress;
+              });
+            }
+          });
+        }
+      },
+    ).then((_) {
+      if (mounted) {
+        setState(() {
+          _isActivelyUploading = false;
+          _activeUploadFile = null;
+          _activeUploadFileName = null;
+          _activeUploadDisplayName = null;
+          _activeUploadMimeType = null;
+          _activeUploadProgress = 0.0;
+        });
+        _activeUploadProgressNotifier.value = 0.0;
+      }
+    });
+  }
+
+  /// Uploads a file with progress tracking (used by the file preview modal).
+  Future<void> _uploadAndSendFileWithProgress(
+    File file,
+    String fileName,
+    String mimeType, {
+    required void Function(double progress) onProgress,
+  }) async {
+    if (!mounted) return;
+
+    try {
+      onProgress(0.01); // Show immediate feedback
+
+      final result = await MessageService.uploadFileWithProgress(
+        filePath: file.path,
+        fileName: fileName,
+        mimeType: mimeType,
+        recipientId: widget.otherUser.id,
+        onProgress: (sent, total) {
+          if (total > 0) {
+            onProgress(sent / total);
+          }
+        },
+      );
+
+      if (!mounted) return;
+
+      if (result != null && result['success'] == true) {
+        onProgress(1.0);
+        final fileData = result['file'] ?? result;
+        final serverId = fileData['message_id'] ?? fileData['id'];
+        if (serverId != null && _messages.any((m) => m.id == serverId)) {
+          debugPrint('File message already added by socket handler');
+        } else {
+          final now = DateTime.now();
+          final message = Message(
+            id: serverId ?? DateTime.now().millisecondsSinceEpoch,
+            senderId: _currentUserId!,
+            recipientId: widget.otherUser.id,
+            content: fileName,
+            messageType: mimeType.startsWith('image/')
+                ? 'image'
+                : mimeType.startsWith('video/')
+                ? 'video'
+                : 'file',
+            timestamp: now.toIso8601String(),
+            timestampMs: now.millisecondsSinceEpoch,
+            isRead: false,
+            status: 'sent',
+            threadId: '',
+            reactions: {},
+            isDeleted: false,
+            fileUrl: fileData['file_url'] ?? fileData['url'],
+            fileName: fileName,
+            fileType: mimeType,
+            fileSize: file.lengthSync(),
+          );
+
+          if (mounted) {
+            setState(() {
+              _messages.insert(0, message);
+            });
+          }
+        }
+        _scrollToBottom();
+      } else {
+        throw Exception(result?['error'] ?? 'Upload failed');
+      }
+    } catch (e) {
+      debugPrint('Error uploading file: $e');
+      if (mounted) {
+        _showTopBanner(
+          'Failed to send file: $e',
+          backgroundColor: const Color(0xFFB91C1C),
+          icon: Icons.error_outline,
+          autoHideAfter: const Duration(seconds: 3),
+        );
+      }
+    }
+  }
+
+  /// Re-opens the file preview modal showing current upload progress or pending file.
+  Future<void> _reopenFileUploadModal() async {
+    if (_activeUploadFile != null) {
+      await _showFilePreviewModal(
+        _activeUploadFile!,
+        _activeUploadFileName ?? 'file',
+        isFromCamera: false,
+      );
+    } else if (_pendingFile != null) {
+      final file = _pendingFile!;
+      final name = _pendingFileName ?? 'file';
+      final isCamera = _pendingFileIsFromCamera;
+      // Clear pending state since we're re-opening
+      setState(() {
+        _pendingFile = null;
+        _pendingFileName = null;
+        _pendingFileMimeType = null;
+      });
+      await _showFilePreviewModal(file, name, isFromCamera: isCamera);
+    }
   }
 
   String _resolveOutgoingFileName({
@@ -13246,6 +13771,440 @@ class _ProgressBorderPainter extends CustomPainter {
   bool shouldRepaint(_ProgressBorderPainter oldDelegate) {
     return oldDelegate.progress != progress ||
         oldDelegate.color != color;
+  }
+}
+
+/// Stateful modal content for file preview with upload progress.
+class _FilePreviewModalContent extends StatefulWidget {
+  final File file;
+  final String fileName;
+  final String displayFileName;
+  final String mimeType;
+  final bool isImage;
+  final bool isVideo;
+  final int fileSize;
+  final bool isFromCamera;
+  final bool isUploading;
+  final ValueNotifier<double> uploadProgressNotifier;
+  final VoidCallback onMinimize;
+  final VoidCallback onClose;
+  final VoidCallback onReplace;
+  final VoidCallback onSend;
+  final IconData Function(String mimeType) getFileIcon;
+
+  const _FilePreviewModalContent({
+    required this.file,
+    required this.fileName,
+    required this.displayFileName,
+    required this.mimeType,
+    required this.isImage,
+    required this.isVideo,
+    required this.fileSize,
+    required this.isFromCamera,
+    required this.isUploading,
+    required this.uploadProgressNotifier,
+    required this.onMinimize,
+    required this.onClose,
+    required this.onReplace,
+    required this.onSend,
+    required this.getFileIcon,
+  });
+
+  @override
+  State<_FilePreviewModalContent> createState() => _FilePreviewModalContentState();
+}
+
+class _FilePreviewModalContentState extends State<_FilePreviewModalContent> {
+  bool _isSending = false;
+  double _lastProgress = 0.0;
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _isSending = widget.isUploading;
+    widget.uploadProgressNotifier.addListener(_onProgressChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.uploadProgressNotifier.removeListener(_onProgressChanged);
+    super.dispose();
+  }
+
+  void _onProgressChanged() {
+    final progress = widget.uploadProgressNotifier.value;
+    // Upload completed: progress was > 0 (uploading) and reset to 0 (done)
+    if (_isSending && _lastProgress > 0.05 && progress == 0.0) {
+      // Auto-dismiss the modal after a brief moment to show 100%
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    }
+    _lastProgress = progress;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final bottomInset = math.max(
+      media.viewInsets.bottom,
+      media.viewPadding.bottom,
+    );
+
+    return ValueListenableBuilder<double>(
+      valueListenable: widget.uploadProgressNotifier,
+      builder: (context, uploadProgress, _) {
+        final isUploading = _isSending || widget.isUploading;
+
+        return Container(
+      height: media.size.height * 0.86,
+      decoration: const BoxDecoration(
+        color: Color(0xFF121733),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(color: Colors.black54, blurRadius: 14, spreadRadius: 2),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Drag handle
+          Container(
+            margin: const EdgeInsets.only(top: 10, bottom: 6),
+            width: 52,
+            height: 5,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.28),
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ),
+          // Header with minimize and close buttons
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 6, 6, 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF7C3AED).withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    widget.isImage
+                        ? Icons.image_outlined
+                        : widget.isVideo
+                        ? Icons.videocam_outlined
+                        : widget.getFileIcon(widget.mimeType),
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isUploading ? 'Sending...' : 'Send File',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        isUploading
+                            ? '${(uploadProgress * 100).toInt()}% uploaded'
+                            : 'Preview before sending',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.62),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Minimize button
+                IconButton(
+                  icon: const Icon(Icons.minimize, color: Colors.white70),
+                  onPressed: widget.onMinimize,
+                  tooltip: 'Minimize',
+                  splashRadius: 22,
+                ),
+                // Close button (disabled during upload)
+                IconButton(
+                  icon: Icon(Icons.close,
+                      color: isUploading ? Colors.white24 : Colors.white70),
+                  onPressed: isUploading ? null : widget.onClose,
+                  splashRadius: 22,
+                ),
+              ],
+            ),
+          ),
+          // Upload progress bar
+          if (isUploading)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: uploadProgress > 0 ? uploadProgress : null,
+                      backgroundColor: Colors.white10,
+                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF7C3AED)),
+                      minHeight: 6,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        uploadProgress > 0
+                            ? '${_formatFileSize((widget.fileSize * uploadProgress).toInt())} / ${_formatFileSize(widget.fileSize)}'
+                            : 'Starting upload...',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.6),
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        '${(uploadProgress * 100).toInt()}%',
+                        style: const TextStyle(
+                          color: Color(0xFF7C3AED),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            )
+          else
+            const Divider(color: Colors.white10, height: 1, thickness: 1),
+          // Preview area
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    constraints: BoxConstraints(
+                      minHeight: 220,
+                      maxHeight: media.size.height * 0.46,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F1326),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.08),
+                        width: 1,
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(15),
+                      child: widget.isImage
+                          ? InteractiveViewer(
+                              maxScale: 4,
+                              minScale: 1,
+                              child: Center(
+                                child: Image.file(widget.file, fit: BoxFit.contain),
+                              ),
+                            )
+                          : widget.isVideo
+                          ? _VideoPreviewWidget(filePath: widget.file.path)
+                          : Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    widget.getFileIcon(widget.mimeType),
+                                    color: Colors.white,
+                                    size: 68,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    widget.displayFileName,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              ),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Bottom section
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.02),
+              border: Border(
+                top: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+              ),
+            ),
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomInset),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // File info
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF373B43),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          widget.getFileIcon(widget.mimeType),
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.displayFileName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${_formatFileSize(widget.fileSize)} | ${widget.mimeType}',
+                              style: TextStyle(
+                                color: Colors.grey[300],
+                                fontSize: 12,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // Action buttons
+                Row(
+                  children: [
+                    if (!isUploading)
+                      Expanded(
+                        child: SizedBox(
+                          height: 54,
+                          child: OutlinedButton.icon(
+                            onPressed: widget.onReplace,
+                            icon: Icon(
+                              widget.isFromCamera
+                                  ? Icons.camera_alt_outlined
+                                  : Icons.refresh,
+                            ),
+                            label: Text(
+                              widget.isFromCamera ? 'Take Another' : 'Replace',
+                              style: const TextStyle(fontSize: 15),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.24),
+                                width: 1.4,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (!isUploading) const SizedBox(width: 10),
+                    Expanded(
+                      child: SizedBox(
+                        height: 54,
+                        child: ElevatedButton.icon(
+                          onPressed: isUploading
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _isSending = true;
+                                  });
+                                  widget.onSend();
+                                },
+                          icon: isUploading
+                              ? SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                    value: uploadProgress > 0 ? uploadProgress : null,
+                                  ),
+                                )
+                              : const Icon(Icons.send_rounded),
+                          label: Text(
+                            isUploading
+                                ? '${(uploadProgress * 100).toInt()}%'
+                                : 'Send',
+                            style: const TextStyle(fontSize: 15),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: isUploading
+                                ? const Color(0xFF5B21B6)
+                                : const Color(0xFF7C3AED),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            elevation: 0,
+                            padding: EdgeInsets.zero,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );  // end Container
+      },  // end ValueListenableBuilder builder
+    );  // end ValueListenableBuilder
   }
 }
 

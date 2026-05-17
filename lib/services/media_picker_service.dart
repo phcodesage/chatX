@@ -22,11 +22,6 @@ class MediaPickerService {
     List<AssetEntity>? selectedAssets,
     int maxAssets = 20,
   }) async {
-    final hasPermission = await requestPhotoPermission();
-    if (!hasPermission) {
-      return null;
-    }
-
     if (!context.mounted) return null;
 
     final theme = _buildDarkPickerTheme();
@@ -39,30 +34,41 @@ class MediaPickerService {
       pageSize: 80,
     );
 
-    // Use our custom builder delegate with the custom viewer
+    // Use our custom builder delegate with the custom viewer.
+    // SpecialPickerType.noPreview makes tapping a thumbnail toggle selection
+    // instead of opening the picker's built-in viewer.
     final delegate = CustomAssetPickerBuilderDelegate(
       provider: provider,
       initialPermission: PermissionState.authorized,
       pickerTheme: theme,
       gridCount: 4,
       textDelegate: const EnglishAssetPickerTextDelegate(),
+      specialPickerType: SpecialPickerType.noPreview,
     );
 
-    final result = await AssetPicker.pickAssetsWithDelegate(
-      context,
-      delegate: delegate,
-    );
-
-    return result;
+    try {
+      final result = await AssetPicker.pickAssetsWithDelegate(
+        context,
+        delegate: delegate,
+      );
+      return result;
+    } catch (e) {
+      // If permission denied, the picker throws — handle gracefully
+      debugPrint('pickAssets error: $e');
+      return null;
+    }
   }
 
   /// Opens device camera for photo/video capture.
   /// Returns null if cancelled or permission denied.
   ///
+  /// Opens in photo mode by default. User can switch to video
+  /// in the native camera UI on most devices.
   /// [maxVideoDuration] defaults to 60 seconds per the design spec.
   static Future<AssetEntity?> captureFromCamera(
     BuildContext context, {
     Duration maxVideoDuration = const Duration(seconds: 60),
+    bool preferVideo = false,
   }) async {
     final hasPermission = await requestCameraPermission();
     if (!hasPermission) {
@@ -72,11 +78,17 @@ class MediaPickerService {
     if (!context.mounted) return null;
 
     try {
-      // Try video capture first — user can switch to photo in the camera UI
-      final XFile? file = await _imagePicker.pickVideo(
-        source: ImageSource.camera,
-        maxDuration: maxVideoDuration,
-      );
+      XFile? file;
+      if (preferVideo) {
+        file = await _imagePicker.pickVideo(
+          source: ImageSource.camera,
+          maxDuration: maxVideoDuration,
+        );
+      } else {
+        file = await _imagePicker.pickImage(
+          source: ImageSource.camera,
+        );
+      }
 
       if (file == null) return null;
 
