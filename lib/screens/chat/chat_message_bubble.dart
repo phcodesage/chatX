@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../models/link_preview.dart';
 import '../../models/message.dart';
@@ -400,10 +401,6 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
   }
 
   Widget _buildMediaContent(bool isImage, bool isVideo, Message message, int imageCacheWidth) {
-    // Fixed aspect ratio prevents layout shifts when the image loads,
-    // which is the primary cause of scroll momentum being broken.
-    const double mediaAspectRatio = 4 / 3;
-
     final borderRadius = BorderRadius.only(
       topLeft: const Radius.circular(16),
       topRight: const Radius.circular(16),
@@ -424,26 +421,22 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
         borderRadius: borderRadius,
         child: GestureDetector(
           onTap: () => widget.onOpenMediaViewer(message),
-          child: AspectRatio(
-            aspectRatio: mediaAspectRatio,
+          child: Container(
+            constraints: const BoxConstraints(
+              maxHeight: 320,
+              minHeight: 100,
+            ),
+            color: Colors.grey[850],
             child: Stack(
-              fit: StackFit.expand,
               alignment: Alignment.center,
               children: [
-                // Placeholder shown while image loads — same size as the
-                // final image so layout never shifts.
-                Container(color: Colors.grey[850]),
-
                 if (isImage)
                   Image.network(
                     message.fileUrl!,
-                    fit: BoxFit.cover,
+                    fit: BoxFit.contain,
                     width: double.infinity,
-                    height: double.infinity,
                     cacheWidth: imageCacheWidth,
                     filterQuality: FilterQuality.low,
-                    // frameBuilder gives a smooth fade-in without blocking
-                    // the scroll thread the way loadingBuilder can.
                     frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
                       if (wasSynchronouslyLoaded || frame != null) {
                         return child;
@@ -451,15 +444,15 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                       return AnimatedSwitcher(
                         duration: const Duration(milliseconds: 200),
                         child: frame == null
-                            ? Container(
-                                key: const ValueKey('placeholder'),
-                                color: Colors.grey[850],
+                            ? const SizedBox.shrink(
+                                key: ValueKey('placeholder'),
                               )
                             : child,
                       );
                     },
                     errorBuilder: (context, error, stackTrace) {
                       return Container(
+                        height: 200,
                         color: Colors.grey[800],
                         child: const Center(
                           child: Icon(
@@ -472,15 +465,9 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                     },
                   )
                 else if (isVideo)
-                  Container(
-                    color: Colors.black87,
-                    child: const Center(
-                      child: Icon(
-                        Icons.play_circle_fill,
-                        color: Colors.white,
-                        size: 60,
-                      ),
-                    ),
+                  _VideoThumbnailWidget(
+                    videoUrl: message.fileUrl!,
+                    cacheWidth: imageCacheWidth,
                   ),
 
                 if (isVideo)
@@ -961,6 +948,115 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
           fontWeight: FontWeight.w600,
           height: 1,
         ),
+      ),
+    );
+  }
+}
+
+/// Lightweight video thumbnail widget that initializes a VideoPlayerController
+/// to display the first frame of a video as a preview in chat bubbles.
+/// Disposes the controller when scrolled off-screen.
+class _VideoThumbnailWidget extends StatefulWidget {
+  final String videoUrl;
+  final int cacheWidth;
+
+  const _VideoThumbnailWidget({
+    required this.videoUrl,
+    required this.cacheWidth,
+  });
+
+  @override
+  State<_VideoThumbnailWidget> createState() => _VideoThumbnailWidgetState();
+}
+
+class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initController();
+  }
+
+  Future<void> _initController() async {
+    try {
+      final controller = VideoPlayerController.networkUrl(
+        Uri.parse(widget.videoUrl),
+      );
+      await controller.initialize();
+      if (!mounted) {
+        controller.dispose();
+        return;
+      }
+      // Pause immediately — we only want the first frame
+      await controller.pause();
+      await controller.seekTo(Duration.zero);
+      setState(() {
+        _controller = controller;
+        _initialized = true;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hasError || (!_initialized && _controller == null)) {
+      return Container(
+        color: Colors.grey[900],
+        height: 200,
+        width: double.infinity,
+        child: const Center(
+          child: Icon(
+            Icons.videocam,
+            color: Colors.white38,
+            size: 48,
+          ),
+        ),
+      );
+    }
+
+    if (!_initialized) {
+      return Container(
+        color: Colors.grey[900],
+        height: 200,
+        width: double.infinity,
+        child: const Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Colors.white38,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final controller = _controller!;
+    final aspectRatio = controller.value.aspectRatio > 0
+        ? controller.value.aspectRatio
+        : 16 / 9;
+
+    return SizedBox(
+      width: double.infinity,
+      child: AspectRatio(
+        aspectRatio: aspectRatio,
+        child: VideoPlayer(controller),
       ),
     );
   }

@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../models/group.dart';
 import '../services/group_service.dart';
@@ -1830,89 +1831,84 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ),
               child: GestureDetector(
                 onTap: () => _openMediaViewer(message),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    if (isImage)
-                      Image.network(
-                        message.fileUrl!,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return Container(
-                            height: 150,
-                            color: Colors.grey[800],
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                value:
-                                    loadingProgress.expectedTotalBytes != null
-                                    ? loadingProgress.cumulativeBytesLoaded /
-                                          loadingProgress.expectedTotalBytes!
-                                    : null,
-                                color: Colors.white,
+                child: Container(
+                  constraints: const BoxConstraints(
+                    maxHeight: 320,
+                    minHeight: 100,
+                  ),
+                  color: Colors.grey[850],
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      if (isImage)
+                        Image.network(
+                          message.fileUrl!,
+                          fit: BoxFit.contain,
+                          width: double.infinity,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Container(
+                              height: 200,
+                              color: Colors.grey[800],
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value:
+                                      loadingProgress.expectedTotalBytes != null
+                                      ? loadingProgress.cumulativeBytesLoaded /
+                                            loadingProgress.expectedTotalBytes!
+                                      : null,
+                                  color: Colors.white,
+                                ),
                               ),
-                            ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          // debugPrint(
-                          //   '❌ [IMAGE ERROR] Failed to load image: $error',
-                          // );
-                          // debugPrint('❌ [IMAGE ERROR] URL: ${message.fileUrl}');
-                          return Container(
-                            height: 100,
-                            color: Colors.grey[800],
-                            child: const Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.broken_image,
-                                    color: Colors.white54,
-                                    size: 40,
-                                  ),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    'Image failed to load',
-                                    style: TextStyle(
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              height: 100,
+                              color: Colors.grey[800],
+                              child: const Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.broken_image,
                                       color: Colors.white54,
-                                      fontSize: 12,
+                                      size: 40,
                                     ),
-                                  ),
-                                ],
+                                    SizedBox(height: 8),
+                                    Text(
+                                      'Image failed to load',
+                                      style: TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                          );
-                        },
-                      )
-                    else if (isVideo)
-                      Container(
-                        height: 150,
-                        color: Colors.black87,
-                        child: const Center(
-                          child: Icon(
-                            Icons.play_circle_fill,
+                            );
+                          },
+                        )
+                      else if (isVideo)
+                        _GroupVideoThumbnailWidget(
+                          videoUrl: message.fileUrl!,
+                        ),
+                      // Play button overlay for video
+                      if (isVideo)
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: const BoxDecoration(
+                            color: Colors.black45,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.play_arrow,
                             color: Colors.white,
-                            size: 60,
+                            size: 36,
                           ),
                         ),
-                      ),
-                    // Play button overlay for video
-                    if (isVideo)
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: const BoxDecoration(
-                          color: Colors.black45,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.play_arrow,
-                          color: Colors.white,
-                          size: 36,
-                        ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -4920,6 +4916,112 @@ class _AudioMessagePlayerState extends State<_AudioMessagePlayer> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Lightweight video thumbnail widget for group chat bubbles.
+/// Initializes a VideoPlayerController to display the first frame.
+class _GroupVideoThumbnailWidget extends StatefulWidget {
+  final String videoUrl;
+
+  const _GroupVideoThumbnailWidget({
+    required this.videoUrl,
+  });
+
+  @override
+  State<_GroupVideoThumbnailWidget> createState() =>
+      _GroupVideoThumbnailWidgetState();
+}
+
+class _GroupVideoThumbnailWidgetState extends State<_GroupVideoThumbnailWidget> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initController();
+  }
+
+  Future<void> _initController() async {
+    try {
+      final controller = VideoPlayerController.networkUrl(
+        Uri.parse(widget.videoUrl),
+      );
+      await controller.initialize();
+      if (!mounted) {
+        controller.dispose();
+        return;
+      }
+      await controller.pause();
+      await controller.seekTo(Duration.zero);
+      setState(() {
+        _controller = controller;
+        _initialized = true;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hasError || (!_initialized && _controller == null)) {
+      return Container(
+        color: Colors.grey[900],
+        height: 200,
+        width: double.infinity,
+        child: const Center(
+          child: Icon(
+            Icons.videocam,
+            color: Colors.white38,
+            size: 48,
+          ),
+        ),
+      );
+    }
+
+    if (!_initialized) {
+      return Container(
+        color: Colors.grey[900],
+        height: 200,
+        width: double.infinity,
+        child: const Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Colors.white38,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final controller = _controller!;
+    final aspectRatio = controller.value.aspectRatio > 0
+        ? controller.value.aspectRatio
+        : 16 / 9;
+
+    return SizedBox(
+      width: double.infinity,
+      child: AspectRatio(
+        aspectRatio: aspectRatio,
+        child: VideoPlayer(controller),
       ),
     );
   }
