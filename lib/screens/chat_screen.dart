@@ -53,7 +53,15 @@ import 'chat/chat_typing_preview.dart';
 import 'chat/swipeable_message.dart';
 import 'connected_call_screen.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:video_player/video_player.dart';
 import '../utils/contact_utils.dart';
+import '../widgets/attachment_menu_sheet.dart';
+import '../services/media_picker_service.dart';
+import '../state/media_upload_state.dart';
+import '../widgets/upload_progress_indicator.dart';
+import 'media_preview_screen.dart';
+import 'media_gallery_viewer.dart';
+import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 
 /// Chat screen for messaging with a specific user
 class ChatScreen extends StatefulWidget {
@@ -171,6 +179,7 @@ class _ChatScreenState extends State<ChatScreen>
   );
 
   final SocketService _socketService = SocketService();
+  final MediaUploadState _mediaUploadState = MediaUploadState();
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _autoCorrectionWrongController =
     TextEditingController();
@@ -222,6 +231,10 @@ class _ChatScreenState extends State<ChatScreen>
   Route<dynamic>? _activeIncomingCallRoute;
   int? _activeIncomingCallId;
   String? _activeIncomingCallRoomId;
+
+  // Pending media files (minimized from preview screen)
+  List<AssetEntity>? _pendingMediaItems;
+  String _pendingMediaCaption = '';
 
   // Timestamp visibility toggle (hidden by default like web)
   bool _showTimestamps = false;
@@ -1517,7 +1530,7 @@ class _ChatScreenState extends State<ChatScreen>
       }
     });
 
-    // Listen for file messages from web
+    // Listen for file messages from web (handles single and batch media)
     _socketService.addListener('fileReceived', key, (
       Map<String, dynamic> data,
     ) {
@@ -1534,8 +1547,11 @@ class _ChatScreenState extends State<ChatScreen>
         final now = DateTime.now();
         final timestampMs = data['timestamp_ms'] ?? now.millisecondsSinceEpoch;
 
-        // Check for duplicates (cross-device sync may send same message twice)
-        final messageId = data['message_id'];
+        // Extract message ID — backend may send as 'id' or 'message_id'
+        final messageId = data['id'] ?? data['message_id'];
+
+        // Check for duplicates: prevents double-insertion when batch uploads
+        // emit rapid file_received events or cross-device sync echoes arrive
         if (messageId != null && _messages.any((m) => m.id == messageId)) {
           debugPrint(' Skipping duplicate file message: $messageId');
           return;
@@ -1562,19 +1578,24 @@ class _ChatScreenState extends State<ChatScreen>
             ? rawFileUrl
             : '${ApiConfig.baseUrl}$rawFileUrl';
 
+        // Use caption/content from backend if available, fall back to file_name
+        final content = (data['content'] as String?)?.isNotEmpty == true
+            ? data['content'] as String
+            : (data['file_name'] as String? ?? 'File');
+
         // Create a message from the file data
         final message = Message(
           id: messageId ?? timestampMs,
           senderId: senderId ?? 0,
           recipientId: recipientId ?? _currentUserId ?? 0,
-          content: data['file_name'] ?? 'File',
+          content: content,
           messageType: messageType,
-          timestamp: now.toIso8601String(),
+          timestamp: data['timestamp'] as String? ?? now.toIso8601String(),
           timestampMs: timestampMs,
           isRead: false,
           status: 'delivered',
-          threadId: '',
-          reactions: {},
+          threadId: data['thread_id'] as String? ?? '',
+          reactions: (data['reactions'] as Map<String, dynamic>?) ?? {},
           isDeleted: false,
           fileUrl: fullFileUrl,
           fileName: data['file_name'],
@@ -4630,17 +4651,8 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildUnifiedActionsBar() {
     final allButtons = <Widget>[
-      // Row 1: Camera, Send File, Voice Message, Auto Correction, Translate Off, Stamp Off
-      _buildCompressedActionChip(
-        label: 'Camera',
-        backgroundColor: const Color(0xFF3B82F6),
-        onPressed: _takePhoto,
-      ),
-      _buildCompressedActionChip(
-        label: 'Send File',
-        backgroundColor: const Color(0xFF10B981),
-        onPressed: _pickFile,
-      ),
+      // Row 1: Send File, Voice Message, Auto Correction, Translate Off, Stamp Off
+      _buildSendFileChip(),
       _buildCompressedActionChip(
         label: 'Voice Message',
         backgroundColor: const Color(0xFFEF4444),
@@ -5095,6 +5107,45 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             );
           },
+        );
+      },
+    );
+  }
+
+  /// Builds the Send File button with an upload progress border.
+  /// When uploads are active, a green border fills around the chip
+  /// proportional to the overall upload progress (0% to 100%).
+  Widget _buildSendFileChip() {
+    return ListenableBuilder(
+      listenable: _mediaUploadState,
+      builder: (context, _) {
+        final progress = _mediaUploadState.overallProgress;
+        final isUploading = _mediaUploadState.hasActiveUploads;
+
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            // Progress border (shown when uploading)
+            if (isUploading && progress != null)
+              SizedBox(
+                width: 62,
+                height: 40,
+                child: CustomPaint(
+                  painter: _ProgressBorderPainter(
+                    progress: progress,
+                    color: const Color(0xFF25D366),
+                    borderRadius: 12,
+                    strokeWidth: 2.5,
+                  ),
+                ),
+              ),
+            // The actual button
+            _buildCompressedActionChip(
+              label: 'Send File',
+              backgroundColor: const Color(0xFF10B981),
+              onPressed: _showAttachmentMenu,
+            ),
+          ],
         );
       },
     );
@@ -6774,6 +6825,105 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// Shows the WhatsApp-style attachment menu bottom sheet with
+  /// Camera, Gallery, and Document options.
+  Future<void> _showAttachmentMenu() async {
+    _restoreInputFocusOnResume = false;
+    _keepInputUnfocused();
+    try {
+      await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    } catch (_) {
+      // Ignore transient platform timing issues while hiding the IME.
+    }
+
+    if (!mounted) return;
+
+    await AttachmentMenuSheet.show(
+      context,
+      onCameraTap: _handleAttachmentCamera,
+      onGalleryTap: _handleAttachmentGallery,
+      onDocumentTap: _pickFile,
+    );
+  }
+
+  /// Handles the Camera option from the attachment menu.
+  /// Opens the device camera via MediaPickerService and navigates
+  /// to the preview screen on successful capture.
+  Future<void> _handleAttachmentCamera() async {
+    if (!mounted) return;
+
+    final asset = await MediaPickerService.captureFromCamera(context);
+    if (asset == null || !mounted) return;
+
+    // Navigate to the MediaPreviewScreen with the captured asset
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MediaPreviewScreen(
+          selectedAssets: [asset],
+          recipientId: widget.otherUser.id,
+          fromCamera: true,
+          mediaUploadState: _mediaUploadState,
+        ),
+      ),
+    );
+  }
+
+  /// Handles the Gallery option from the attachment menu.
+  /// Opens the multi-select asset picker via MediaPickerService and
+  /// navigates to the preview screen with selected assets.
+  /// If the user presses back on the preview screen, re-opens the picker
+  /// with the current selection preserved (Gallery → Preview → Back → Gallery).
+  Future<void> _handleAttachmentGallery({
+    List<AssetEntity>? preSelectedAssets,
+  }) async {
+    if (!mounted) return;
+
+    final assets = await MediaPickerService.pickAssets(
+      context,
+      selectedAssets: preSelectedAssets,
+    );
+    if (assets == null || assets.isEmpty || !mounted) return;
+
+    // Navigate to the MediaPreviewScreen with the selected assets.
+    // Result can be:
+    //   - List<AssetEntity>: back navigation, re-open picker with these pre-selected
+    //   - MinimizedMediaResult: user minimized, store pending files and show badge
+    //   - null: send completed or cancelled
+    final result = await Navigator.of(context).push<Object>(
+      MaterialPageRoute(
+        builder: (_) => MediaPreviewScreen(
+          selectedAssets: assets,
+          recipientId: widget.otherUser.id,
+          fromCamera: false,
+          mediaUploadState: _mediaUploadState,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (result is MinimizedMediaResult) {
+      // User minimized — store pending files for the badge
+      setState(() {
+        _pendingMediaItems = result.items;
+        _pendingMediaCaption = result.caption;
+      });
+    } else if (result is List<AssetEntity> && result.isNotEmpty) {
+      // Back navigation — re-open the picker with selection preserved
+      await _handleAttachmentGallery(preSelectedAssets: result);
+    }
+  }
+
+  /// Retries all failed media uploads by clearing their error state.
+  /// Failed uploads are removed from tracking so the user can re-attempt
+  /// via the attachment menu.
+  void _retryFailedUploads() {
+    final failedIds = _mediaUploadState.failedUploadIds;
+    for (final id in failedIds) {
+      _mediaUploadState.removeUpload(id);
+    }
+  }
+
   /// Pick a file from device storage
   Future<void> _pickFile() async {
     try {
@@ -7024,27 +7174,7 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                 )
                               : isVideo
-                              ? const Center(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.videocam,
-                                        color: Colors.white,
-                                        size: 70,
-                                      ),
-                                      SizedBox(height: 10),
-                                      Text(
-                                        'Video preview unavailable',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                )
+                              ? _VideoPreviewWidget(filePath: file.path)
                               : Center(
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
@@ -8479,7 +8609,7 @@ class _ChatScreenState extends State<ChatScreen>
 
         // Check if the fileReceived socket handler already added this message
         // (race condition: socket event can arrive before REST response)
-        final serverId = fileData['message_id'];
+        final serverId = fileData['message_id'] ?? fileData['id'];
         if (serverId != null && _messages.any((m) => m.id == serverId)) {
           debugPrint(
             'ðŸŽ¤ Voice message already added by socket handler, skipping local insert',
@@ -8598,7 +8728,7 @@ class _ChatScreenState extends State<ChatScreen>
 
         // Check if the fileReceived socket handler already added this message
         // (race condition: socket event can arrive before REST response)
-        final serverId = fileData['message_id'];
+        final serverId = fileData['message_id'] ?? fileData['id'];
         if (serverId != null && _messages.any((m) => m.id == serverId)) {
           debugPrint(
             'ðŸ“Ž File message already added by socket handler, skipping local insert',
@@ -8669,6 +8799,7 @@ class _ChatScreenState extends State<ChatScreen>
     _inputModeSwitchTimer?.cancel();
     _metricsRefreshTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _mediaUploadState.dispose();
     _taskBadgeAnimController.dispose();
     _taskModalVersion.dispose();
     _messageController.removeListener(_syncCommonPhrasesVisibility);
@@ -8888,6 +9019,16 @@ class _ChatScreenState extends State<ChatScreen>
                             ),
                           ),
                         ),
+                      // Upload progress indicators
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: !_isAtBottom ? 72 : 8,
+                        child: UploadProgressIndicator(
+                          uploadState: _mediaUploadState,
+                          onRetry: _retryFailedUploads,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -12434,59 +12575,36 @@ class _ChatScreenState extends State<ChatScreen>
   void _openMediaViewer(Message message) {
     if (message.fileUrl == null) return;
 
-    final isVideo =
-        message.messageType == 'video' ||
-        (message.fileType?.startsWith('video/') ?? false);
+    // Collect all media messages from the conversation (image or video)
+    final mediaMessages = _messages.where((m) {
+      if (m.isDeleted) return false;
+      if (m.fileUrl == null || m.fileUrl!.isEmpty) return false;
+      final isImage = m.messageType == 'image' ||
+          (m.fileType?.startsWith('image/') ?? false);
+      final isVideo = m.messageType == 'video' ||
+          (m.fileType?.startsWith('video/') ?? false);
+      return isImage || isVideo;
+    }).toList();
 
-    if (isVideo) {
-      // For video, we could open in external player or implement video player
-      // For now, show a snackbar
-      _showTopSnackBar(
-        SnackBar(
-          content: Text('Video: ${message.fileName ?? "Video"}'),
-          action: SnackBarAction(
-            label: 'Open',
-            onPressed: () {
-              // Could use url_launcher to open video URL
-            },
-          ),
+    if (mediaMessages.isEmpty) return;
+
+    // Sort chronologically by timestampMs (oldest first)
+    mediaMessages.sort((a, b) => a.timestampMs.compareTo(b.timestampMs));
+
+    // Find the index of the tapped message in the sorted list
+    final initialIndex = mediaMessages.indexWhere((m) => m.id == message.id);
+    if (initialIndex == -1) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => MediaGalleryViewer(
+          mediaMessages: mediaMessages,
+          initialIndex: initialIndex,
+          currentUserId: _currentUserId ?? 0,
+          otherUserName: widget.otherUser.fullName,
         ),
-      );
-    } else {
-      // Show image in full screen dialog
-      showDialog(
-        context: context,
-        builder: (context) => Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: EdgeInsets.zero,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // Dark background
-              GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Container(color: Colors.black87),
-              ),
-              // Image
-              Center(
-                child: InteractiveViewer(
-                  child: Image.network(message.fileUrl!, fit: BoxFit.contain),
-                ),
-              ),
-              // Close button
-              Positioned(
-                top: 40,
-                right: 16,
-                child: IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+      ),
+    );
   }
 
   Color _getAvatarColor() {
@@ -13010,6 +13128,177 @@ class _VoiceRecordingModalState extends State<_VoiceRecordingModal> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Custom painter that draws a rounded-rectangle progress border
+/// around the Send File button. The border fills clockwise from the
+/// top-left corner proportional to [progress] (0.0 to 1.0).
+class _ProgressBorderPainter extends CustomPainter {
+  final double progress;
+  final Color color;
+  final double borderRadius;
+  final double strokeWidth;
+
+  _ProgressBorderPainter({
+    required this.progress,
+    required this.color,
+    required this.borderRadius,
+    required this.strokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0) return;
+
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(borderRadius));
+
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+
+    // Draw the progress as an arc around the rounded rectangle path
+    // We use a path metric to draw only a portion of the full border
+    final path = Path()..addRRect(rrect);
+    final pathMetrics = path.computeMetrics();
+
+    for (final metric in pathMetrics) {
+      final extractLength = metric.length * progress.clamp(0.0, 1.0);
+      final extractPath = metric.extractPath(0, extractLength);
+      canvas.drawPath(extractPath, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ProgressBorderPainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.color != color;
+  }
+}
+
+/// A stateful widget that plays a video file for preview in the file send modal.
+class _VideoPreviewWidget extends StatefulWidget {
+  final String filePath;
+
+  const _VideoPreviewWidget({required this.filePath});
+
+  @override
+  State<_VideoPreviewWidget> createState() => _VideoPreviewWidgetState();
+}
+
+class _VideoPreviewWidgetState extends State<_VideoPreviewWidget> {
+  late VideoPlayerController _controller;
+  bool _initialized = false;
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(File(widget.filePath))
+      ..initialize().then((_) {
+        if (mounted) {
+          setState(() => _initialized = true);
+        }
+      }).catchError((e) {
+        if (mounted) {
+          setState(() => _hasError = true);
+        }
+      });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _togglePlayback() {
+    setState(() {
+      if (_controller.value.isPlaying) {
+        _controller.pause();
+      } else {
+        _controller.play();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hasError) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, color: Colors.white54, size: 48),
+            SizedBox(height: 8),
+            Text(
+              'Failed to load video',
+              style: TextStyle(color: Colors.white54, fontSize: 14),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!_initialized) {
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFF25D366)),
+      );
+    }
+
+    return GestureDetector(
+      onTap: _togglePlayback,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: _controller.value.aspectRatio > 0
+                  ? _controller.value.aspectRatio
+                  : 16 / 9,
+              child: VideoPlayer(_controller),
+            ),
+          ),
+          // Play/pause overlay
+          ValueListenableBuilder<VideoPlayerValue>(
+            valueListenable: _controller,
+            builder: (context, value, child) {
+              if (!value.isPlaying) {
+                return const DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black45,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.all(14),
+                    child: Icon(Icons.play_arrow, color: Colors.white, size: 40),
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+          // Progress bar at bottom
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: VideoProgressIndicator(
+              _controller,
+              allowScrubbing: true,
+              colors: const VideoProgressColors(
+                playedColor: Color(0xFF25D366),
+                bufferedColor: Colors.white24,
+                backgroundColor: Colors.white10,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
