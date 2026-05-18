@@ -1196,6 +1196,16 @@ class _ChatScreenState extends State<ChatScreen>
         Message.fromJson(data),
       );
 
+      // Self-chat guard: when chatting with yourself, only accept messages
+      // where both sender AND recipient are the current user.
+      final isSelfChat = widget.otherUser.id == _currentUserId;
+      if (isSelfChat) {
+        if (incomingMessage.senderId != _currentUserId ||
+            incomingMessage.recipientId != _currentUserId) {
+          return;
+        }
+      }
+
       // Only add if it's from the current conversation
       if (incomingMessage.senderId == widget.otherUser.id ||
           incomingMessage.recipientId == widget.otherUser.id) {
