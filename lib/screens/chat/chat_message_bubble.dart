@@ -190,6 +190,8 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
               _buildReplyPreview(widget.message, widget.scale),
             if (isMedia && widget.message.fileUrl != null)
               _buildMediaContent(isImage, isVideo, widget.message, imageCacheWidth),
+            if (isMedia && widget.message.fileUrl != null)
+              _buildMediaFileInfo(widget.message, widget.scale),
             if (isAudio && widget.message.fileUrl != null)
               AudioMessagePlayer(
                 audioUrl: widget.message.fileUrl!,
@@ -489,6 +491,62 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
         ),
       ),
     );
+  }
+
+  /// Builds a compact file info row below media content showing filename and size.
+  Widget _buildMediaFileInfo(Message message, double scale) {
+    final fileName = message.fileName ?? '';
+    final fileSize = message.fileSize;
+    
+    // Don't show if no useful info available
+    if (fileName.isEmpty && fileSize == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 12 * scale, vertical: 6 * scale),
+      child: Row(
+        children: [
+          Icon(
+            message.messageType == 'video' ||
+                    (message.fileType?.startsWith('video/') ?? false)
+                ? Icons.videocam_outlined
+                : Icons.image_outlined,
+            color: Colors.white54,
+            size: 14 * scale,
+          ),
+          SizedBox(width: 6 * scale),
+          Expanded(
+            child: Text(
+              fileName.isNotEmpty ? fileName : 'Media',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 11 * scale,
+                fontWeight: FontWeight.w400,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (fileSize != null && fileSize > 0) ...[
+            SizedBox(width: 8 * scale),
+            Text(
+              _formatMediaFileSize(fileSize),
+              style: TextStyle(
+                color: Colors.white38,
+                fontSize: 11 * scale,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Formats bytes into a human-readable file size string.
+  String _formatMediaFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
   Widget _buildGenericFileContent(

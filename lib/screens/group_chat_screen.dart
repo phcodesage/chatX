@@ -1912,6 +1912,43 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 ),
               ),
             ),
+            // File info row (filename + size)
+            if (message.fileName != null || message.fileSize != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(
+                      isVideo ? Icons.videocam_outlined : Icons.image_outlined,
+                      color: Colors.white54,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        message.fileName ?? 'Media',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w400,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (message.fileSize != null && message.fileSize! > 0) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        _formatFileSize(message.fileSize!),
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
           ] else if (isMedia && message.fileUrl == null) ...[
             // Fallback for media messages without fileUrl
             Container(
