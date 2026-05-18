@@ -62,6 +62,8 @@ import '../widgets/upload_progress_indicator.dart';
 import 'media_preview_screen.dart';
 import 'media_gallery_viewer.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
+import '../services/forward_service.dart';
+import '../widgets/forward_recipient_picker.dart';
 
 /// Chat screen for messaging with a specific user
 class ChatScreen extends StatefulWidget {
@@ -9934,6 +9936,7 @@ class _ChatScreenState extends State<ChatScreen>
     await showModalBottomSheet(
       context: context,
       requestFocus: false,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => SafeArea(
         child: Container(
@@ -10118,6 +10121,18 @@ class _ChatScreenState extends State<ChatScreen>
                     closeWithAction(
                       sheetContext,
                       () => _startInlineEdit(message),
+                    );
+                  },
+                ),
+              if (!message.isDeleted && message.messageType != 'system')
+                _buildContextMenuActionTile(
+                  icon: Icons.shortcut_rounded,
+                  label: 'Forward',
+                  iconColor: const Color(0xFF34D399),
+                  onTap: () {
+                    closeWithAction(
+                      sheetContext,
+                      () => _openForwardPicker(message),
                     );
                   },
                 ),
@@ -10380,6 +10395,47 @@ class _ChatScreenState extends State<ChatScreen>
         duration: Duration(seconds: 2),
         backgroundColor: Color(0xFF4CAF50),
       ),
+    );
+  }
+
+  /// Open the forward recipient picker for a message.
+  void _openForwardPicker(Message message) {
+    ForwardRecipientPicker.show(
+      context,
+      currentUserId: _currentUserId ?? 0,
+      onConfirm: (selectedUserIds) async {
+        if (selectedUserIds.isEmpty) return;
+
+        final result = await ForwardService.forwardToUsers(
+          message: message,
+          recipientIds: selectedUserIds,
+        );
+
+        if (!mounted) return;
+
+        if (result.allSucceeded) {
+          _showTopBanner(
+            'Forwarded to ${result.successCount} recipient${result.successCount > 1 ? "s" : ""}',
+            backgroundColor: const Color(0xFF059669),
+            icon: Icons.check_circle_outline,
+            autoHideAfter: const Duration(seconds: 2),
+          );
+        } else if (result.allFailed) {
+          _showTopBanner(
+            'Failed to forward message',
+            backgroundColor: const Color(0xFFB91C1C),
+            icon: Icons.error_outline,
+            autoHideAfter: const Duration(seconds: 3),
+          );
+        } else {
+          _showTopBanner(
+            'Forwarded to ${result.successCount}, failed for ${result.failureCount}',
+            backgroundColor: const Color(0xFFD97706),
+            icon: Icons.warning_amber_rounded,
+            autoHideAfter: const Duration(seconds: 3),
+          );
+        }
+      },
     );
   }
 
