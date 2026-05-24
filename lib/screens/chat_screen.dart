@@ -187,8 +187,6 @@ class _ChatScreenState extends State<ChatScreen>
     TextEditingController();
   final TextEditingController _autoCorrectionCorrectController =
     TextEditingController();
-  final TextSelectionControls _compactSelectionControls =
-      _CompactTextSelectionControls();
   final ScrollController _scrollController = ScrollController();
   final ScrollController _inputScrollController = ScrollController();
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -9690,7 +9688,6 @@ class _ChatScreenState extends State<ChatScreen>
                       messageController: _messageController,
                       inputFocusNode: _inputFocusNode,
                       inputScrollController: _inputScrollController,
-                      compactSelectionControls: _compactSelectionControls,
                       buildDoorbellComposerButton: ({
                         required bool showLabel,
                         required double iconSize,
@@ -13344,36 +13341,6 @@ class _ChatScreenState extends State<ChatScreen>
   }
 }
 
-class _CompactTextSelectionControls extends MaterialTextSelectionControls {
-  _CompactTextSelectionControls();
-
-  static const double _handleScale = 0.84;
-
-  @override
-  Widget buildHandle(
-    BuildContext context,
-    TextSelectionHandleType type,
-    double textLineHeight, [
-    VoidCallback? onTap,
-  ]) {
-    final handle = super.buildHandle(context, type, textLineHeight, onTap);
-    return ColorFiltered(
-      colorFilter: const ColorFilter.mode(
-        Color(0xFF25D366),
-        BlendMode.srcIn,
-      ),
-      child: handle,
-    );
-  }
-
-  @override
-  Size getHandleSize(double textLineHeight) {
-    final baseSize = super.getHandleSize(textLineHeight);
-    return Size(baseSize.width * _handleScale, baseSize.height * _handleScale);
-  }
-}
-
-/// Voice Recording Modal Widget
 class _VoiceRecordingModal extends StatefulWidget {
   final Function(String path, Duration duration) onSend;
   final VoidCallback onCancel;

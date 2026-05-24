@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:io';
@@ -4368,6 +4369,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                             key: const ValueKey('message_input'),
                             controller: _messageController,
                             focusNode: _inputFocusNode,
+                            dragStartBehavior: DragStartBehavior.start,
                             cursorColor: const Color(0xFFCB6CFF),
                             cursorWidth: 2.2,
                             cursorRadius: const Radius.circular(2),

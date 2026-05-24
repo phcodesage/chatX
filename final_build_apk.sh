@@ -6,7 +6,7 @@ DESTINATION_DIR="/Users/macmini/Documents/code-proj/flask-proj/flask_web_backend
 OUTPUT_BASE_NAME="flask_call_app"
 KEY_PROPERTIES_PATH="$SCRIPT_DIR/android/key.properties"
 PRODUCTION_URL="https://web.flask-call-app.site/"
-#PRODUCTION_URL="https://check.flask-meet.site/"
+
 usage() {
   cat <<'EOF'
 Usage: ./final_build_apk.sh [--destination-dir DIR] [--output-base-name NAME]
