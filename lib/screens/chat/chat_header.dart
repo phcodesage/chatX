@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/lobby_user.dart';
+import '../../widgets/cached_image.dart';
 
 class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
   const ChatHeader({
@@ -26,6 +27,8 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
   final Color headerColor;
   final bool isSelfChat;
   final bool callInProgressOnOtherDevice;
+
+  /// Effective status: 'online' | 'away' | 'offline'
   final String partnerStatus;
   final String? partnerLastSeen;
   final int taskCount;
@@ -37,6 +40,21 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback onShowExcalidraw;
   final VoidCallback onCallAudio;
   final VoidCallback onCallVideo;
+
+  // Same palette used in the contacts/lobby list so the chat header avatar
+  // matches the contact tile exactly.
+  static const List<Color> _avatarColors = [
+    Color(0xFFE91E63),
+    Color(0xFF9C27B0),
+    Color(0xFF673AB7),
+    Color(0xFF3F51B5),
+    Color(0xFF2196F3),
+    Color(0xFF00BCD4),
+    Color(0xFF009688),
+    Color(0xFF4CAF50),
+    Color(0xFFFF9800),
+    Color(0xFFFF5722),
+  ];
 
   @override
   Size get preferredSize => Size.fromHeight(kToolbarHeight + 4 * scale);
@@ -56,26 +74,17 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircleAvatar(
-              radius: 15 * scale,
-              backgroundColor: _getAvatarColor(),
-              child: Text(
-                otherUser.initials,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12 * scale,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            SizedBox(width: 8 * scale),
+            _buildAvatarWithStatus(),
+            SizedBox(width: 10 * scale),
             Flexible(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    otherUser.fullName.split(' ').first,
+                    isSelfChat
+                        ? '${otherUser.fullName} (You)'
+                        : otherUser.fullName.split(' ').first,
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 15 * scale,
@@ -159,21 +168,114 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
     );
   }
 
+  /// Avatar styled like the contacts list: colored background from the user's
+  /// palette index, network image when present (fallback to initials on
+  /// error), with a status dot overlay (green/yellow/grey).
+  Widget _buildAvatarWithStatus() {
+    final double radius = 17 * scale;
+    final double dotSize = 11 * scale;
+    final double initialsSize = 12 * scale;
+    final double imgDiameter = radius * 2;
+    final avatarColor = _avatarColorForUser();
+
+    final Widget initials = Text(
+      otherUser.initials,
+      style: TextStyle(
+        color: Colors.white,
+        fontSize: initialsSize,
+        fontWeight: FontWeight.bold,
+      ),
+    );
+
+    final avatarUrl = otherUser.avatarUrl;
+    final Widget avatarChild = (avatarUrl != null && avatarUrl.isNotEmpty)
+        ? ClipOval(
+            child: CachedImage(
+              url: avatarUrl,
+              width: imgDiameter,
+              height: imgDiameter,
+              fit: BoxFit.cover,
+              placeholderColor: avatarColor,
+              errorWidget: initials,
+            ),
+          )
+        : initials;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        CircleAvatar(
+          radius: radius,
+          backgroundColor: avatarColor,
+          child: avatarChild,
+        ),
+        if (!isSelfChat)
+          Positioned(
+            right: -1,
+            bottom: -1,
+            child: Container(
+              width: dotSize,
+              height: dotSize,
+              decoration: BoxDecoration(
+                color: callInProgressOnOtherDevice
+                    ? const Color(0xFFF59E0B)
+                    : _statusDotColor(partnerStatus),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: headerColor,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Color _avatarColorForUser() {
+    return _avatarColors[otherUser.avatarColorIndex % _avatarColors.length];
+  }
+
+  Color _statusDotColor(String status) {
+    switch (status) {
+      case 'online':
+        return const Color(0xFF00E676); // neon green
+      case 'away':
+        return const Color(0xFFFFC107); // amber
+      default:
+        return Colors.grey.shade500; // offline
+    }
+  }
+
   Widget _buildHeaderStatusPill(double scale) {
     final status = partnerStatus;
     final statusFontSize = (11.5 * scale).clamp(11.0, 13.0).toDouble();
-    final label = status == 'online'
-        ? 'Online'
-        : partnerLastSeen != null
+    final Color color;
+    final String label;
+    switch (status) {
+      case 'online':
+        color = const Color(0xFF00E676);
+        label = 'Online';
+        break;
+      case 'away':
+        color = const Color(0xFFFFC107);
+        label = partnerLastSeen != null
+            ? 'Away · $partnerLastSeen'
+            : 'Away';
+        break;
+      default:
+        color = Colors.grey.shade400;
+        label = partnerLastSeen != null
             ? 'Last seen: $partnerLastSeen'
             : 'Offline';
+    }
 
     return Padding(
       padding: EdgeInsets.only(top: 1 * scale),
       child: Text(
         label,
         style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.9),
+          color: color,
           fontSize: statusFontSize,
           fontWeight: FontWeight.w500,
           height: 1.12,
@@ -232,9 +334,5 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
           ),
       ],
     );
-  }
-
-  Color _getAvatarColor() {
-    return const Color(0xFF1F1F1F);
   }
 }

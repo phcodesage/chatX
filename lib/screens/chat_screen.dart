@@ -31,6 +31,7 @@ import '../services/socket_service.dart';
 import '../services/tts_service.dart';
 import '../services/storage_service.dart';
 import '../services/chat_cache_service.dart';
+import '../services/media_preload_service.dart';
 import '../services/translation_service.dart';
 import '../widgets/color_picker_modal.dart';
 import '../widgets/common_phrase_bar.dart';
@@ -1244,6 +1245,11 @@ class _ChatScreenState extends State<ChatScreen>
             incomingMessage,
           );
           debugPrint('ðŸ’¾ Cached incoming message ${incomingMessage.id}');
+          // Prefetch any media attached to the message so it plays
+          // back offline later without needing the network.
+          unawaited(
+            MediaPreloadService.instance.prefetchMessages([incomingMessage]),
+          );
         }
 
         // Play message sound for incoming messages
@@ -2588,7 +2594,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _loadCachedMessages() async {
-    final currentUserId = await StorageService.getUserId();
+    final currentUserId = _currentUserId ?? await StorageService.getUserId();
     if (currentUserId == null) {
       debugPrint('âš ï¸ No user ID available for cache loading');
       return;
@@ -2749,6 +2755,11 @@ class _ChatScreenState extends State<ChatScreen>
       });
 
       await _syncLoadedMessageStatuses(messages);
+
+      // Pull every media attachment in this conversation into the
+      // on-disk cache so the chat works fully offline (images, videos,
+      // audio, files). Fire-and-forget; errors are swallowed per file.
+      unawaited(MediaPreloadService.instance.prefetchMessages(messages));
 
       _scrollToBottom();
     } catch (e) {
@@ -9462,7 +9473,7 @@ class _ChatScreenState extends State<ChatScreen>
         headerColor: _headerColor,
         isSelfChat: _isSelfChat,
         callInProgressOnOtherDevice: _callInProgressOnOtherDevice,
-        partnerStatus: _partnerStatus,
+        partnerStatus: _getEffectivePartnerStatus(),
         partnerLastSeen: _formattedPartnerLastSeen(),
         taskCount: _taskMessages.where((m) => m.isTask).length,
         excalidrawCount: _pinnedExcalidrawLinks.length,
@@ -9600,15 +9611,15 @@ class _ChatScreenState extends State<ChatScreen>
                                 _markVisibleMessagesAsRead();
                               },
                               child: Container(
-                                width: 48,
-                                height: 48,
+                                width: 32,
+                                height: 32,
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF7C3AED),
                                   shape: BoxShape.circle,
                                   boxShadow: [
                                     BoxShadow(
                                       color: Colors.black.withValues(alpha: 0.3),
-                                      blurRadius: 8,
+                                      blurRadius: 6,
                                       offset: const Offset(0, 2),
                                     ),
                                   ],
@@ -9616,7 +9627,7 @@ class _ChatScreenState extends State<ChatScreen>
                                 child: const Icon(
                                   Icons.keyboard_arrow_down,
                                   color: Colors.white,
-                                  size: 28,
+                                  size: 20,
                                 ),
                               ),
                             ),

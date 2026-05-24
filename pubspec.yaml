@@ -94,6 +94,13 @@ dependencies:
   hive_flutter: ^1.1.0
   shimmer: ^3.0.0
 
+  # On-disk caching for network images so chat media stays available
+  # offline after first fetch (used in chat bubbles, avatars, previews).
+  cached_network_image: ^3.4.1
+  # Direct access to the same disk cache cached_network_image uses, so
+  # we can prefetch videos/files for offline playback.
+  flutter_cache_manager: ^3.4.0
+
   # Phone contacts (for Send Contact feature)
   flutter_contacts: ^1.1.9
 

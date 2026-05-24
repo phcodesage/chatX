@@ -15,6 +15,7 @@ import '../services/auth_service.dart';
 import '../services/socket_service.dart';
 import '../services/firebase_messaging_service.dart';
 import '../widgets/app_version_text.dart';
+import '../widgets/cached_image.dart';
 import '../widgets/settings_modal.dart';
 import '../services/call_service.dart';
 import '../widgets/incoming_call_setup_modal.dart';
@@ -2442,12 +2443,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                 backgroundColor: avatarColor,
                                 child: user.avatarUrl != null
                                     ? ClipOval(
-                                        child: Image.network(
-                                          user.avatarUrl!,
+                                        child: CachedImage(
+                                          url: user.avatarUrl!,
                                           width: _cs(context, 44),
                                           height: _cs(context, 44),
                                           fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) => Text(
+                                          placeholderColor: avatarColor,
+                                          errorWidget: Text(
                                             user.initials,
                                             style: TextStyle(
                                               color: Colors.white,
@@ -3304,18 +3306,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   backgroundColor: const Color(0xFF00D9FF),
                   child: group.avatarUrl != null
                       ? ClipOval(
-                          child: Image.network(
-                            group.avatarUrl!,
+                          child: CachedImage(
+                            url: group.avatarUrl!,
                             width: _cs(context, 52),
                             height: _cs(context, 52),
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Icon(
-                                Icons.group,
-                                color: Colors.white,
-                                size: _cs(context, 26),
-                              );
-                            },
+                            placeholderColor: const Color(0xFF00D9FF),
+                            errorWidget: Icon(
+                              Icons.group,
+                              color: Colors.white,
+                              size: _cs(context, 26),
+                            ),
                           ),
                         )
                       : Icon(
@@ -3472,21 +3473,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       backgroundColor: avatarColor,
                       child: user.avatarUrl != null
                           ? ClipOval(
-                              child: Image.network(
-                                user.avatarUrl!,
+                              child: CachedImage(
+                                url: user.avatarUrl!,
                                 width: _cs(context, 52),
                                 height: _cs(context, 52),
                                 fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Text(
-                                    user.initials,
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 18 * s,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  );
-                                },
+                                placeholderColor: avatarColor,
+                                errorWidget: Text(
+                                  user.initials,
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18 * s,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
                             )
                           : Text(
@@ -3527,7 +3527,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     children: [
                       // Name
                       Text(
-                        user.fullName,
+                        isSelfChatTile
+                            ? '${user.fullName} (You)'
+                            : user.fullName,
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 16 * s,

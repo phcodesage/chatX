@@ -22,6 +22,7 @@ import 'services/fcm_service.dart';
 import 'services/auth_error_handler.dart';
 import 'services/chat_cache_service.dart';
 import 'services/lobby_service.dart';
+import 'services/media_preload_service.dart';
 import 'services/storage_service.dart';
 import 'services/share_intent_service.dart';
 import 'services/shortcut_service.dart';
@@ -69,6 +70,12 @@ Future<Widget> _resolveInitialHome() async {
   SocketService().initialize(token, userId);
   PresenceService().startHeartbeat();
   unawaited(PresenceService.updateStatus('online'));
+
+  // Start the offline preload pump. It hydrates the message cache for
+  // every conversation in the background and downloads media into the
+  // shared on-disk cache (subject to the user's auto-download policy)
+  // so chats can be opened — and viewed with images/videos — offline.
+  unawaited(MediaPreloadService.instance.start());
 
   // Prime Android Direct Share shortcuts from local cache so top-row
   // conversation targets are available even before lobby fully loads.
@@ -187,6 +194,7 @@ class _MessengerAppState extends State<MessengerApp>
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   bool _hasInternetConnection = true;
   bool _showBackOnlineBanner = false;
+  bool _showOfflineBanner = false;
   bool _didReceiveConnectivityUpdate = false;
   Timer? _backOnlineBannerTimer;
 
@@ -208,7 +216,12 @@ class _MessengerAppState extends State<MessengerApp>
       _didReceiveConnectivityUpdate = true;
       setState(() {
         _hasInternetConnection = hasConnection;
+        // Show the offline banner on first launch only if we boot up
+        // already disconnected, so the user gets a clear cue. The
+        // 2-second auto-hide below still applies.
+        _showOfflineBanner = !hasConnection;
       });
+      _scheduleBannerAutoHide();
       return;
     }
 
@@ -216,22 +229,32 @@ class _MessengerAppState extends State<MessengerApp>
 
     setState(() {
       _hasInternetConnection = hasConnection;
-      if (!hasConnection) {
-        _showBackOnlineBanner = false;
-      } else {
+      // Both transitions surface a banner: green "back online" when we
+      // gain connection, red "no internet" when we lose it. Each banner
+      // hides itself after 2s; the red bottom border below stays visible
+      // for the entire offline window so the user keeps seeing the cue
+      // without the banner covering app chrome (e.g. the version label).
+      if (hasConnection) {
         _showBackOnlineBanner = true;
+        _showOfflineBanner = false;
+      } else {
+        _showOfflineBanner = true;
+        _showBackOnlineBanner = false;
       }
     });
 
+    _scheduleBannerAutoHide();
+  }
+
+  void _scheduleBannerAutoHide() {
     _backOnlineBannerTimer?.cancel();
-    if (hasConnection) {
-      _backOnlineBannerTimer = Timer(const Duration(seconds: 2), () {
-        if (!mounted) return;
-        setState(() {
-          _showBackOnlineBanner = false;
-        });
+    _backOnlineBannerTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() {
+        _showBackOnlineBanner = false;
+        _showOfflineBanner = false;
       });
-    }
+    });
   }
 
   void _scheduleUpdateCheck({int retryCount = 0}) {
@@ -284,6 +307,9 @@ class _MessengerAppState extends State<MessengerApp>
 
     _lastResumeUpdateCheck = now;
     _scheduleUpdateCheck();
+    // Re-hydrate offline caches in the background so freshly received
+    // messages and media on the server are mirrored locally.
+    unawaited(MediaPreloadService.instance.triggerSync());
   }
 
   @override
@@ -332,10 +358,24 @@ class _MessengerAppState extends State<MessengerApp>
       navigatorObservers: [PerformanceRouteObserver()],
       builder: (context, child) {
         final appContent = child ?? const SizedBox.shrink();
-        final showStatusBanner = !_hasInternetConnection || _showBackOnlineBanner;
+        // Top banner is shown only briefly: green "back online" right
+        // after reconnecting, or red "no internet" right after dropping
+        // the connection. Both auto-hide after 2 seconds.
+        final showStatusBanner = _showOfflineBanner || _showBackOnlineBanner;
+        // Persistent ambient cue: while we are offline, paint a thin
+        // red border around the screen so the user keeps seeing the
+        // status without the banner covering the version label or
+        // other footer content.
+        final showOfflineBorder = !_hasInternetConnection;
         return Stack(
           children: [
             appContent,
+            if (showOfflineBorder)
+              const Positioned.fill(
+                child: IgnorePointer(
+                  child: _OfflineBorderOverlay(),
+                ),
+              ),
             if (showStatusBanner)
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 280),
@@ -486,6 +526,27 @@ class _ConnectionStatusBanner extends StatelessWidget {
               const SizedBox(width: 26),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Persistent ambient cue painted around the entire screen while offline.
+/// Drawn in the [MessengerApp] builder above the app's content so it sits
+/// over scaffolds without intercepting touches (parent uses
+/// [IgnorePointer]). The bottom edge is intentionally thicker so the cue
+/// is visible without covering the version label or other footer chrome.
+class _OfflineBorderOverlay extends StatelessWidget {
+  const _OfflineBorderOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    const Color edgeColor = Color(0xFFC62828);
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        border: Border(
+          top: BorderSide(color: edgeColor, width: 3.0),
         ),
       ),
     );

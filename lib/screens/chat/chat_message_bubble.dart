@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../models/link_preview.dart';
 import '../../models/message.dart';
 import '../../services/link_preview_service.dart';
+import '../../widgets/cached_image.dart';
 import '../../widgets/link_preview_card.dart';
 import '../../widgets/youtube_preview_card.dart';
 import 'audio_message_player.dart';
@@ -433,38 +437,24 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
               alignment: Alignment.center,
               children: [
                 if (isImage)
-                  Image.network(
-                    message.fileUrl!,
+                  CachedImage(
+                    url: message.fileUrl!,
                     fit: BoxFit.contain,
                     width: double.infinity,
                     cacheWidth: imageCacheWidth,
                     filterQuality: FilterQuality.low,
-                    frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                      if (wasSynchronouslyLoaded || frame != null) {
-                        return child;
-                      }
-                      return AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 200),
-                        child: frame == null
-                            ? const SizedBox.shrink(
-                                key: ValueKey('placeholder'),
-                              )
-                            : child,
-                      );
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        height: 200,
-                        color: Colors.grey[800],
-                        child: const Center(
-                          child: Icon(
-                            Icons.broken_image,
-                            color: Colors.white54,
-                            size: 40,
-                          ),
+                    placeholderColor: const Color(0xFF1F2937),
+                    errorWidget: Container(
+                      height: 200,
+                      color: Colors.grey[800],
+                      child: const Center(
+                        child: Icon(
+                          Icons.broken_image,
+                          color: Colors.white54,
+                          size: 40,
                         ),
-                      );
-                    },
+                      ),
+                    ),
                   )
                 else if (isVideo)
                   _VideoThumbnailWidget(
@@ -1040,9 +1030,30 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
 
   Future<void> _initController() async {
     try {
-      final controller = VideoPlayerController.networkUrl(
-        Uri.parse(widget.videoUrl),
+      // Prefer the on-disk cached file if MediaPreloadService (or a
+      // previous bubble render) already downloaded it. This is what
+      // makes videos viewable offline.
+      VideoPlayerController controller;
+      final cached = await DefaultCacheManager().getFileFromCache(
+        widget.videoUrl,
       );
+      if (cached != null) {
+        controller = VideoPlayerController.file(cached.file);
+      } else {
+        controller = VideoPlayerController.networkUrl(
+          Uri.parse(widget.videoUrl),
+        );
+        // Fire-and-forget: warm the cache so subsequent opens (and
+        // offline reopens) play instantly from disk. Errors are
+        // expected on flaky networks; just swallow them here.
+        unawaited(
+          () async {
+            try {
+              await DefaultCacheManager().downloadFile(widget.videoUrl);
+            } catch (_) {}
+          }(),
+        );
+      }
       await controller.initialize();
       if (!mounted) {
         controller.dispose();

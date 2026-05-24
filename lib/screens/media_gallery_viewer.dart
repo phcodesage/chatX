@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -692,9 +694,24 @@ class _VideoInitializerState extends State<_VideoInitializer> {
 
   Future<void> _initializeVideo() async {
     try {
-      final videoController = VideoPlayerController.networkUrl(
-        Uri.parse(widget.fileUrl),
+      VideoPlayerController videoController;
+      final cached = await DefaultCacheManager().getFileFromCache(
+        widget.fileUrl,
       );
+      if (cached != null) {
+        videoController = VideoPlayerController.file(cached.file);
+      } else {
+        videoController = VideoPlayerController.networkUrl(
+          Uri.parse(widget.fileUrl),
+        );
+        unawaited(
+          () async {
+            try {
+              await DefaultCacheManager().downloadFile(widget.fileUrl);
+            } catch (_) {}
+          }(),
+        );
+      }
 
       await videoController.initialize();
 
@@ -867,7 +884,7 @@ class _ImagePageViewState extends State<_ImagePageView> {
 
   /// Resolves the image to detect load success/failure independently of PhotoView.
   void _resolveImage() {
-    final imageProvider = NetworkImage(widget.imageUrl);
+    final imageProvider = CachedNetworkImageProvider(widget.imageUrl);
     final stream = imageProvider.resolve(const ImageConfiguration());
     stream.addListener(ImageStreamListener(
       (info, synchronousCall) {
@@ -913,8 +930,15 @@ class _ImagePageViewState extends State<_ImagePageView> {
       _loadState = _ImageLoadState.loading;
       _imageKey = UniqueKey();
     });
-    // Evict the cached image so retry fetches fresh.
-    imageCache.evict(NetworkImage(widget.imageUrl));
+    // Evict any cached entries so retry fetches fresh from the network.
+    imageCache.evict(CachedNetworkImageProvider(widget.imageUrl));
+    unawaited(
+      () async {
+        try {
+          await DefaultCacheManager().removeFile(widget.imageUrl);
+        } catch (_) {}
+      }(),
+    );
     _startLoadTimeout();
     _resolveImage();
   }
@@ -948,7 +972,7 @@ class _ImagePageViewState extends State<_ImagePageView> {
 
     return PhotoView(
       key: _imageKey,
-      imageProvider: NetworkImage(widget.imageUrl),
+      imageProvider: CachedNetworkImageProvider(widget.imageUrl),
       minScale: PhotoViewComputedScale.contained,
       maxScale: PhotoViewComputedScale.contained * 5,
       initialScale: PhotoViewComputedScale.contained,

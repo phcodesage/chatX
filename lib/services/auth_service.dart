@@ -11,6 +11,7 @@ import 'socket_service.dart';
 import 'presence_service.dart';
 import 'fcm_service.dart';
 import 'firebase_messaging_service.dart';
+import 'media_preload_service.dart';
 
 /// Service for handling authentication API calls
 class AuthService {
@@ -85,6 +86,9 @@ class AuthService {
           FirebaseMessagingService.instance.checkInitialMessage();
         });
 
+        // Hydrate offline caches in the background.
+        unawaited(MediaPreloadService.instance.start());
+
         return authResponse;
       } else {
         throw Exception(
@@ -147,6 +151,9 @@ class AuthService {
           FirebaseMessagingService.instance.checkInitialMessage();
         });
 
+        // Hydrate offline caches in the background.
+        unawaited(MediaPreloadService.instance.start());
+
         return authResponse;
       } else {
         throw Exception(_extractErrorMessage(response.body, 'Login failed'));
@@ -168,6 +175,10 @@ class AuthService {
 
       // Disconnect Socket.IO
       SocketService().disconnect();
+
+      // Stop the offline preload service so it doesn't keep running
+      // against the now-invalid token.
+      await MediaPreloadService.instance.stop();
 
       // Remove FCM token from backend to stop receiving push notifications
       await FCMService.removeFCMToken();

@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
 import '../models/link_preview.dart';
+import '../services/chat_cache_service.dart';
 import '../services/link_preview_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
@@ -52,7 +53,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final SocketService _socketService = SocketService();
   static const String _socketListenerKey = 'ai_chat_screen';
 
-  bool _isLoading = true;
+  bool _isLoading = false;
   bool _isSending = false;
   bool _showEmojiPicker = false;
   bool _showTimestamps = false;
@@ -232,6 +233,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _socketService.removeListener('aiChatSync', _socketListenerKey);
     _dismissTopActionBanner();
     _scrollController.removeListener(_handleScrollPosition);
+    // Persist a final snapshot so the next open hydrates instantly,
+    // including any messages that arrived right before close.
+    _persistAiSnapshot();
     _messageController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
@@ -305,6 +309,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
           setState(() {
             _messages.add(_normalizeSocketMessage(msg));
           });
+          _persistAiSnapshot();
           // Auto-scroll during initial load, or if user is near bottom
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!_scrollController.hasClients) return;
@@ -329,6 +334,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
               _messages[i] = _normalizeSocketMessage(msg);
             }
           });
+          _persistAiSnapshot();
           break;
 
         case 'message_deleted':
@@ -340,10 +346,12 @@ class _AiChatScreenState extends State<AiChatScreen> {
           setState(() {
             _messages.removeWhere((m) => m['id'] == deletedId);
           });
+          _persistAiSnapshot();
           break;
 
         case 'messages_cleared':
           setState(() => _messages.clear());
+          _persistAiSnapshot();
           break;
 
         default:
@@ -359,6 +367,22 @@ class _AiChatScreenState extends State<AiChatScreen> {
       'content': (msg['content'] ?? '').toString(),
       'timestamp': (msg['created_at'] ?? msg['timestamp'] ?? '').toString(),
     };
+  }
+
+  /// Persist the in-memory message list to the AI cache. Called after
+  /// every mutation (realtime add/update/delete, send, dispose) so the
+  /// next open paints from disk without a network round-trip.
+  void _persistAiSnapshot() {
+    final userId = _currentUserId;
+    final sessionId = _sessionId;
+    if (userId == null || sessionId == null) return;
+    unawaited(
+      ChatCacheService.saveAiSessionMessages(
+        userId,
+        sessionId,
+        List<Map<String, String>>.from(_messages),
+      ),
+    );
   }
 
   Future<void> _loadUiPreferences() async {
@@ -443,6 +467,25 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   Future<_LoadResult> _loadMessages(String token, int sessionId) async {
     _log('Loading messages for session ID: $sessionId');
+
+    // Cache-first: paint anything we already have on disk so the screen
+    // never sits on a spinner waiting for the network. The network
+    // refresh below will overwrite the list once it returns.
+    if (_currentUserId != null) {
+      final cached = await ChatCacheService.loadAiSessionMessages(
+        _currentUserId!,
+        sessionId,
+      );
+      if (cached.isNotEmpty && mounted) {
+        setState(() {
+          _messages
+            ..clear()
+            ..addAll(cached);
+          _isLoading = false;
+        });
+      }
+    }
+
     try {
       final response = await http
           .get(
@@ -463,6 +506,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
       if (response.statusCode != 200) {
         _log('Failed to load messages for session $sessionId - status: ${response.statusCode}');
+        // Cache stays painted on a network error so the user keeps
+        // seeing previously fetched messages.
         return _LoadResult.networkError;
       }
 
@@ -493,6 +538,17 @@ class _AiChatScreenState extends State<AiChatScreen> {
           ..clear()
           ..addAll(parsed);
       });
+
+      // Persist a fresh snapshot for the next cold open. Fire-and-forget.
+      if (_currentUserId != null) {
+        unawaited(
+          ChatCacheService.saveAiSessionMessages(
+            _currentUserId!,
+            sessionId,
+            parsed,
+          ),
+        );
+      }
       return _LoadResult.success;
     } catch (_) {
       return _LoadResult.networkError;
@@ -680,6 +736,10 @@ class _AiChatScreenState extends State<AiChatScreen> {
         _isSending = false;
         _hasStreamingAssistant = false;
       });
+      // Send round-trip is done (success or error). Snapshot the
+      // updated message list so the AI chat is viewable offline next
+      // time even mid-stream errors leave the UI in a coherent state.
+      _persistAiSnapshot();
     }
   }
 
@@ -1956,6 +2016,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
       setState(() {
         _messages.removeAt(index);
       });
+      _persistAiSnapshot();
       _showInfo('Message no longer exists and was removed.');
       return;
     }
@@ -1979,6 +2040,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
         'content': updatedContent,
       };
     });
+    _persistAiSnapshot();
 
     _showTopActionBanner(
       message: 'Message edited',
@@ -2059,6 +2121,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     setState(() {
       _messages.removeAt(index);
     });
+    _persistAiSnapshot();
 
     _showTopActionBanner(
       message: 'Message deleted',
@@ -2856,6 +2919,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: const Color(0xFF1A1A2E),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1A2E),
@@ -2930,15 +2994,15 @@ class _AiChatScreenState extends State<AiChatScreen> {
                             child: GestureDetector(
                               onTap: _scrollToBottomButtonTap,
                               child: Container(
-                                width: 48,
-                                height: 48,
+                                width: 32,
+                                height: 32,
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF7C3AED),
                                   shape: BoxShape.circle,
                                   boxShadow: [
                                     BoxShadow(
                                       color: Colors.black.withOpacity(0.3),
-                                      blurRadius: 8,
+                                      blurRadius: 6,
                                       offset: const Offset(0, 2),
                                     ),
                                   ],
@@ -2946,7 +3010,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                                 child: const Icon(
                                   Icons.keyboard_arrow_down,
                                   color: Colors.white,
-                                  size: 28,
+                                  size: 20,
                                 ),
                               ),
                             ),
@@ -2955,7 +3019,14 @@ class _AiChatScreenState extends State<AiChatScreen> {
                     ],
                   ),
           ),
-          _buildComposer(),
+          AnimatedPadding(
+            duration: const Duration(milliseconds: 80),
+            curve: Curves.easeOut,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: _buildComposer(),
+          ),
         ],
       ),
     );

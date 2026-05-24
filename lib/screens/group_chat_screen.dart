@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
@@ -20,11 +21,13 @@ import '../services/group_service.dart';
 import '../services/socket_service.dart';
 import '../services/storage_service.dart';
 import '../services/chat_cache_service.dart';
+import '../services/media_preload_service.dart';
 import '../services/translation_service.dart';
 import '../services/active_chat_service.dart';
 import '../services/firebase_messaging_service.dart';
 import '../widgets/reaction_picker.dart';
 import '../widgets/color_picker_modal.dart';
+import '../widgets/cached_image.dart';
 
 /// Group chat screen for messaging in a group
 class GroupChatScreen extends StatefulWidget {
@@ -132,26 +135,46 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         senderName: widget.group.name,
       ),
     );
-    await _loadMessages();
+
+    // Cache-first: render any locally stored messages immediately so the
+    // screen never sits on a shimmer while the network round-trip happens.
+    await _loadCachedGroupMessages();
+
+    // Refresh from network in the background. _loadMessages will only flip
+    // _isLoading on if the cache was empty (true cold open).
+    unawaited(_loadMessages());
+
     await _loadSavedGroupChatColor(); // Load saved color
     debugPrint('🎨 [INIT] Setting up realtime listeners...');
     _setupRealtimeListeners();
     debugPrint('🎨 [INIT] Joining group chat...');
     _socketService.joinGroupChat(widget.group.id);
+  }
 
-    // Debug: Test socket connection with multiple approaches (commented out to reduce noise)
-    /*
-    debugPrint('🧪 [GROUP CHAT] Testing socket connection...');
-    _socketService.emit('test_connection', {'test': 'mobile_group_chat'});
-
-    // Also test with a simple ping
-    Future.delayed(const Duration(seconds: 2), () {
-      debugPrint('🧪 [GROUP CHAT] Testing with ping...');
-      _socketService.emit('ping', {
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
+  /// Load locally cached messages for this group and paint them immediately.
+  /// Mirrors the 1:1 chat's `_loadCachedMessages` so reopening a group feels
+  /// instant even before the network refresh resolves.
+  Future<void> _loadCachedGroupMessages() async {
+    try {
+      final cached = await ChatCacheService.loadGroupMessages(widget.group.id);
+      if (!mounted) return;
+      if (cached.isEmpty) {
+        // Leave _isLoading = true so the shimmer is shown on true cold open.
+        return;
+      }
+      setState(() {
+        _messages = cached;
+        _isLoading = false;
       });
-    });
-    */
+      // Jump to bottom on the next frame, same as the network path does.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
+      });
+    } catch (e) {
+      debugPrint('Error loading cached group messages: $e');
+    }
   }
 
   void _onFocusChange() {
@@ -403,9 +426,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   Future<void> _loadMessages() async {
     if (_isLoadingMessages) return;
+    // Only show the shimmer if the cache hasn't already painted something.
+    // On a warm open we keep _isLoading = false so the cached list stays
+    // visible while the network refresh resolves.
+    final hasCachedMessages = _messages.isNotEmpty;
     setState(() {
       _isLoadingMessages = true;
-      _isLoading = true;
+      if (!hasCachedMessages) {
+        _isLoading = true;
+      }
     });
 
     try {
@@ -421,34 +450,31 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           _isLoadingMessages = false;
         });
 
-        // Debug: Log file messages (commented out to reduce noise)
-        /*
-        final fileMessages = messages
-            .where((m) => m.messageType != 'text' && m.messageType != 'system')
-            .toList();
-        if (fileMessages.isNotEmpty) {
-          debugPrint(
-            '📎 [LOAD MESSAGES] Found ${fileMessages.length} file messages:',
-          );
-          for (final msg in fileMessages) {
-            debugPrint(
-              '📎 [LOAD MESSAGES] - ID: ${msg.id}, Type: ${msg.messageType}, URL: ${msg.fileUrl}, Name: ${msg.fileName}',
-            );
-          }
-        }
-        */
+        // Persist the freshly fetched snapshot so the next cold open
+        // hydrates instantly from cache.
+        unawaited(
+          ChatCacheService.saveGroupMessages(widget.group.id, messages),
+        );
+
+        // Pull every media file referenced by these messages into the
+        // on-disk cache so the chat works fully offline.
+        unawaited(MediaPreloadService.instance.prefetchGroupMessages(messages));
 
         // Mark messages as viewed
         _markMessagesAsViewed();
 
-        // Scroll to bottom
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.jumpTo(
-              _scrollController.position.maxScrollExtent,
-            );
-          }
-        });
+        // Scroll to bottom only when this is the first paint (cold open).
+        // Don't yank the scroll position from under the user on a warm
+        // refresh.
+        if (!hasCachedMessages) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollController.hasClients) {
+              _scrollController.jumpTo(
+                _scrollController.position.maxScrollExtent,
+              );
+            }
+          });
+        }
       }
     } catch (e) {
       debugPrint('Error loading group messages: $e');
@@ -500,6 +526,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         // Save to cache for offline access
         await ChatCacheService.addGroupMessageToCache(widget.group.id, message);
         debugPrint('💾 Cached group message ${message.id}');
+        // Prefetch any media attached so it plays back offline later.
+        unawaited(
+          MediaPreloadService.instance.prefetchGroupMessages([message]),
+        );
 
         // Play notification sound if not from current user
         if (message.senderId != _currentUserId) {
@@ -1356,6 +1386,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     // Clear active chat when leaving group chat screen
     ActiveChatService().clearActiveChat();
 
+    // Persist the latest in-memory snapshot so the next open paints
+    // immediately from cache. Fire-and-forget; safe across teardown.
+    if (_messages.isNotEmpty) {
+      unawaited(
+        ChatCacheService.saveGroupMessages(widget.group.id, _messages),
+      );
+    }
+
     // Stop typing indicator when leaving the screen
     _stopGroupTyping();
 
@@ -1372,8 +1410,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
     return Scaffold(
-      resizeToAvoidBottomInset: true,
+      resizeToAvoidBottomInset: false,
       backgroundColor: const Color(0xFF1A1A2E),
       appBar: _buildAppBar(),
       body: GestureDetector(
@@ -1416,15 +1455,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                               child: GestureDetector(
                                 onTap: _scrollToBottomAndMarkRead,
                                 child: Container(
-                                  width: 48,
-                                  height: 48,
+                                  width: 32,
+                                  height: 32,
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF7C3AED),
                                     shape: BoxShape.circle,
                                     boxShadow: [
                                       BoxShadow(
                                         color: Colors.black.withOpacity(0.3),
-                                        blurRadius: 8,
+                                        blurRadius: 6,
                                         offset: const Offset(0, 2),
                                       ),
                                     ],
@@ -1435,21 +1474,21 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                                       const Icon(
                                         Icons.keyboard_arrow_down,
                                         color: Colors.white,
-                                        size: 28,
+                                        size: 20,
                                       ),
                                       if (_unreadCount > 0)
                                         Positioned(
-                                          top: 2,
-                                          right: 2,
+                                          top: -2,
+                                          right: -2,
                                           child: Container(
-                                            padding: const EdgeInsets.all(4),
+                                            padding: const EdgeInsets.all(3),
                                             decoration: const BoxDecoration(
                                               color: Colors.red,
                                               shape: BoxShape.circle,
                                             ),
                                             constraints: const BoxConstraints(
-                                              minWidth: 18,
-                                              minHeight: 18,
+                                              minWidth: 14,
+                                              minHeight: 14,
                                             ),
                                             child: Text(
                                               _unreadCount > 99
@@ -1457,7 +1496,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                                                   : _unreadCount.toString(),
                                               style: const TextStyle(
                                                 color: Colors.white,
-                                                fontSize: 10,
+                                                fontSize: 8,
                                                 fontWeight: FontWeight.bold,
                                               ),
                                               textAlign: TextAlign.center,
@@ -1485,8 +1524,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             // Reply preview
             if (_replyingToMessage != null) _buildReplyPreview(),
 
-            // Input area
-            _buildInputArea(),
+            // Input area — only this section moves with the keyboard.
+            // The rest of the screen stays stable (no full relayout).
+            AnimatedPadding(
+              duration: const Duration(milliseconds: 80),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.only(bottom: keyboardInset),
+              child: _buildInputArea(),
+            ),
           ],
         ),
       ),
@@ -1508,12 +1553,13 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             backgroundColor: const Color(0xFF00D9FF),
             child: widget.group.avatarUrl != null
                 ? ClipOval(
-                    child: Image.network(
-                      widget.group.avatarUrl!,
+                    child: CachedImage(
+                      url: widget.group.avatarUrl!,
                       width: 40,
                       height: 40,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(
+                      placeholderColor: const Color(0xFF00D9FF),
+                      errorWidget: const Icon(
                         Icons.group,
                         color: Colors.white,
                         size: 20,
@@ -1842,53 +1888,35 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                     alignment: Alignment.center,
                     children: [
                       if (isImage)
-                        Image.network(
-                          message.fileUrl!,
+                        CachedImage(
+                          url: message.fileUrl!,
                           fit: BoxFit.contain,
                           width: double.infinity,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Container(
-                              height: 200,
-                              color: Colors.grey[800],
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  value:
-                                      loadingProgress.expectedTotalBytes != null
-                                      ? loadingProgress.cumulativeBytesLoaded /
-                                            loadingProgress.expectedTotalBytes!
-                                      : null,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              height: 100,
-                              color: Colors.grey[800],
-                              child: const Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.broken_image,
+                          placeholderColor: Colors.grey.shade800,
+                          errorWidget: Container(
+                            height: 100,
+                            color: Colors.grey[800],
+                            child: const Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.broken_image,
+                                    color: Colors.white54,
+                                    size: 40,
+                                  ),
+                                  SizedBox(height: 8),
+                                  Text(
+                                    'Image failed to load',
+                                    style: TextStyle(
                                       color: Colors.white54,
-                                      size: 40,
+                                      fontSize: 12,
                                     ),
-                                    SizedBox(height: 8),
-                                    Text(
-                                      'Image failed to load',
-                                      style: TextStyle(
-                                        color: Colors.white54,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
-                            );
-                          },
+                            ),
+                          ),
                         )
                       else if (isVideo)
                         _GroupVideoThumbnailWidget(
@@ -2497,7 +2525,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               // Image
               Center(
                 child: InteractiveViewer(
-                  child: Image.network(message.fileUrl!, fit: BoxFit.contain),
+                  child: CachedImage(
+                    url: message.fileUrl!,
+                    fit: BoxFit.contain,
+                    placeholderColor: Colors.transparent,
+                  ),
                 ),
               ),
               // Close button
@@ -4829,8 +4861,29 @@ class _AudioMessagePlayerState extends State<_AudioMessagePlayer> {
         // Small delay to ensure player is ready
         await Future.delayed(const Duration(milliseconds: 100));
 
-        // Play from URL
-        await _audioPlayer.play(UrlSource(widget.audioUrl));
+        // Prefer the on-disk cached file when available so audio plays
+        // offline; otherwise stream and warm the cache for next time.
+        Source source;
+        try {
+          final cached = await DefaultCacheManager().getFileFromCache(
+            widget.audioUrl,
+          );
+          if (cached != null) {
+            source = DeviceFileSource(cached.file.path);
+          } else {
+            source = UrlSource(widget.audioUrl);
+            unawaited(
+              () async {
+                try {
+                  await DefaultCacheManager().downloadFile(widget.audioUrl);
+                } catch (_) {}
+              }(),
+            );
+          }
+        } catch (_) {
+          source = UrlSource(widget.audioUrl);
+        }
+        await _audioPlayer.play(source);
         setState(() => _isPlaying = true);
       }
     } catch (e) {
@@ -4987,9 +5040,24 @@ class _GroupVideoThumbnailWidgetState extends State<_GroupVideoThumbnailWidget> 
 
   Future<void> _initController() async {
     try {
-      final controller = VideoPlayerController.networkUrl(
-        Uri.parse(widget.videoUrl),
+      VideoPlayerController controller;
+      final cached = await DefaultCacheManager().getFileFromCache(
+        widget.videoUrl,
       );
+      if (cached != null) {
+        controller = VideoPlayerController.file(cached.file);
+      } else {
+        controller = VideoPlayerController.networkUrl(
+          Uri.parse(widget.videoUrl),
+        );
+        unawaited(
+          () async {
+            try {
+              await DefaultCacheManager().downloadFile(widget.videoUrl);
+            } catch (_) {}
+          }(),
+        );
+      }
       await controller.initialize();
       if (!mounted) {
         controller.dispose();

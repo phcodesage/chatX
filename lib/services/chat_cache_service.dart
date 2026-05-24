@@ -12,6 +12,7 @@ class ChatCacheService {
   static const _chatBoxName = 'chat_cache';
   static const _lobbyBoxName = 'lobby_cache';
   static const _groupChatBoxName = 'group_chat_cache';
+  static const _aiChatBoxName = 'ai_chat_cache';
   static const _maxMessagesPerThread = 1000; // Increased from 200
   static const _maxLobbyEntries = 100;
 
@@ -19,6 +20,7 @@ class ChatCacheService {
   static late Box _chatBox;
   static late Box _lobbyBox;
   static late Box _groupChatBox;
+  static late Box _aiChatBox;
 
   /// Initialize Hive and open cache boxes.
   static Future<void> init() async {
@@ -27,6 +29,7 @@ class ChatCacheService {
     _chatBox = await Hive.openBox(_chatBoxName);
     _lobbyBox = await Hive.openBox(_lobbyBoxName);
     _groupChatBox = await Hive.openBox(_groupChatBoxName);
+    _aiChatBox = await Hive.openBox(_aiChatBoxName);
     _initialized = true;
   }
 
@@ -39,9 +42,12 @@ class ChatCacheService {
 
   static String _lobbyKey(int currentUserId) => 'lobby_$currentUserId';
 
+  static String _aiSessionKey(int currentUserId, int sessionId) =>
+      'ai_${currentUserId}_$sessionId';
+
   /// Persist the latest messages for a conversation (capped).
-  /// Enhanced to store more messages for offline access.
-  /// Only caches text content - strips file URLs to save storage space.
+  /// Stores the full message rows (including file URLs) so reopening a chat
+  /// offline can still render media via the on-disk image cache.
   static Future<void> saveConversationMessages(
     int currentUserId,
     int otherUserId,
@@ -57,7 +63,6 @@ class ChatCacheService {
 
     debugPrint('💾 Saving ${capped.length} messages to cache with key: $key');
 
-    // Strip file URLs to save storage - only keep text content
     final cachedMessages = capped.map((m) => _stripFileData(m)).toList();
 
     await _chatBox.put(key, {
@@ -71,50 +76,13 @@ class ChatCacheService {
     );
   }
 
-  /// Strip file URLs from message to save storage space
-  /// Only keeps text content for offline reading
+  /// Returns the message unchanged. We previously stripped file URLs to
+  /// shrink Hive entries, but that broke offline media viewing — reopening
+  /// a chat without internet showed every image as a broken icon. Disk is
+  /// cheap; persisting full message rows lets `CachedNetworkImage` (and the
+  /// audio/video players) serve cached media without a network round-trip.
   static Message _stripFileData(Message message) {
-    // If it's a text message, return as-is
-    if (message.messageType == 'text' &&
-        !message.isTask &&
-        !message.isExcalidrawLink) {
-      return message;
-    }
-
-    // For file messages, strip the file URL but keep the message structure
-    // The content field already contains a preview like "📷 Photo" or "🎬 Video"
-    return Message(
-      id: message.id,
-      senderId: message.senderId,
-      recipientId: message.recipientId,
-      content: message.content, // This already has the preview text
-      messageType: message.messageType,
-      timestamp: message.timestamp,
-      timestampMs: message.timestampMs,
-      isRead: message.isRead,
-      readAt: message.readAt,
-      readAtMs: message.readAtMs,
-      deliveredAt: message.deliveredAt,
-      deliveredAtMs: message.deliveredAtMs,
-      status: message.status,
-      threadId: message.threadId,
-      replyToId: message.replyToId,
-      replyPreview: message.replyPreview,
-      reactions: message.reactions,
-      fileUrl: null, // Strip file URL to save space
-      fileName: null,
-      fileSize: null,
-      fileType: null,
-      isDeleted: message.isDeleted,
-      isTask: message.isTask,
-      taskCreatedAt: message.taskCreatedAt,
-      taskCompletedAt: message.taskCompletedAt,
-      isExcalidrawLink: message.isExcalidrawLink,
-      excalidrawPinnedAt: message.excalidrawPinnedAt,
-      isPinned: message.isPinned,
-      pinnedAt: message.pinnedAt,
-      pinnedByUserId: message.pinnedByUserId,
-    );
+    return message;
   }
 
   /// Add a single message to the cache (for real-time updates).
@@ -272,6 +240,15 @@ class ChatCacheService {
         .toList();
     await _chatBox.deleteAll(keysToDelete);
     await _lobbyBox.delete(_lobbyKey(currentUserId));
+
+    // Drop AI session caches for this user too.
+    final aiKeys = _aiChatBox.keys
+        .where((key) =>
+            key is String && key.startsWith('ai_${currentUserId}_'))
+        .toList();
+    if (aiKeys.isNotEmpty) {
+      await _aiChatBox.deleteAll(aiKeys);
+    }
   }
 
   /// Clear all group message caches.
@@ -315,5 +292,57 @@ class ChatCacheService {
         await _lobbyBox.deleteAll(keys.sublist(0, excess));
       }
     }
+  }
+
+  // ─── AI chat cache ─────────────────────────────────────────────────
+  // The AI chat keeps its own Hive box because messages are plain
+  // role/content/timestamp maps rather than the full Message model.
+
+  /// Persist the message list for an AI session, capped to keep storage
+  /// bounded. Messages are stored verbatim (the AI chat does not attach
+  /// remote files like the 1:1 / group chats do).
+  static Future<void> saveAiSessionMessages(
+    int currentUserId,
+    int sessionId,
+    List<Map<String, String>> messages,
+  ) async {
+    if (!_initialized) return;
+    final capped = messages.length > _maxMessagesPerThread
+        ? messages.sublist(messages.length - _maxMessagesPerThread)
+        : messages;
+    await _aiChatBox.put(_aiSessionKey(currentUserId, sessionId), {
+      'messages': capped.map(Map<String, String>.from).toList(),
+      'updated_at': DateTime.now().toIso8601String(),
+      'message_count': capped.length,
+    });
+  }
+
+  /// Retrieve cached messages for an AI session. Returns an empty list
+  /// when nothing has been cached yet (first open).
+  static Future<List<Map<String, String>>> loadAiSessionMessages(
+    int currentUserId,
+    int sessionId,
+  ) async {
+    if (!_initialized) return const <Map<String, String>>[];
+    final data = _aiChatBox.get(_aiSessionKey(currentUserId, sessionId));
+    if (data == null) return const <Map<String, String>>[];
+    final raw = (data['messages'] as List?) ?? const [];
+    return raw
+        .map<Map<String, String>>(
+          (item) => Map<String, String>.from(
+            (item as Map).map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')),
+          ),
+        )
+        .toList();
+  }
+
+  /// Drop the cached message list for an AI session (e.g. when the user
+  /// clears the conversation server-side).
+  static Future<void> clearAiSessionCache(
+    int currentUserId,
+    int sessionId,
+  ) async {
+    if (!_initialized) return;
+    await _aiChatBox.delete(_aiSessionKey(currentUserId, sessionId));
   }
 }

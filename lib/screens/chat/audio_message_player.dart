@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
 class AudioMessagePlayer extends StatefulWidget {
   const AudioMessagePlayer({
@@ -68,7 +69,7 @@ class _AudioMessagePlayerState extends State<AudioMessagePlayer> {
       } else {
         await _audioPlayer.stop();
         await Future.delayed(const Duration(milliseconds: 100));
-        await _audioPlayer.play(UrlSource(widget.audioUrl));
+        await _audioPlayer.play(await _resolveSource());
         setState(() => _isPlaying = true);
       }
     } catch (e) {
@@ -84,6 +85,30 @@ class _AudioMessagePlayerState extends State<AudioMessagePlayer> {
         );
       }
     }
+  }
+
+  /// Prefer the on-disk cached file (works offline) and fall back to
+  /// streaming the URL. The first network play also warms the cache so
+  /// subsequent plays don't need the network at all.
+  Future<Source> _resolveSource() async {
+    try {
+      final cached = await DefaultCacheManager().getFileFromCache(
+        widget.audioUrl,
+      );
+      if (cached != null) {
+        return DeviceFileSource(cached.file.path);
+      }
+    } catch (_) {
+      // Cache lookup failed for some reason; fall through to streaming.
+    }
+    unawaited(
+      () async {
+        try {
+          await DefaultCacheManager().downloadFile(widget.audioUrl);
+        } catch (_) {}
+      }(),
+    );
+    return UrlSource(widget.audioUrl);
   }
 
   String _formatDuration(Duration duration) {
