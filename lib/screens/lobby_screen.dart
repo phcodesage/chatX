@@ -73,6 +73,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   // _isHandlingIncomingCall is now global via PresenceService().isHandlingIncomingCall
   Route<dynamic>? _activeIncomingCallRoute;
   int? _activeIncomingCallId;
+
+  /// The user ID of the chat currently open on top of the lobby.
+  /// Used to suppress unread badge increments while viewing that conversation.
+  int? _currentlyViewingChatUserId;
   String? _activeIncomingCallRoomId;
   final Map<int, String> _crossDeviceActiveCallRoomByUserId = {};
 
@@ -898,7 +902,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
           initialCallInProgressOnOtherDevice: hasCrossDeviceCall,
         ),
       ),
-    );
+    ).then((_) {
+      _currentlyViewingChatUserId = null;
+    });
+    _currentlyViewingChatUserId = targetUser.id;
   }
 
   Future<void> _openSharePickerIfNeeded() async {
@@ -1106,6 +1113,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       localStream: localStream ?? callService.localStream,
                       onChatPressed: () {
                         Navigator.of(context).pop();
+                        _currentlyViewingChatUserId = callerUser.id;
                         Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => ChatScreen(
@@ -1115,7 +1123,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                       .containsKey(callerUser.id),
                             ),
                           ),
-                        );
+                        ).then((_) {
+                          _currentlyViewingChatUserId = null;
+                        });
                       },
                     ),
                   ),
@@ -1277,6 +1287,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                       localStream: localStream ?? callService.localStream,
                       onChatPressed: () {
                         Navigator.of(context).pop();
+                        _currentlyViewingChatUserId = callerUser.id;
                         Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => ChatScreen(
@@ -1286,7 +1297,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                       .containsKey(callerUser.id),
                             ),
                           ),
-                        );
+                        ).then((_) {
+                          _currentlyViewingChatUserId = null;
+                        });
                       },
                     ),
                   ),
@@ -1399,6 +1412,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final senderId = _toInt(data['sender_id']);
     if (senderId == null) return;
 
+    // Don't increment unread if user is currently viewing this conversation
+    final isViewingThisChat = _currentlyViewingChatUserId == senderId;
+
     final createdAt = _extractEventTimestamp(data) ?? DateTime.now().toIso8601String();
     const doorbellPreview = 'sent a notification';
 
@@ -1422,7 +1438,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         isOnline: user.isOnline,
         isAdmin: user.isAdmin,
         timezone: user.timezone,
-        unreadCount: user.unreadCount + 1,
+        unreadCount: isViewingThisChat ? 0 : user.unreadCount + 1,
         isContact: user.isContact,
         isAdminUser: user.isAdminUser,
         lastMessage: doorbellPreview,
@@ -1548,6 +1564,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final content = data['content'] as String?;
     final createdAt = _extractEventTimestamp(data);
 
+    // Don't increment unread if user is currently viewing this conversation
+    final isViewingThisChat = _currentlyViewingChatUserId == senderId;
+
     // Update unread count and last message info for sender
     setState(() {
       final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
@@ -1569,7 +1588,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           isOnline: user.isOnline,
           isAdmin: user.isAdmin,
           timezone: user.timezone,
-          unreadCount: user.unreadCount + 1,
+          unreadCount: isViewingThisChat ? 0 : user.unreadCount + 1,
           isContact: user.isContact,
           isAdminUser: user.isAdminUser,
           // 🆕 NEW: Update last message info
@@ -1658,6 +1677,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final fileName = data['file_name'] as String?;
     final createdAt = _extractEventTimestamp(data);
 
+    // Don't increment unread if user is currently viewing this conversation
+    final isViewingThisChat = _currentlyViewingChatUserId == senderId;
+
     // Show file name as last message preview
     final filePreview = fileName != null ? "📎 $fileName" : "📎 File";
 
@@ -1680,7 +1702,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           isOnline: user.isOnline,
           isAdmin: user.isAdmin,
           timezone: user.timezone,
-          unreadCount: user.unreadCount + 1,
+          unreadCount: isViewingThisChat ? 0 : user.unreadCount + 1,
           isContact: user.isContact,
           isAdminUser: user.isAdminUser,
           lastMessage: filePreview,
@@ -1703,6 +1725,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     if (senderId == null) return;
     final duration = data['duration'] as int?;
     final createdAt = _extractEventTimestamp(data);
+
+    // Don't increment unread if user is currently viewing this conversation
+    final isViewingThisChat = _currentlyViewingChatUserId == senderId;
 
     // Show voice message with duration as last message preview
     final voicePreview = duration != null
@@ -1728,7 +1753,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           isOnline: user.isOnline,
           isAdmin: user.isAdmin,
           timezone: user.timezone,
-          unreadCount: user.unreadCount + 1,
+          unreadCount: isViewingThisChat ? 0 : user.unreadCount + 1,
           isContact: user.isContact,
           isAdminUser: user.isAdminUser,
           lastMessage: voicePreview,
@@ -2494,6 +2519,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                   : null,
                               onTap: () {
                                 Navigator.pop(ctx);
+                                _currentlyViewingChatUserId = user.id;
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -2505,6 +2531,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                     ),
                                   ),
                                 ).then((_) {
+                                  _currentlyViewingChatUserId = null;
                                   _loadLobby(useCacheFirst: false);
                                   _setupRealtimeListeners();
                                 });
@@ -3423,6 +3450,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
         child: InkWell(
           borderRadius: BorderRadius.circular(_cs(context, 12)),
           onTap: () {
+            // Track which chat is open to suppress unread badge increments
+            _currentlyViewingChatUserId = user.id;
             // Navigate to chat screen
             Navigator.push(
               context,
@@ -3434,6 +3463,39 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 ),
               ),
             ).then((_) async {
+              // Clear the tracking
+              _currentlyViewingChatUserId = null;
+              // Immediately clear unread badge for this user in local state
+              // so it doesn't flash briefly while the server reload is in progress
+              setState(() {
+                final userIndex = _lobbyUsers.indexWhere((u) => u.id == user.id);
+                if (userIndex != -1) {
+                  final u = _lobbyUsers[userIndex];
+                  _lobbyUsers[userIndex] = LobbyUser(
+                    id: u.id,
+                    username: u.username,
+                    email: u.email,
+                    firstName: u.firstName,
+                    lastName: u.lastName,
+                    fullName: u.fullName,
+                    avatarUrl: u.avatarUrl,
+                    bio: u.bio,
+                    status: u.status,
+                    statusMessage: u.statusMessage,
+                    lastSeen: u.lastSeen,
+                    isOnline: u.isOnline,
+                    isAdmin: u.isAdmin,
+                    timezone: u.timezone,
+                    unreadCount: 0,
+                    isContact: u.isContact,
+                    isAdminUser: u.isAdminUser,
+                    lastMessage: u.lastMessage,
+                    lastMessageTime: u.lastMessageTime,
+                    lastMessageIsFromMe: u.lastMessageIsFromMe,
+                  );
+                }
+              });
+
               // Mark messages from this user as read via REST (fallback for any
               // messages the socket handler may have missed while offline)
               try {

@@ -280,6 +280,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Scroll to bottom button state
   bool _isAtBottom = true;
+  int _unreadCount = 0;
   bool _suppressNextSendAutoScroll = false;
 
   // Reply state
@@ -585,6 +586,7 @@ class _ChatScreenState extends State<ChatScreen>
       setState(() {
         _isAtBottom = isAtBottom;
         if (isAtBottom) {
+          _unreadCount = 0;
           // Mark visible messages as read when scrolling to bottom
           _markVisibleMessagesAsRead();
         }
@@ -1211,6 +1213,12 @@ class _ChatScreenState extends State<ChatScreen>
         // Skip if this is our own message (we already have it optimistically)
         if (incomingMessage.senderId == _currentUserId) return;
 
+        // Skip duplicate messages (e.g. socket reconnect replays)
+        if (_messages.any((m) => m.id == incomingMessage.id)) {
+          debugPrint('💬 Skipping duplicate message: ${incomingMessage.id}');
+          return;
+        }
+
         // Always clear typing indicator when a real message arrives
         _typingHideTimer?.cancel();
 
@@ -1220,13 +1228,12 @@ class _ChatScreenState extends State<ChatScreen>
           _otherUserTyping = false;
           _typingPreview = '';
 
-          // Incoming messages while not at bottom are marked unread visually in the app.
-          // The count field was previously maintained for a badge but is no longer used.
-          // if (!_isSelfChat &&
-          //     !_isAtBottom &&
-          //     incomingMessage.senderId == widget.otherUser.id) {
-          //   _unreadCount++;
-          // }
+          // Increment unread count if not at bottom (for incoming messages)
+          if (!_isSelfChat &&
+              !_isAtBottom &&
+              incomingMessage.senderId == widget.otherUser.id) {
+            _unreadCount++;
+          }
         });
 
         // Auto-translate incoming message if enabled and it's a text message from the other user
@@ -9607,6 +9614,9 @@ class _ChatScreenState extends State<ChatScreen>
                           child: Center(
                             child: GestureDetector(
                               onTap: () {
+                                setState(() {
+                                  _unreadCount = 0;
+                                });
                                 _scrollToBottom();
                                 _markVisibleMessagesAsRead();
                               },
@@ -9624,10 +9634,42 @@ class _ChatScreenState extends State<ChatScreen>
                                     ),
                                   ],
                                 ),
-                                child: const Icon(
-                                  Icons.keyboard_arrow_down,
-                                  color: Colors.white,
-                                  size: 20,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    const Icon(
+                                      Icons.keyboard_arrow_down,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                    if (_unreadCount > 0)
+                                      Positioned(
+                                        top: -2,
+                                        right: -2,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(3),
+                                          decoration: const BoxDecoration(
+                                            color: Colors.red,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 14,
+                                            minHeight: 14,
+                                          ),
+                                          child: Text(
+                                            _unreadCount > 99
+                                                ? '99+'
+                                                : _unreadCount.toString(),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 8,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                             ),
