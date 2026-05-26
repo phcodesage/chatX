@@ -2409,6 +2409,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return parsed.toLocal();
   }
 
+  String _weekdayShort(int weekday) {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return days[(weekday - 1).clamp(0, 6)];
+  }
+
   String _formatTime(String? lastSeen) {
     if (lastSeen == null) return '';
     try {
@@ -2416,16 +2421,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
       final now = DateTime.now();
       final difference = now.difference(dateTime);
 
+      final hour = dateTime.hour;
+      final minute = dateTime.minute.toString().padLeft(2, '0');
+      final period = hour >= 12 ? 'PM' : 'AM';
+      final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+      final timeStr = '$displayHour:$minute $period';
+
       if (difference.inMinutes < 1) return 'Just now';
       if (difference.inHours < 1) return '${difference.inMinutes}m ago';
-      if (difference.inDays < 1) {
-        final hour = dateTime.hour;
-        final minute = dateTime.minute.toString().padLeft(2, '0');
-        final period = hour >= 12 ? 'PM' : 'AM';
-        final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-        return '$displayHour:$minute $period';
-      }
-      if (difference.inDays < 7) return '${difference.inDays}d ago';
+
+      final todayStart = DateTime(now.year, now.month, now.day);
+      final yesterdayStart = todayStart.subtract(const Duration(days: 1));
+
+      if (!dateTime.isBefore(todayStart)) return timeStr;
+      if (!dateTime.isBefore(yesterdayStart)) return 'Yesterday $timeStr';
+      if (difference.inDays < 7) return '${_weekdayShort(dateTime.weekday)} $timeStr';
       return '${dateTime.month}/${dateTime.day}';
     } catch (e) {
       return '';

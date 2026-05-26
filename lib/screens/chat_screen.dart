@@ -13105,16 +13105,18 @@ class _ChatScreenState extends State<ChatScreen>
       final dt = DateTime.parse(pinnedAt).toLocal();
       final now = DateTime.now();
       final diff = now.difference(dt);
+      final hour = dt.hour;
+      final min = dt.minute.toString().padLeft(2, '0');
+      final period = hour >= 12 ? 'PM' : 'AM';
+      final h = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+      final timeStr = '$h:$min $period';
+
       if (diff.inDays == 0) {
-        final hour = dt.hour;
-        final min = dt.minute.toString().padLeft(2, '0');
-        final period = hour >= 12 ? 'PM' : 'AM';
-        final h = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-        return '$h:$min $period';
+        return timeStr;
       } else if (diff.inDays == 1) {
-        return 'Yesterday';
+        return 'Yesterday $timeStr';
       } else if (diff.inDays < 7) {
-        return '${diff.inDays}d ago';
+        return '${diff.inDays}d ago $timeStr';
       } else {
         return '${dt.month}/${dt.day}/${dt.year}';
       }
@@ -13936,7 +13938,11 @@ class _ChatScreenState extends State<ChatScreen>
       }
 
       if (!lastSeen.isBefore(yesterdayStart)) {
-        return 'yesterday';
+        final hour = lastSeen.hour;
+        final min = lastSeen.minute.toString().padLeft(2, '0');
+        final period = hour >= 12 ? 'PM' : 'AM';
+        final h = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+        return 'yesterday at $h:$min $period';
       }
 
       if (difference.inDays < 7) {

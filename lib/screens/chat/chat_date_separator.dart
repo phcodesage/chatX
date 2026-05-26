@@ -47,12 +47,6 @@ class ChatDateSeparator extends StatelessWidget {
       final yesterday = today.subtract(const Duration(days: 1));
       final messageDate = DateTime(date.year, date.month, date.day);
 
-      if (messageDate == today) {
-        return 'Today';
-      } else if (messageDate == yesterday) {
-        return 'Yesterday';
-      }
-
       const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
       const months = [
         'Jan',
@@ -70,7 +64,14 @@ class ChatDateSeparator extends StatelessWidget {
       ];
       final weekday = weekdays[date.weekday - 1];
       final month = months[date.month - 1];
-      return '$weekday. $month ${date.day}, ${date.year}';
+      final fullDate = '$weekday. $month ${date.day}, ${date.year}';
+
+      if (messageDate == today) {
+        return 'Today';
+      } else if (messageDate == yesterday) {
+        return 'Yesterday - $fullDate';
+      }
+      return fullDate;
     } catch (e) {
       return timestamp;
     }
