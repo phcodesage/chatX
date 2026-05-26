@@ -898,8 +898,10 @@ class SocketService {
 
     // Add a catch-all event listener for debugging
     _socket!.onAny((event, data) {
-      // Only log color-related events to reduce noise
-      if (event.toString().contains('color') ||
+      // Log AI sync and color-related events
+      if (event.toString().contains('ai_chat_sync')) {
+        debugPrint('🔍 [SOCKET onAny] ai_chat_sync event arrived! data type: ${data.runtimeType}, data: $data');
+      } else if (event.toString().contains('color') ||
           event.toString().contains('group_color')) {
         debugPrint('🔍 [SOCKET DEBUG] Received event: $event with data: $data');
       }
@@ -1417,9 +1419,17 @@ class SocketService {
 
     // AI chat realtime sync
     _socket!.on('ai_chat_sync', (data) {
-      if (data is! Map) return;
-      final payload = Map<String, dynamic>.from(data as Map);
-      debugPrint('🤖 [AI SYNC] ai_chat_sync received: action=${payload['action']}');
+      debugPrint('\u{1f916} [AI SYNC] ai_chat_sync RAW data type: ${data.runtimeType}, data: $data');
+      Map<String, dynamic>? payload;
+      if (data is Map) {
+        payload = Map<String, dynamic>.from(data);
+      } else if (data is List && data.isNotEmpty && data[0] is Map) {
+        payload = Map<String, dynamic>.from(data[0] as Map);
+      } else {
+        debugPrint('\u{1f916} [AI SYNC] Unexpected data type, skipping');
+        return;
+      }
+      debugPrint('\u{1f916} [AI SYNC] ai_chat_sync received: action=${payload['action']}, session_id=${payload['session_id']}');
       _broadcast(_aiChatSyncListeners, payload);
     });
 

@@ -37,7 +37,7 @@ class AiChatScreen extends StatefulWidget {
   State<AiChatScreen> createState() => _AiChatScreenState();
 }
 
-class _AiChatScreenState extends State<AiChatScreen> {
+class _AiChatScreenState extends State<AiChatScreen> with WidgetsBindingObserver {
   final List<Map<String, String>> _messages = <Map<String, String>>[];
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -52,6 +52,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   final SocketService _socketService = SocketService();
   static const String _socketListenerKey = 'ai_chat_screen';
+
+  /// Periodic timer to poll for new AI messages from other devices.
+  Timer? _crossDeviceSyncTimer;
 
   bool _isLoading = false;
   bool _isSending = false;
@@ -224,12 +227,15 @@ class _AiChatScreenState extends State<AiChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_handleScrollPosition);
     _initialize();
   }
 
   @override
   void dispose() {
+    _crossDeviceSyncTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _socketService.removeListener('aiChatSync', _socketListenerKey);
     _dismissTopActionBanner();
     _scrollController.removeListener(_handleScrollPosition);
@@ -240,6 +246,14 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _scrollController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // App came back to foreground — sync messages from server
+      _syncMessagesFromServer();
+    }
   }
 
   void _handleScrollPosition() {
@@ -263,6 +277,90 @@ class _AiChatScreenState extends State<AiChatScreen> {
     await _loadUiPreferences();
     await _initializeAiSession();
     _setupAiChatSync();
+    _startCrossDeviceSync();
+  }
+
+  /// Start periodic polling for new messages from other devices (web, etc.)
+  /// This compensates for cases where the socket ai_chat_sync event is not
+  /// delivered (e.g., server doesn't emit for web-originated messages).
+  void _startCrossDeviceSync() {
+    _crossDeviceSyncTimer?.cancel();
+    _crossDeviceSyncTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _syncMessagesFromServer(),
+    );
+  }
+
+  /// Fetch latest messages from the server and merge any new ones into the list.
+  Future<void> _syncMessagesFromServer() async {
+    if (!mounted || _isSending || _sessionId == null) {
+      debugPrint('[AI SYNC POLL] Skipped: mounted=$mounted, isSending=$_isSending, sessionId=$_sessionId');
+      return;
+    }
+
+    try {
+      final token = await StorageService.getToken();
+      if (token == null) return;
+
+      final response = await http.get(
+        _aiUri('/sessions/$_sessionId/messages'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200 || !mounted) return;
+
+      final payload = jsonDecode(response.body) as Map<String, dynamic>;
+      final rawMessages = (payload['messages'] as List<dynamic>? ?? <dynamic>[]);
+
+      final serverMessages = rawMessages
+          .map((m) => m as Map<String, dynamic>)
+          .where(
+            (m) =>
+                (m['role'] == 'user' || m['role'] == 'assistant') &&
+                (m['content']?.toString().trim().isNotEmpty ?? false),
+          )
+          .map(
+            (m) => <String, String>{
+              'id': (m['id'] ?? m['message_id'] ?? '').toString(),
+              'role': m['role'].toString(),
+              'content': m['content'].toString(),
+              'timestamp': (m['created_at'] ?? m['timestamp'] ?? '').toString(),
+            },
+          )
+          .toList();
+
+      if (!mounted) return;
+
+      // Check if there are new messages not in our local list
+      final localIds = _messages.map((m) => m['id']).toSet();
+      final newMessages = serverMessages
+          .where((m) => m['id'] != null && m['id']!.isNotEmpty && !localIds.contains(m['id']))
+          .toList();
+
+      if (newMessages.isEmpty) return;
+
+      debugPrint('[AI SYNC POLL] Found ${newMessages.length} new messages from server, updating UI');
+      setState(() {
+        _messages
+          ..clear()
+          ..addAll(serverMessages);
+      });
+      _persistAiSnapshot();
+
+      // Auto-scroll if at bottom
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_scrollController.hasClients) return;
+        if (_isAtBottom) {
+          _scrollToBottom();
+        }
+      });
+    } catch (e) {
+      // Silent failure — this is background sync
+      debugPrint('[AI SYNC] Cross-device sync failed: $e');
+    }
   }
 
   void _setupAiChatSync() {
@@ -271,8 +369,19 @@ class _AiChatScreenState extends State<AiChatScreen> {
       final action = payload['action']?.toString() ?? '';
       final payloadSessionId = payload['session_id'] as int?;
 
-      // Only process events for the currently open session.
-      if (payloadSessionId != null && payloadSessionId != _sessionId) return;
+      debugPrint('🤖 [AI CHAT SCREEN] Received ai_chat_sync: action=$action, '
+          'payloadSessionId=$payloadSessionId, mySessionId=$_sessionId, '
+          'isSending=$_isSending, hasStreaming=$_hasStreamingAssistant');
+
+      // If the event is for a different session, switch to it (cross-device sync).
+      // This handles the case where the web started using a newer session.
+      if (payloadSessionId != null && payloadSessionId != _sessionId) {
+        debugPrint('🤖 [AI CHAT SCREEN] Session mismatch: payload=$payloadSessionId vs mine=$_sessionId - switching to new session');
+        _sessionId = payloadSessionId;
+        // Reload messages from the new session
+        _reloadCurrentSession();
+        return;
+      }
 
       switch (action) {
         case 'message_created':
@@ -406,7 +515,19 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
       debugPrint('[AiChatScreen] User ID: $userId, Saved session ID: $savedSessionId');
 
-      if (savedSessionId != null) {
+      // Always fetch the current (most recently updated) session from the server
+      // to stay in sync with other devices (web, etc.). The locally saved ID may
+      // be stale if the user chatted on another device.
+      final serverSessionId = await _fetchCurrentSession(token);
+      debugPrint('[AiChatScreen] Server current session ID: $serverSessionId');
+
+      if (serverSessionId != null && serverSessionId != savedSessionId) {
+        // Server has a different (newer) session — switch to it.
+        _log('Server session $serverSessionId differs from local $savedSessionId, switching');
+        _sessionId = serverSessionId;
+        await StorageService.saveAiSessionId(userId, serverSessionId);
+        await _loadMessages(token, serverSessionId);
+      } else if (savedSessionId != null) {
         _log('Attempting to load messages for saved session ID: $savedSessionId');
         final loadResult = await _loadMessages(token, savedSessionId);
         _log('Load result for session $savedSessionId: $loadResult');
@@ -424,10 +545,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
         }
       }
 
-      // If no valid local session, recover the most recent one from the server
-      // (or let the server create one if the user has no sessions at all).
-      // This prevents creating duplicate empty sessions after app updates
-      // wipe local storage.
+      // If still no valid session (network error on both paths), try server again
       if (_sessionId == null) {
         _log('Recovering current session from server (local ID lost or absent)');
         _sessionId = await _fetchCurrentSession(token);
@@ -463,6 +581,16 @@ class _AiChatScreenState extends State<AiChatScreen> {
       });
       _showError('Failed to initialize AI chat: $e');
     }
+  }
+
+  /// Reload messages for the current session from the server.
+  /// Called when a cross-device sync event indicates a session change.
+  Future<void> _reloadCurrentSession() async {
+    final token = await StorageService.getToken();
+    if (token == null || _sessionId == null || !mounted) return;
+    final userId = await StorageService.getUserId() ?? 0;
+    await StorageService.saveAiSessionId(userId, _sessionId!);
+    await _loadMessages(token, _sessionId!);
   }
 
   Future<_LoadResult> _loadMessages(String token, int sessionId) async {

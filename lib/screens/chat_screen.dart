@@ -483,9 +483,14 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (!metricsChanged || !mounted) return;
 
+    // Suppress rebuilds while restoring focus after app resume to prevent
+    // the UI from jumping (keyboard inset briefly reports 0 then restores).
+    if (_restoreInputFocusOnResume || _isRestoringInputFocus) return;
+
     _metricsRefreshTimer?.cancel();
     _metricsRefreshTimer = Timer(const Duration(milliseconds: 32), () {
       if (!mounted) return;
+      if (_restoreInputFocusOnResume || _isRestoringInputFocus) return;
       if (_inputFocusNode.hasFocus ||
           _showEmojiPicker ||
           _isActionsPanelOpen ||
@@ -501,7 +506,8 @@ class _ChatScreenState extends State<ChatScreen>
     if (!mounted || !_restoreInputFocusOnResume) return;
     _isRestoringInputFocus = true;
 
-    // Android can drop IME during app-switch; retry briefly after resume.
+    // Restore focus and keyboard, but suppress all rebuilds during the
+    // transition so the UI doesn't jump while the keyboard animates in.
     for (final delay in const [0, 90, 200]) {
       if (delay > 0) {
         await Future<void>.delayed(Duration(milliseconds: delay));
@@ -510,25 +516,29 @@ class _ChatScreenState extends State<ChatScreen>
       _inputFocusNode.requestFocus();
       try {
         await SystemChannels.textInput.invokeMethod<void>('TextInput.show');
-      } catch (_) {
-        // Ignore platform channel timing issues during lifecycle transitions.
-      }
+      } catch (_) {}
     }
 
     _restoreInputFocusOnResume = false;
-    await Future<void>.delayed(const Duration(milliseconds: 180));
+
+    // Wait for the keyboard to fully appear before allowing rebuilds.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
     _isRestoringInputFocus = false;
+
+    // Single rebuild now that the keyboard is stable.
+    if (mounted) setState(() {});
   }
 
   double _effectiveKeyboardInset(BuildContext context) {
+    // During app resume, freeze at the last known keyboard height entirely.
+    // Don't even read MediaQuery to avoid registering a rebuild dependency
+    // that would cause the UI to animate as the keyboard re-appears.
+    if (_restoreInputFocusOnResume || _isRestoringInputFocus) {
+      return _lastKnownKeyboardInset;
+    }
     final currentInset = MediaQuery.of(context).viewInsets.bottom;
     if (currentInset > 0) {
       _lastKnownKeyboardInset = currentInset;
-      return currentInset;
-    }
-    if ((_restoreInputFocusOnResume || _isRestoringInputFocus) &&
-        _lastKnownKeyboardInset > 0) {
-      return _lastKnownKeyboardInset;
     }
     return currentInset;
   }
@@ -657,6 +667,11 @@ class _ChatScreenState extends State<ChatScreen>
     // Only update if keyboard visibility actually changed
     final isVisible = _inputFocusNode.hasFocus;
     if (_isKeyboardVisible != isVisible) {
+      // Don't trigger rebuilds during focus restoration after app resume
+      if (_restoreInputFocusOnResume || _isRestoringInputFocus) {
+        _isKeyboardVisible = isVisible;
+        return;
+      }
       setState(() {
         _isKeyboardVisible = isVisible;
       });
@@ -4780,13 +4795,13 @@ class _ChatScreenState extends State<ChatScreen>
   void _insertOtherUserFirstName() {
     final current = _messageController.text;
     final firstName = widget.otherUser.firstName;
-    final newText = current.isEmpty ? firstName : '$current $firstName';
-    _replaceInputTextWithSanitized(newText);
-    
-    // Ensure the cursor is at the end of the newly inserted text
-    _messageController.selection = TextSelection.collapsed(
-      offset: _messageController.text.length,
+    final newText = current.isEmpty ? '$firstName ' : '$current $firstName ';
+    _messageController.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: newText.length),
+      composing: TextRange.empty,
     );
+    _inputFocusNode.requestFocus();
   }
 
   Future<void> _pasteFromClipboard() async {
@@ -5282,44 +5297,24 @@ class _ChatScreenState extends State<ChatScreen>
       return '${words.take(splitIndex).join(' ')}\n${words.skip(splitIndex).join(' ')}';
     }
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onPressed();
-        },
-        splashColor: Colors.white.withValues(alpha: 0.28),
-        highlightColor: Colors.white.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 36, minWidth: 58),
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: backgroundColor,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.15),
-              width: 1,
-            ),
-          ),
-          child: Center(
-            child: Text(
-              formatLabel(label),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                height: 1.1,
-              ),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.visible,
-              softWrap: true,
-            ),
-          ),
+    return _TapHighlightChip(
+      onPressed: () {
+        HapticFeedback.selectionClick();
+        onPressed();
+      },
+      backgroundColor: backgroundColor,
+      child: Text(
+        formatLabel(label),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          height: 1.1,
         ),
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        overflow: TextOverflow.visible,
+        softWrap: true,
       ),
     );
   }
@@ -5344,6 +5339,12 @@ class _ChatScreenState extends State<ChatScreen>
     if (text.isEmpty || _isStampOnlyDraft(text)) {
       if (_isTyping) {
         _stopTyping();
+      }
+      // Re-seed stamp prefix when input is cleared while stamp mode is on
+      if (text.isEmpty && _stampEnabled) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _seedStampPrefixInInput();
+        });
       }
       return;
     }
@@ -5992,6 +5993,8 @@ class _ChatScreenState extends State<ChatScreen>
     required EdgeInsetsGeometry padding,
   }) {
     const doorbellColor = Colors.white;
+    // Use a fixed height so switching between label and icon doesn't cause layout jumps.
+    final fixedHeight = iconSize + 12; // icon + vertical padding matches both states
 
     if (!showLabel) {
       return Tooltip(
@@ -6004,6 +6007,7 @@ class _ChatScreenState extends State<ChatScreen>
             splashColor: Colors.white.withValues(alpha: 0.20),
             highlightColor: Colors.white.withValues(alpha: 0.10),
             child: Container(
+              height: fixedHeight,
               padding: padding,
               decoration: const BoxDecoration(
                 color: doorbellColor,
@@ -6030,17 +6034,21 @@ class _ChatScreenState extends State<ChatScreen>
           splashColor: Colors.white.withValues(alpha: 0.20),
           highlightColor: Colors.white.withValues(alpha: 0.10),
           child: Container(
+            height: fixedHeight,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: doorbellColor,
               borderRadius: BorderRadius.circular(999),
             ),
-            child: const Text(
-              'Ring Doorbell',
-              style: TextStyle(
-                color: Colors.black,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+            child: Center(
+              widthFactor: 1,
+              child: const Text(
+                'Ring Doorbell',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
@@ -14412,6 +14420,68 @@ class _VideoPreviewWidgetState extends State<_VideoPreviewWidget> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A chip button with a background color darken/lighten on press for tactile feedback.
+class _TapHighlightChip extends StatefulWidget {
+  final VoidCallback onPressed;
+  final Color backgroundColor;
+  final Widget child;
+
+  const _TapHighlightChip({
+    required this.onPressed,
+    required this.backgroundColor,
+    required this.child,
+  });
+
+  @override
+  State<_TapHighlightChip> createState() => _TapHighlightChipState();
+}
+
+class _TapHighlightChipState extends State<_TapHighlightChip> {
+  bool _pressed = false;
+
+  void _onTapDown(TapDownDetails _) {
+    setState(() => _pressed = true);
+  }
+
+  void _onTapUp(TapUpDetails _) {
+    setState(() => _pressed = false);
+    widget.onPressed();
+  }
+
+  void _onTapCancel() {
+    setState(() => _pressed = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = _pressed
+        ? Color.lerp(widget.backgroundColor, Colors.white, 0.25)!
+        : widget.backgroundColor;
+
+    return GestureDetector(
+      onTapDown: _onTapDown,
+      onTapUp: _onTapUp,
+      onTapCancel: _onTapCancel,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+        constraints: const BoxConstraints(minHeight: 36, minWidth: 58),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: _pressed ? 0.35 : 0.15),
+            width: 1,
+          ),
+        ),
+        child: Center(child: widget.child),
       ),
     );
   }

@@ -126,9 +126,7 @@ class ChatComposerPanel extends StatelessWidget {
                       );
 
                       return Row(
-                        crossAxisAlignment: isComposerExpanded
-                            ? CrossAxisAlignment.end
-                            : CrossAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           Expanded(
                             child: Container(
@@ -334,7 +332,8 @@ class _ComposerInput extends StatelessWidget {
               scrollPadding: EdgeInsets.only(bottom: 220 * scale),
               style: messageTextStyle,
               decoration: InputDecoration(
-                hintText: 'Type a message...',
+                hintText: 'Message...',
+                hintMaxLines: 1,
                 hintStyle: TextStyle(
                   color: Colors.grey[600],
                   fontSize: 17 * scale,
