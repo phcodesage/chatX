@@ -91,8 +91,8 @@ class CommonPhrasesApi {
     }
   }
 
-  /// Save a custom phrase
-  Future<void> savePhrase(String phrase) async {
+  /// Save a custom phrase — returns the created/updated [CommonPhrase]
+  Future<CommonPhrase> savePhrase(String phrase) async {
     try {
       _trace('📝 Saving custom phrase: $phrase');
       final uri = Uri.parse(
@@ -111,9 +111,129 @@ class CommonPhrasesApi {
         throw Exception('Failed to save phrase (${res.statusCode})');
       }
 
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
       _trace('✅ Phrase saved');
+      return CommonPhrase.fromJson(
+        decoded['phrase'] as Map<String, dynamic>,
+      );
     } catch (e) {
       _trace('❌ Error saving phrase: $e');
+      rethrow;
+    }
+  }
+
+  /// Generate a phrase using AI (Ollama) via the mobile Bearer-token endpoint
+  Future<String> generatePhrase() async {
+    try {
+      final url = ApiConfig.aiGeneratePhraseUrl;
+      _trace('🤖 AI generate phrase → POST $url');
+
+      final headers = await _headers();
+      _trace('🔑 Auth header present: ${headers.containsKey('Authorization')}');
+
+      final res = await _client.post(
+        Uri.parse(url),
+        headers: headers,
+        body: jsonEncode({}),
+      );
+
+      _trace('📡 AI response status: ${res.statusCode}');
+      _trace('📡 AI response body:   ${res.body}');
+
+      if (res.statusCode == 401) {
+        throw Exception('Unauthorized — token may be expired (401)');
+      }
+      if (res.statusCode == 502) {
+        throw Exception('Ollama AI service unreachable (502)');
+      }
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception('AI generate failed (${res.statusCode}): ${res.body}');
+      }
+
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      final phrase = (decoded['phrase'] ?? '').toString().trim();
+      if (phrase.isEmpty) {
+        throw Exception('AI returned an empty phrase');
+      }
+      _trace('✅ AI generated phrase: $phrase');
+      return phrase;
+    } catch (e) {
+      _trace('❌ Error generating AI phrase: $e');
+      rethrow;
+    }
+  }
+
+  /// Pin a phrase server-side (mobile max: 2)
+  Future<CommonPhrase> pinPhrase(int phraseId) async {
+    try {
+      _trace('📌 Pinning phrase $phraseId');
+      final uri = Uri.parse(
+        '$baseUrl${ApiConfig.mobilePrefix}/messages/common-phrases/$phraseId/pin',
+      );
+      final res = await _client.post(uri, headers: await _headers());
+
+      if (res.statusCode == 400) {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        throw Exception(decoded['error'] ?? 'Max pins reached');
+      }
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception('Failed to pin phrase (${res.statusCode})');
+      }
+
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      _trace('✅ Phrase pinned');
+      return CommonPhrase.fromJson(
+        decoded['phrase'] as Map<String, dynamic>,
+      );
+    } catch (e) {
+      _trace('❌ Error pinning phrase: $e');
+      rethrow;
+    }
+  }
+
+  /// Unpin a phrase server-side
+  Future<CommonPhrase> unpinPhrase(int phraseId) async {
+    try {
+      _trace('📌 Unpinning phrase $phraseId');
+      final uri = Uri.parse(
+        '$baseUrl${ApiConfig.mobilePrefix}/messages/common-phrases/$phraseId/unpin',
+      );
+      final res = await _client.post(uri, headers: await _headers());
+
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception('Failed to unpin phrase (${res.statusCode})');
+      }
+
+      final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+      _trace('✅ Phrase unpinned');
+      return CommonPhrase.fromJson(
+        decoded['phrase'] as Map<String, dynamic>,
+      );
+    } catch (e) {
+      _trace('❌ Error unpinning phrase: $e');
+      rethrow;
+    }
+  }
+
+  /// Reorder pinned phrases by passing phrase IDs in desired sequence
+  Future<void> reorderPins(List<int> phraseIds) async {
+    try {
+      _trace('🔀 Reordering pins: $phraseIds');
+      final uri = Uri.parse(
+        '$baseUrl${ApiConfig.mobilePrefix}/messages/common-phrases/pins/reorder',
+      );
+      final res = await _client.post(
+        uri,
+        headers: await _headers(),
+        body: jsonEncode({'phrase_ids': phraseIds}),
+      );
+
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception('Failed to reorder pins (${res.statusCode})');
+      }
+      _trace('✅ Pins reordered');
+    } catch (e) {
+      _trace('❌ Error reordering pins: $e');
       rethrow;
     }
   }

@@ -103,4 +103,10 @@ class ApiConfig {
     final base = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
     return '$base/api/link_preview';
   }
+
+  // AI endpoints
+  static String get aiGeneratePhraseUrl {
+    final base = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+    return '$base/api/ai/generate_phrase';
+  }
 }
