@@ -948,25 +948,87 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        if (uris.isEmpty() && intent.clipData != null) {
-            val clipData = intent.clipData ?: return emptyList()
+        // Process clipData - check for text items (URL) first before image URIs
+        var clipTextPayload: String? = null
+        if (intent.clipData != null) {
+            val clipData = intent.clipData!!
             for (index in 0 until clipData.itemCount) {
-                val uri = clipData.getItemAt(index).uri
-                if (uri != null) {
-                    uris.add(uri)
+                val item = clipData.getItemAt(index)
+                // Check for text content in clip item
+                if (item.text != null) {
+                    clipTextPayload = item.text.toString()
+                    Log.d("ShareDebug", "Clip item $index text: ${clipTextPayload?.take(100)}")
+                }
+                // Collect URIs from clip item (only if no text found yet)
+                if (item.uri != null && clipTextPayload == null) {
+                    uris.add(item.uri)
                 }
             }
         }
 
+        // Check for text content first (Chrome often sends URL as text along with preview image)
+        // Combine EXTRA_TEXT and clipData text
+        val extraTextPayload = intent.getStringExtra(Intent.EXTRA_TEXT)
+        val textPayload = extraTextPayload ?: clipTextPayload
+        val subjectPayload = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+        val mimeType = intent.type?.lowercase() ?: ""
+        Log.d("ShareDebug", "Share check: mimeType=$mimeType, extraText=${extraTextPayload?.take(100)}, clipText=${clipTextPayload?.take(100)}, subject=${subjectPayload?.take(100)}, uris=${uris.size}")
+        
+        // If there's a URL in the text, prioritize sending it as text message
+        // Chrome may send "Page Title - URL" format or just the URL
+        val urlRegex = Regex("(https?://[^\\s]+)")
+        
+        // Check EXTRA_TEXT for URL
+        if (!textPayload.isNullOrBlank()) {
+            val urlMatch = urlRegex.find(textPayload)
+            if (urlMatch != null) {
+                val extractedUrl = urlMatch.groupValues[1].ifEmpty { textPayload }
+                Log.d("ShareDebug", "URL detected in EXTRA_TEXT: $extractedUrl, sending as text message")
+                val textItem = copySharedTextToCache(
+                    text = extractedUrl,
+                    mimeType = "text/plain",
+                    extension = "txt",
+                    index = 0,
+                )
+                return if (textItem != null) listOf(textItem) else emptyList()
+            }
+        }
+        
+        // Sometimes Chrome puts URL in EXTRA_SUBJECT
+        if (!subjectPayload.isNullOrBlank()) {
+            val urlMatch = urlRegex.find(subjectPayload)
+            if (urlMatch != null) {
+                val extractedUrl = urlMatch.groupValues[1].ifEmpty { subjectPayload }
+                Log.d("ShareDebug", "URL detected in EXTRA_SUBJECT: $extractedUrl, sending as text message")
+                val textItem = copySharedTextToCache(
+                    text = extractedUrl,
+                    mimeType = "text/plain",
+                    extension = "txt",
+                    index = 0,
+                )
+                return if (textItem != null) listOf(textItem) else emptyList()
+            }
+        }
+
         if (uris.isEmpty()) {
-            // Some apps share vCards using EXTRA_TEXT instead of EXTRA_STREAM.
-            val textPayload = intent.getStringExtra(Intent.EXTRA_TEXT)
-            val mimeType = intent.type?.lowercase() ?: ""
-            if (!textPayload.isNullOrBlank() && mimeType.contains("vcard")) {
+            // Handle non-URL text shares (vCards, etc.)
+            if (!textPayload.isNullOrBlank()) {
+                // Handle vCard shares
+                if (mimeType.contains("vcard")) {
+                    val textItem = copySharedTextToCache(
+                        text = textPayload,
+                        mimeType = if (mimeType.isBlank()) "text/x-vcard" else mimeType,
+                        extension = "vcf",
+                        index = 0,
+                    )
+                    return if (textItem != null) listOf(textItem) else emptyList()
+                }
+                // Handle URL/text shares from Chrome and other browsers (text/plain, text/html, etc.)
+                // Save as text file so Flutter side can process it as a text message
                 val textItem = copySharedTextToCache(
                     text = textPayload,
-                    mimeType = if (mimeType.isBlank()) "text/x-vcard" else mimeType,
-                    extension = "vcf",
+                    mimeType = "text/plain",
+                    extension = "txt",
                     index = 0,
                 )
                 return if (textItem != null) listOf(textItem) else emptyList()
@@ -975,8 +1037,11 @@ class MainActivity : FlutterActivity() {
         }
 
         val extractedItems = mutableListOf<Map<String, String>>()
+        Log.d("ShareDebug", "Processing ${uris.size} URIs from share intent")
         uris.forEachIndexed { index, uri ->
             try {
+                val mimeType = contentResolver.getType(uri) ?: "unknown"
+                Log.d("ShareDebug", "URI $index: $uri, mimeType=$mimeType")
                 val sharedItem = copySharedUriToCache(uri, index)
                 if (sharedItem != null) {
                     extractedItems.add(sharedItem)

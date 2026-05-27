@@ -10451,25 +10451,73 @@ class _ChatScreenState extends State<ChatScreen>
         Overlay.of(context).context.findRenderObject() as RenderBox;
     final overlaySize = overlayBox.size;
     const verticalOffset = 44.0;
-    final menuTop = (tapPosition.dy - verticalOffset).clamp(8.0, overlaySize.height - 8.0);
+    const menuWidth = 200.0;
+    const menuMargin = 8.0;
+    
+    // Clamp vertical position
+    final menuTop = (tapPosition.dy - verticalOffset).clamp(menuMargin, overlaySize.height - menuMargin);
+    
+    // Clamp horizontal position to keep menu within screen bounds
+    // Center the menu on the tap position if possible
+    final menuLeft = (tapPosition.dx - menuWidth / 2).clamp(menuMargin, overlaySize.width - menuWidth - menuMargin);
 
-    showMenu(
-      context: context,
-      // Keep current keyboard/focus state unchanged while showing task actions.
-      // This prevents keyboard pop-in on outside taps and avoids menu position
-      // drifting when the IME was already visible.
-      requestFocus: false,
-      color: const Color(0xFF4C356A),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      position: RelativeRect.fromLTRB(
-        tapPosition.dx,
-        menuTop,
-        overlaySize.width - tapPosition.dx,
-        overlaySize.height - tapPosition.dy,
+    // Create instant overlay menu without animation
+    final menuItems = _buildTaskActionMenuItems(message);
+    OverlayEntry? overlayEntry;
+    
+    overlayEntry = OverlayEntry(
+      builder: (context) => GestureDetector(
+        onTap: () => overlayEntry?.remove(),
+        behavior: HitTestBehavior.translucent,
+        child: Container(
+          color: Colors.transparent,
+          child: Stack(
+            children: [
+              Positioned(
+                left: menuLeft,
+                top: menuTop,
+                child: Material(
+                  color: const Color(0xFF4C356A),
+                  elevation: 8,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: menuWidth,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: IntrinsicWidth(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: menuItems.map((item) {
+                          if (item is PopupMenuItem<void>) {
+                            return InkWell(
+                              onTap: () {
+                                overlayEntry?.remove();
+                                // Delay slightly to allow overlay to close before action
+                                Future.microtask(() {
+                                  (item as PopupMenuItem<void>).onTap?.call();
+                                });
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                child: item.child ?? const SizedBox.shrink(),
+                              ),
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
-      items: _buildTaskActionMenuItems(message),
-      elevation: 8,
     );
+    
+    Overlay.of(context).insert(overlayEntry);
   }
 
   List<PopupMenuEntry<void>> _buildTaskActionMenuItems(Message message) {
@@ -13793,8 +13841,14 @@ class _ChatScreenState extends State<ChatScreen>
       isSelected: _bubbleFlashId == message.id,
       messageReactions: _messageReactions,
       messageTranslations: _messageTranslations,
-      onTapUp: (details) =>
-          _toggleTaskActionForMessage(message, details.globalPosition),
+      onTapUp: (details) {
+        // Only show task menu for non-link messages
+        // If message contains a URL, the link recognizer will handle the tap
+        final hasUrl = _messageUrlRegex.hasMatch(message.content);
+        if (!hasUrl) {
+          _toggleTaskActionForMessage(message, details.globalPosition);
+        }
+      },
         onDoubleTap: canDoubleTapEdit
           ? () => _startInlineEdit(message)
           : null,

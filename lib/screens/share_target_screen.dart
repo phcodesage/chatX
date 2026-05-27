@@ -248,6 +248,25 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
             continue;
           }
 
+          // Text files containing URLs (from Chrome share) are sent as text messages
+          if (item.mimeType == 'text/plain' || item.fileName.toLowerCase().endsWith('.txt')) {
+            try {
+              final textContent = await file.readAsString();
+              if (textContent.isNotEmpty) {
+                // Send as text message (URL will show link preview)
+                final sent = await MessageService.sendMessage(
+                  recipientId: user.id,
+                  content: textContent,
+                  messageType: 'text',
+                );
+                if (sent == null) throw Exception('Failed to send text');
+                continue;
+              }
+            } catch (_) {
+              // Fall through to file upload if reading fails
+            }
+          }
+
           final multipartFile = await http.MultipartFile.fromPath(
             'file',
             file.path,
@@ -357,6 +376,8 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
     required double scale,
   }) {
     final firstItem = widget.sharedItems.first;
+    final isTextFile = firstItem.mimeType == 'text/plain' ||
+        firstItem.fileName.toLowerCase().endsWith('.txt');
 
     return Container(
       margin: EdgeInsets.fromLTRB(
@@ -399,16 +420,18 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
                         );
                       },
                     )
-                  : ColoredBox(
-                      color: Color(0xFF1A1A2E),
-                      child: Center(
-                        child: Icon(
-                          Icons.insert_drive_file_outlined,
-                          color: Colors.white54,
-                          size: 44 * scale,
+                  : isTextFile
+                      ? _buildTextPreview(firstItem, scale)
+                      : ColoredBox(
+                          color: Color(0xFF1A1A2E),
+                          child: Center(
+                            child: Icon(
+                              Icons.insert_drive_file_outlined,
+                              color: Colors.white54,
+                              size: 44 * scale,
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
             ),
           ),
           Padding(
@@ -443,6 +466,60 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTextPreview(SharedMediaItem item, double scale) {
+    return FutureBuilder<String>(
+      future: File(item.path).readAsString(),
+      builder: (context, snapshot) {
+        final text = snapshot.data ?? '';
+        final isUrl = text.startsWith('http://') || text.startsWith('https://');
+
+        return ColoredBox(
+          color: const Color(0xFF1A1A2E),
+          child: Padding(
+            padding: EdgeInsets.all(16 * scale),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      isUrl ? Icons.link : Icons.text_snippet,
+                      color: const Color(0xFF00D9FF),
+                      size: 20 * scale,
+                    ),
+                    SizedBox(width: 8 * scale),
+                    Text(
+                      isUrl ? 'Link' : 'Text',
+                      style: TextStyle(
+                        color: const Color(0xFF00D9FF),
+                        fontSize: 12 * scale,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 8 * scale),
+                Expanded(
+                  child: Text(
+                    text,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 14 * scale,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
