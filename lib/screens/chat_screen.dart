@@ -33,6 +33,7 @@ import '../services/storage_service.dart';
 import '../services/chat_cache_service.dart';
 import '../services/media_preload_service.dart';
 import '../services/translation_service.dart';
+import '../services/link_preview_service.dart';
 import '../widgets/color_picker_modal.dart';
 import '../widgets/common_phrase_bar.dart';
 import '../services/active_chat_service.dart';
@@ -57,7 +58,10 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:video_player/video_player.dart';
 import '../utils/contact_utils.dart';
 import '../widgets/attachment_menu_sheet.dart';
+import '../services/compression_service.dart';
 import '../services/media_picker_service.dart';
+import '../services/media_upload_retry_service.dart';
+import '../services/media_upload_service.dart';
 import '../state/media_upload_state.dart';
 import '../widgets/upload_progress_indicator.dart';
 import 'media_preview_screen.dart';
@@ -183,6 +187,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   final SocketService _socketService = SocketService();
   final MediaUploadState _mediaUploadState = MediaUploadState();
+  StreamSubscription<RetryProgress>? _retryProgressSubscription;
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _autoCorrectionWrongController =
     TextEditingController();
@@ -414,6 +419,25 @@ class _ChatScreenState extends State<ChatScreen>
     // Periodically refresh "last seen" relative label in header (like the web app does)
     _lastSeenRefreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted && _getEffectivePartnerStatus() != 'online') setState(() {});
+    });
+
+    // Listen to automatic retry progress from MediaUploadRetryService
+    // so queued uploads show live progress while the user stays in chat.
+    _retryProgressSubscription = MediaUploadRetryService()
+        .progressStream
+        .listen((retryProgress) {
+      _mediaUploadState.updateProgress(
+        retryProgress.trackingId,
+        retryProgress.progress,
+      );
+      if (retryProgress.progress.status == UploadStatus.success) {
+        _mediaUploadState.removeUpload(retryProgress.trackingId);
+      } else if (retryProgress.progress.status == UploadStatus.failed) {
+        _mediaUploadState.markFailed(
+          retryProgress.trackingId,
+          'Upload failed after retry',
+        );
+      }
     });
   }
 
@@ -1204,6 +1228,13 @@ class _ChatScreenState extends State<ChatScreen>
   void _setupRealtimeListeners() {
     const key = 'chat';
 
+    // Auto-retry any queued media uploads when the socket reconnects
+    // (covers both wifi-restored and app-resume scenarios).
+    _socketService.addListener('reconnected', key, () {
+      debugPrint('🔄 Socket reconnected — retrying queued uploads');
+      unawaited(MediaUploadRetryService().retryAll());
+    });
+
     // Listen for new messages (from other user)
     _socketService.addListener('messageReceived', key, (
       Map<String, dynamic> data,
@@ -1637,6 +1668,15 @@ class _ChatScreenState extends State<ChatScreen>
             ? data['content'] as String
             : (data['file_name'] as String? ?? 'File');
 
+        // Check if there's a pending optimistic message from this sender
+        // that should be replaced with the server-confirmed message
+        final pendingIndex = _messages.indexWhere((m) =>
+            m.senderId == senderId &&
+            m.recipientId == recipientId &&
+            m.status == 'pending' &&
+            m.messageType == messageType &&
+            (now.millisecondsSinceEpoch - m.timestampMs).abs() < 60000);
+
         // Create a message from the file data
         final message = Message(
           id: messageId ?? timestampMs,
@@ -1647,7 +1687,7 @@ class _ChatScreenState extends State<ChatScreen>
           timestamp: data['timestamp'] as String? ?? now.toIso8601String(),
           timestampMs: timestampMs,
           isRead: false,
-          status: 'delivered',
+          status: isFromPartner ? 'delivered' : 'sent',
           threadId: data['thread_id'] as String? ?? '',
           reactions: (data['reactions'] as Map<String, dynamic>?) ?? {},
           isDeleted: false,
@@ -1658,7 +1698,14 @@ class _ChatScreenState extends State<ChatScreen>
         );
 
         setState(() {
-          _messages.insert(0, message);
+          if (pendingIndex != -1) {
+            // Replace the pending optimistic message with the confirmed one
+            debugPrint(' Replacing pending optimistic message at index $pendingIndex with server-confirmed message');
+            _messages[pendingIndex] = message;
+          } else {
+            // Insert as new message
+            _messages.insert(0, message);
+          }
         });
 
         // Play message sound only for incoming messages from partner
@@ -3796,6 +3843,32 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Detects YouTube URLs in the message and appends their titles.
+  /// If a YouTube URL is found and title is fetched, appends: "YouTube Title"
+  Future<String> _appendYouTubeTitle(String content) async {
+    try {
+      final linkService = LinkPreviewService();
+      final url = linkService.extractFirstUrl(content);
+      if (url == null) return content;
+
+      final videoId = linkService.extractYouTubeId(url);
+      if (videoId == null) return content;
+
+      // Fetch YouTube title
+      final title = await linkService.fetchYouTubeTitle(videoId);
+      if (title == null || title.isEmpty) return content;
+
+      // Append title to the message if not already present
+      final contentWithTitle = '$content\n"$title"';
+      debugPrint('[YouTubeTitle] Appended title: "$title"');
+      return contentWithTitle;
+    } catch (e) {
+      debugPrint('[YouTubeTitle] Error fetching title: $e');
+      // Return original content on error
+      return content;
+    }
+  }
+
   Future<void> _sendMessage() async {
     // ── EDIT MODE ──────────────────────────────────────────────
     if (_editingMessage != null) {
@@ -3809,10 +3882,14 @@ class _ChatScreenState extends State<ChatScreen>
     }
     // ── NORMAL SEND MODE (unchanged below) ────────────────────
     final rawContent = _withStampPrefix(_messageController.text);
-    final content = _applyAutoCorrectionOnSend(rawContent);
+    var content = _applyAutoCorrectionOnSend(rawContent);
     if (rawContent != content) {
       debugPrint('[AutoCorrect:send] Corrected before send: "$rawContent" -> "$content"');
     }
+    
+    // Fetch YouTube title if a YouTube URL is present
+    content = await _appendYouTubeTitle(content);
+    
     if (content.isEmpty || _isStampOnlyDraft(content)) return;
     final markAsTask = _markNextMessageAsTask;
 
@@ -7601,7 +7678,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (asset == null || !mounted) return;
 
     // Navigate to the MediaPreviewScreen with the captured asset.
-    // Result can be MinimizedMediaResult if user minimizes — store it for the badge.
+    // Result can be:
+    //   - MediaSendResult: user sent — create optimistic messages and upload in background
+    //   - MinimizedMediaResult: user minimized — store pending files for the badge
     final navResult = await Navigator.of(context).push<Object>(
       MaterialPageRoute(
         builder: (_) => MediaPreviewScreen(
@@ -7615,7 +7694,10 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (!mounted) return;
 
-    if (navResult is MinimizedMediaResult) {
+    if (navResult is MediaSendResult) {
+      // User sent — create optimistic messages and upload in background (WhatsApp-style)
+      await _handleMediaSendResult(navResult);
+    } else if (navResult is MinimizedMediaResult) {
       setState(() {
         _pendingMediaItems = navResult.items;
         _pendingMediaCaption = navResult.caption;
@@ -7641,9 +7723,10 @@ class _ChatScreenState extends State<ChatScreen>
 
     // Navigate to the MediaPreviewScreen with the selected assets.
     // Result can be:
+    //   - MediaSendResult: user sent — create optimistic messages and upload in background
     //   - List<AssetEntity>: back navigation, re-open picker with these pre-selected
     //   - MinimizedMediaResult: user minimized, store pending files and show badge
-    //   - null: send completed or cancelled
+    //   - null: cancelled
     final result = await Navigator.of(context).push<Object>(
       MaterialPageRoute(
         builder: (_) => MediaPreviewScreen(
@@ -7657,7 +7740,10 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (!mounted) return;
 
-    if (result is MinimizedMediaResult) {
+    if (result is MediaSendResult) {
+      // User sent — create optimistic messages and upload in background (WhatsApp-style)
+      await _handleMediaSendResult(result);
+    } else if (result is MinimizedMediaResult) {
       // User minimized — store pending files for the badge
       setState(() {
         _pendingMediaItems = result.items;
@@ -7692,7 +7778,10 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (!mounted) return;
 
-    if (result is MinimizedMediaResult) {
+    if (result is MediaSendResult) {
+      // User sent — create optimistic messages and upload in background (WhatsApp-style)
+      await _handleMediaSendResult(result);
+    } else if (result is MinimizedMediaResult) {
       // Minimized again
       setState(() {
         _pendingMediaItems = result.items;
@@ -7703,14 +7792,211 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  /// Retries all failed media uploads by clearing their error state.
-  /// Failed uploads are removed from tracking so the user can re-attempt
-  /// via the attachment menu.
+  /// Retries failed media uploads.
+  ///
+  /// For uploads that failed due to network errors and were queued in
+  /// [MediaUploadRetryService], triggers an immediate retry attempt.
+  /// For permanently failed uploads, clears them from tracking.
   void _retryFailedUploads() {
     final failedIds = _mediaUploadState.failedUploadIds;
     for (final id in failedIds) {
       _mediaUploadState.removeUpload(id);
     }
+    // Also trigger any queued network-failed uploads to retry now
+    MediaUploadRetryService().retryAll();
+  }
+
+  /// Handles [MediaSendResult] from the preview screen.
+  /// Creates optimistic messages with pending status for immediate UI feedback,
+  /// then uploads files in the background. This provides WhatsApp-style
+  /// "instant send" UX where messages appear immediately while upload proceeds.
+  Future<void> _handleMediaSendResult(MediaSendResult result) async {
+    if (!mounted) return;
+
+    final compressed = result.compressedFiles;
+    final caption = result.caption;
+    final fileIds = result.trackingIds;
+    final uploadState = _mediaUploadState;
+
+    // Create optimistic messages for immediate UI feedback
+    final now = DateTime.now();
+    final optimisticMessages = <Message>[];
+
+    for (int i = 0; i < compressed.length; i++) {
+      final file = compressed[i];
+      final messageType = file.mimeType.startsWith('image/')
+          ? 'image'
+          : file.mimeType.startsWith('video/')
+              ? 'video'
+              : 'file';
+
+      // Create optimistic message with pending status (clock icon)
+      final message = Message(
+        id: int.tryParse(fileIds[i].split('_').first) ?? now.millisecondsSinceEpoch + i,
+        senderId: _currentUserId!,
+        recipientId: widget.otherUser.id,
+        content: i == 0 && caption.isNotEmpty ? caption : file.fileName,
+        messageType: messageType,
+        timestamp: now.toIso8601String(),
+        timestampMs: now.millisecondsSinceEpoch + i,
+        isRead: false,
+        status: 'pending', // Pending until upload completes
+        threadId: 'thread_${_currentUserId}_${widget.otherUser.id}',
+        reactions: {},
+        isDeleted: false,
+        fileUrl: null, // Will be set after upload
+        fileName: file.fileName,
+        fileType: file.mimeType,
+        fileSize: file.compressedSize,
+      );
+
+      optimisticMessages.add(message);
+
+      // Track this upload in the upload state
+      if (uploadState != null) {
+        uploadState.updateProgress(
+          fileIds[i],
+          UploadProgress(
+            fileIndex: i,
+            totalFiles: compressed.length,
+            fileProgress: 0.0,
+            status: UploadStatus.pending,
+          ),
+        );
+      }
+    }
+
+    // Insert optimistic messages into chat UI immediately
+    setState(() {
+      _messages.insertAll(0, optimisticMessages.reversed);
+    });
+
+    _scrollToBottom();
+
+    // Upload files in the background
+    unawaited(_uploadMediaBatch(compressed, fileIds, caption, optimisticMessages));
+  }
+
+  /// Uploads a batch of media files in the background.
+  /// Updates message status and upload progress as uploads complete.
+  Future<void> _uploadMediaBatch(
+    List<CompressionResult> files,
+    List<String> trackingIds,
+    String caption,
+    List<Message> optimisticMessages,
+  ) async {
+    final results = await MediaUploadService.uploadBatch(
+      files: files,
+      recipientId: widget.otherUser.id,
+      caption: caption.isNotEmpty ? caption : null,
+      onProgress: (progress) {
+        // Update upload progress state
+        if (progress.fileIndex < trackingIds.length) {
+          _mediaUploadState.updateProgress(trackingIds[progress.fileIndex], progress);
+        }
+      },
+    );
+
+    if (!mounted) return;
+
+    // Process upload results
+    for (int i = 0; i < results.length; i++) {
+      if (i >= optimisticMessages.length || i >= trackingIds.length) continue;
+
+      final result = results[i];
+      final message = optimisticMessages[i];
+      final trackingId = trackingIds[i];
+
+      if (result.success && result.message != null) {
+        // Upload succeeded — update message with server data
+        final serverMessage = result.message!;
+        setState(() {
+          final index = _messages.indexWhere((m) => m.id == message.id);
+          if (index != -1) {
+            // Use server message but preserve file metadata from original
+            _messages[index] = Message(
+              id: serverMessage.id,
+              senderId: serverMessage.senderId,
+              recipientId: serverMessage.recipientId,
+              content: serverMessage.content,
+              messageType: serverMessage.messageType,
+              timestamp: serverMessage.timestamp,
+              timestampMs: serverMessage.timestampMs,
+              isRead: serverMessage.isRead,
+              status: 'sent',
+              threadId: serverMessage.threadId,
+              replyToId: serverMessage.replyToId,
+              replyPreview: serverMessage.replyPreview,
+              reactions: serverMessage.reactions,
+              isDeleted: serverMessage.isDeleted,
+              isTask: serverMessage.isTask,
+              taskCreatedAt: serverMessage.taskCreatedAt,
+              taskCompletedAt: serverMessage.taskCompletedAt,
+              fileUrl: serverMessage.fileUrl,
+              fileName: serverMessage.fileName ?? message.fileName,
+              fileType: serverMessage.fileType ?? message.fileType,
+              fileSize: serverMessage.fileSize ?? message.fileSize,
+            );
+          }
+        });
+        _mediaUploadState.removeUpload(trackingId);
+      } else if (result.isNetworkError) {
+        // Network failure — queue for retry and keep message as pending
+        MediaUploadRetryService().queueUpload(
+          bytes: files[i].bytes,
+          fileName: files[i].fileName,
+          mimeType: files[i].mimeType,
+          recipientId: widget.otherUser.id,
+          caption: i == 0 && caption.isNotEmpty ? caption : null,
+          trackingId: trackingId,
+        );
+        _mediaUploadState.updateProgress(
+          trackingId,
+          UploadProgress(
+            fileIndex: i,
+            totalFiles: files.length,
+            fileProgress: 0.0,
+            status: UploadStatus.retrying,
+          ),
+        );
+        // Message stays in pending state, will be updated by retry progress listener
+      } else {
+        // Permanent failure — mark message as failed
+        setState(() {
+          final index = _messages.indexWhere((m) => m.id == message.id);
+          if (index != -1) {
+            // Rebuild message with failed status
+            _messages[index] = Message(
+              id: message.id,
+              senderId: message.senderId,
+              recipientId: message.recipientId,
+              content: message.content,
+              messageType: message.messageType,
+              timestamp: message.timestamp,
+              timestampMs: message.timestampMs,
+              isRead: message.isRead,
+              status: 'failed',
+              threadId: message.threadId,
+              replyToId: message.replyToId,
+              replyPreview: message.replyPreview,
+              reactions: message.reactions,
+              isDeleted: message.isDeleted,
+              isTask: message.isTask,
+              taskCreatedAt: message.taskCreatedAt,
+              taskCompletedAt: message.taskCompletedAt,
+              fileUrl: message.fileUrl,
+              fileName: message.fileName,
+              fileType: message.fileType,
+              fileSize: message.fileSize,
+            );
+          }
+        });
+        _mediaUploadState.markFailed(trackingId, result.errorMessage ?? 'Upload failed');
+      }
+    }
+
+    // Persist the updated conversation
+    await _persistConversationCacheSnapshot();
   }
 
   /// Shows a WhatsApp-style document selection menu with options:
@@ -7823,7 +8109,11 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             ),
           );
-          if (mounted && navResult is MinimizedMediaResult) {
+          if (!mounted) break;
+          if (navResult is MediaSendResult) {
+            // User sent — create optimistic messages and upload in background (WhatsApp-style)
+            await _handleMediaSendResult(navResult);
+          } else if (navResult is MinimizedMediaResult) {
             setState(() {
               _pendingMediaItems = navResult.items;
               _pendingMediaCaption = navResult.caption;
@@ -8382,8 +8672,41 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Starts the file upload in the chat screen state so it survives modal minimize.
+  /// Inserts an optimistic pending message immediately for instant UI feedback,
+  /// then uploads in the background and replaces it with the server message on success.
   void _startFileUpload(File file, String uploadFileName, String displayName, String mimeType) {
+    final now = DateTime.now();
+    final optimisticId = now.millisecondsSinceEpoch;
+    final trackingId = '${optimisticId}_$uploadFileName';
+
+    final messageType = mimeType.startsWith('image/')
+        ? 'image'
+        : mimeType.startsWith('video/')
+            ? 'video'
+            : 'file';
+
+    // Insert optimistic message immediately so the user sees it right away
+    final optimisticMessage = Message(
+      id: optimisticId,
+      senderId: _currentUserId!,
+      recipientId: widget.otherUser.id,
+      content: uploadFileName,
+      messageType: messageType,
+      timestamp: now.toIso8601String(),
+      timestampMs: optimisticId,
+      isRead: false,
+      status: 'pending',
+      threadId: '',
+      reactions: {},
+      isDeleted: false,
+      fileUrl: null,
+      fileName: uploadFileName,
+      fileType: mimeType,
+      fileSize: file.lengthSync(),
+    );
+
     setState(() {
+      _messages.insert(0, optimisticMessage);
       _activeUploadFile = file;
       _activeUploadFileName = uploadFileName;
       _activeUploadDisplayName = displayName;
@@ -8391,27 +8714,45 @@ class _ChatScreenState extends State<ChatScreen>
       _activeUploadProgress = 0.0;
       _activeUploadProgressNotifier.value = 0.0;
       _isActivelyUploading = true;
-      // Clear pending state since we're now uploading
       _pendingFile = null;
       _pendingFileName = null;
       _pendingFileMimeType = null;
     });
 
-    // Throttle: only update UI when progress changes by at least 1%
+    _scrollToBottom();
+
+    // Track in upload state for progress indicator
+    _mediaUploadState.updateProgress(
+      trackingId,
+      UploadProgress(
+        fileIndex: 0,
+        totalFiles: 1,
+        fileProgress: 0.0,
+        status: UploadStatus.pending,
+      ),
+    );
+
     double _lastReportedProgress = 0.0;
 
-    // Run upload asynchronously — not awaited so modal can be dismissed
     _uploadAndSendFileWithProgress(
       file,
       uploadFileName,
       mimeType,
+      optimisticId: optimisticId,
+      trackingId: trackingId,
       onProgress: (progress) {
-        // Only trigger setState when progress changes by ≥1% to avoid
-        // rebuilding the entire chat screen on every network chunk
-        if (mounted && (progress - _lastReportedProgress) >= 0.01 || progress >= 1.0) {
+        if (mounted && ((progress - _lastReportedProgress) >= 0.01 || progress >= 1.0)) {
           _lastReportedProgress = progress;
           _activeUploadProgressNotifier.value = progress;
-          // Use microtask to batch with other pending state updates
+          _mediaUploadState.updateProgress(
+            trackingId,
+            UploadProgress(
+              fileIndex: 0,
+              totalFiles: 1,
+              fileProgress: progress,
+              status: UploadStatus.uploading,
+            ),
+          );
           scheduleMicrotask(() {
             if (mounted) {
               setState(() {
@@ -8437,16 +8778,19 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Uploads a file with progress tracking (used by the file preview modal).
+  /// Replaces the optimistic message on success, queues for retry on network failure.
   Future<void> _uploadAndSendFileWithProgress(
     File file,
     String fileName,
     String mimeType, {
+    required int optimisticId,
+    required String trackingId,
     required void Function(double progress) onProgress,
   }) async {
     if (!mounted) return;
 
     try {
-      onProgress(0.01); // Show immediate feedback
+      onProgress(0.01);
 
       final result = await MessageService.uploadFileWithProgress(
         filePath: file.path,
@@ -8454,9 +8798,7 @@ class _ChatScreenState extends State<ChatScreen>
         mimeType: mimeType,
         recipientId: widget.otherUser.id,
         onProgress: (sent, total) {
-          if (total > 0) {
-            onProgress(sent / total);
-          }
+          if (total > 0) onProgress(sent / total);
         },
       );
 
@@ -8466,48 +8808,101 @@ class _ChatScreenState extends State<ChatScreen>
         onProgress(1.0);
         final fileData = result['file'] ?? result;
         final serverId = fileData['message_id'] ?? fileData['id'];
-        if (serverId != null && _messages.any((m) => m.id == serverId)) {
-          debugPrint('File message already added by socket handler');
-        } else {
-          final now = DateTime.now();
-          final message = Message(
-            id: serverId ?? DateTime.now().millisecondsSinceEpoch,
-            senderId: _currentUserId!,
-            recipientId: widget.otherUser.id,
-            content: fileName,
-            messageType: mimeType.startsWith('image/')
-                ? 'image'
-                : mimeType.startsWith('video/')
-                ? 'video'
-                : 'file',
-            timestamp: now.toIso8601String(),
-            timestampMs: now.millisecondsSinceEpoch,
-            isRead: false,
-            status: 'sent',
-            threadId: '',
-            reactions: {},
-            isDeleted: false,
-            fileUrl: fileData['file_url'] ?? fileData['url'],
-            fileName: fileName,
-            fileType: mimeType,
-            fileSize: file.lengthSync(),
-          );
 
-          if (mounted) {
-            setState(() {
-              _messages.insert(0, message);
-            });
-          }
+        // Replace optimistic message with server-confirmed one
+        final serverMessage = Message(
+          id: serverId ?? optimisticId,
+          senderId: _currentUserId!,
+          recipientId: widget.otherUser.id,
+          content: fileName,
+          messageType: mimeType.startsWith('image/')
+              ? 'image'
+              : mimeType.startsWith('video/')
+                  ? 'video'
+                  : 'file',
+          timestamp: DateTime.now().toIso8601String(),
+          timestampMs: DateTime.now().millisecondsSinceEpoch,
+          isRead: false,
+          status: 'sent',
+          threadId: '',
+          reactions: {},
+          isDeleted: false,
+          fileUrl: fileData['file_url'] ?? fileData['url'],
+          fileName: fileName,
+          fileType: mimeType,
+          fileSize: file.lengthSync(),
+        );
+
+        if (mounted) {
+          setState(() {
+            final index = _messages.indexWhere((m) => m.id == optimisticId);
+            if (index != -1) {
+              // Replace optimistic with confirmed (only if socket didn't already do it)
+              if (!_messages.any((m) => m.id == serverMessage.id && m.id != optimisticId)) {
+                _messages[index] = serverMessage;
+              } else {
+                _messages.removeAt(index);
+              }
+            } else if (!_messages.any((m) => m.id == serverMessage.id)) {
+              _messages.insert(0, serverMessage);
+            }
+          });
         }
+        _mediaUploadState.removeUpload(trackingId);
         _scrollToBottom();
       } else {
         throw Exception(result?['error'] ?? 'Upload failed');
       }
     } catch (e) {
       debugPrint('Error uploading file: $e');
-      if (mounted) {
+      if (!mounted) return;
+
+      // Check if it's a network error — queue for retry
+      final isNetworkError = e.toString().contains('SocketException') ||
+          e.toString().contains('TimeoutException') ||
+          e.toString().contains('Connection') ||
+          e.toString().contains('network');
+
+      if (isNetworkError) {
+        // Queue for automatic retry when connectivity is restored
+        final bytes = await file.readAsBytes();
+        await MediaUploadRetryService().queueUpload(
+          bytes: bytes,
+          fileName: fileName,
+          mimeType: mimeType,
+          recipientId: widget.otherUser.id,
+          trackingId: trackingId,
+        );
+        _mediaUploadState.updateProgress(
+          trackingId,
+          UploadProgress(
+            fileIndex: 0,
+            totalFiles: 1,
+            fileProgress: 0.0,
+            status: UploadStatus.retrying,
+          ),
+        );
+        // Message stays as 'pending' — will be updated when retry succeeds
+      } else {
+        // Permanent failure — mark message as failed
+        setState(() {
+          final index = _messages.indexWhere((m) => m.id == optimisticId);
+          if (index != -1) {
+            final m = _messages[index];
+            _messages[index] = Message(
+              id: m.id, senderId: m.senderId, recipientId: m.recipientId,
+              content: m.content, messageType: m.messageType,
+              timestamp: m.timestamp, timestampMs: m.timestampMs,
+              isRead: m.isRead, status: 'failed', threadId: m.threadId,
+              reactions: m.reactions, isDeleted: m.isDeleted,
+              fileUrl: m.fileUrl, fileName: m.fileName,
+              fileType: m.fileType, fileSize: m.fileSize,
+            );
+          }
+        });
+        _mediaUploadState.markFailed(trackingId, e.toString());
         _showTopBanner(
-          'Failed to send file: $e',
+          'Failed to send file',
           backgroundColor: const Color(0xFFB91C1C),
           icon: Icons.error_outline,
           autoHideAfter: const Duration(seconds: 3),
@@ -9995,6 +10390,7 @@ class _ChatScreenState extends State<ChatScreen>
     _inputModeSwitchTimer?.cancel();
     _metricsRefreshTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _retryProgressSubscription?.cancel();
     _mediaUploadState.dispose();
     _taskBadgeAnimController.dispose();
     _taskModalVersion.dispose();

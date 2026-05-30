@@ -32,6 +32,10 @@ class Message {
   final bool isPinned;
   final String? pinnedAt;
   final int? pinnedByUserId;
+  /// Local file path for optimistic media messages (before upload completes).
+  /// Used to display the image/video from disk while the upload is in progress.
+  /// Never persisted to JSON — only set on in-memory optimistic messages.
+  final String? localFilePath;
 
   Message({
     required this.id,
@@ -64,6 +68,7 @@ class Message {
     this.isPinned = false,
     this.pinnedAt,
     this.pinnedByUserId,
+    this.localFilePath,
   });
 
   /// Parse reply_preview which can be String or Map from backend

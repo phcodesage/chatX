@@ -28,6 +28,10 @@ class CompressionResult {
   /// intentional behavior, not a failure.
   final bool compressionSkipped;
 
+  /// Optional path to the local file on disk (original or compressed).
+  /// Used for optimistic UI display before the upload URL is available.
+  final String? localFilePath;
+
   const CompressionResult({
     required this.bytes,
     required this.mimeType,
@@ -35,6 +39,7 @@ class CompressionResult {
     required this.originalSize,
     required this.compressedSize,
     required this.compressionSkipped,
+    this.localFilePath,
   });
 }
 
@@ -82,7 +87,8 @@ class CompressionService {
           fileName: fileName,
           originalSize: originalSize,
           compressedSize: originalSize,
-          compressionSkipped: false, // Passthrough is intentional
+          compressionSkipped: false,
+          localFilePath: file.path,
         );
       }
 
@@ -119,6 +125,7 @@ class CompressionService {
         originalSize: originalSize,
         compressedSize: compressedData.length,
         compressionSkipped: false,
+        localFilePath: file.path,
       );
     } catch (e) {
       // On any error, attempt to return original bytes with flag
@@ -229,6 +236,7 @@ class CompressionService {
         originalSize: originalSize,
         compressedSize: compressedSize,
         compressionSkipped: false,
+        localFilePath: info.file!.path,
       );
     } catch (e) {
       return _fallbackResult(asset);

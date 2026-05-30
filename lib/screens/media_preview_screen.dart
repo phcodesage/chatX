@@ -50,6 +50,26 @@ class MinimizedMediaResult {
   const MinimizedMediaResult({required this.items, this.caption = ''});
 }
 
+/// Result returned when the user sends media from the preview screen.
+/// Contains the compressed files, tracking IDs, and metadata needed for
+/// the chat screen to create optimistic messages immediately.
+class MediaSendResult {
+  /// The compressed file results ready for upload.
+  final List<CompressionResult> compressedFiles;
+
+  /// The caption text to attach to the first file.
+  final String caption;
+
+  /// Tracking IDs for each file upload.
+  final List<String> trackingIds;
+
+  const MediaSendResult({
+    required this.compressedFiles,
+    required this.caption,
+    required this.trackingIds,
+  });
+}
+
 /// Full-screen preview screen displayed after media selection.
 /// Shows selected items in a thumbnail strip with options to reorder,
 /// remove, add captions, and confirm sending.
@@ -77,9 +97,6 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
   bool _isSending = false;
   CompressionProgress? _compressionProgress;
   List<CompressionResult>? _compressedResults;
-  double _uploadProgress = 0.0;
-  int _uploadFileIndex = 0;
-  int _uploadTotalFiles = 0;
 
   final TextEditingController _captionController = TextEditingController();
 
@@ -930,10 +947,9 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
     }
   }
 
-  /// Builds the send progress overlay shown during the send flow.
+  /// Builds the compression progress overlay shown while preparing files.
   Widget _buildCompressionOverlay() {
     final progress = _compressionProgress!;
-    final isUploading = progress.completed >= progress.total;
     return Container(
       color: Colors.black54,
       child: Center(
@@ -946,43 +962,12 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (isUploading) ...[
-                SizedBox(
-                  width: 56,
-                  height: 56,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CircularProgressIndicator(
-                        value: _uploadProgress > 0 ? _uploadProgress : null,
-                        color: const Color(0xFF7C3AED),
-                        strokeWidth: 4,
-                      ),
-                      Center(
-                        child: Text(
-                          '${(_uploadProgress * 100).toInt()}%',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else ...[
-                const CircularProgressIndicator(
-                  color: Color(0xFF7C3AED),
-                ),
-              ],
+              const CircularProgressIndicator(
+                color: Color(0xFF7C3AED),
+              ),
               const SizedBox(height: 16),
               Text(
-                isUploading
-                    ? _uploadTotalFiles > 1
-                        ? 'Sending ${_uploadFileIndex + 1} of $_uploadTotalFiles'
-                        : 'Sending...'
-                    : 'Preparing ${progress.completed + 1} of ${progress.total}',
+                'Preparing ${progress.completed + 1} of ${progress.total}',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 16,
@@ -990,36 +975,13 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              if (isUploading) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: SizedBox(
-                    width: 180,
-                    child: LinearProgressIndicator(
-                      value: _uploadProgress > 0 ? _uploadProgress : null,
-                      backgroundColor: Colors.white10,
-                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF7C3AED)),
-                      minHeight: 5,
-                    ),
-                  ),
+              Text(
+                '${progress.completed} of ${progress.total} ready',
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 13,
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '${(_uploadProgress * 100).toInt()}% uploaded',
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 13,
-                  ),
-                ),
-              ] else ...[
-                Text(
-                  '${progress.completed} of ${progress.total} ready',
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 13,
-                  ),
-                ),
-              ],
+              ),
             ],
           ),
         ),
@@ -1043,8 +1005,10 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
   }
 
   /// Handles the send button press.
-  /// Disables the button to prevent duplicate submissions,
-  /// then triggers the compression → upload pipeline with visible progress.
+  /// Compresses files and returns [MediaSendResult] for the chat screen
+  /// to create optimistic messages immediately, then initiates background upload.
+  /// This provides WhatsApp-style "instant send" UX where messages appear
+  /// immediately with pending status while upload proceeds in background.
   Future<void> _handleSend() async {
     if (_isSending || _items.isEmpty) return;
 
@@ -1060,17 +1024,48 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
       // Phase 1: Prepare/compress files
       await _compressItems();
 
-      // Phase 2: Upload — update overlay to show "Sending"
-      if (mounted) {
-        setState(() {
-          _compressionProgress = CompressionProgress(
-            completed: _items.length,
-            total: _items.length,
-          );
-        });
+      final compressed = _compressedResults;
+      if (compressed == null || compressed.isEmpty) {
+        throw Exception('Failed to compress media');
       }
 
-      await _uploadCompressedItems();
+      final caption = _captionController.text.trim();
+      final uploadState = widget.mediaUploadState;
+
+      // Generate unique IDs for tracking each file's upload progress
+      final batchId = DateTime.now().millisecondsSinceEpoch.toString();
+      final fileIds = List.generate(
+        compressed.length,
+        (i) => '${batchId}_$i',
+      );
+
+      // Register all files as pending in the upload state
+      // This allows the chat screen to show optimistic messages immediately
+      if (uploadState != null) {
+        for (int i = 0; i < compressed.length; i++) {
+          uploadState.updateProgress(
+            fileIds[i],
+            UploadProgress(
+              fileIndex: i,
+              totalFiles: compressed.length,
+              fileProgress: 0.0,
+              status: UploadStatus.pending,
+            ),
+          );
+        }
+      }
+
+      // Return the send result so chat screen can create optimistic messages
+      // and initiate the background upload
+      if (mounted) {
+        Navigator.of(context).pop(
+          MediaSendResult(
+            compressedFiles: compressed,
+            caption: caption,
+            trackingIds: fileIds,
+          ),
+        );
+      }
     } catch (e) {
       // Handle errors
       if (mounted) {
@@ -1081,14 +1076,10 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
           ),
         );
       }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSending = false;
-          _compressionProgress = null;
-          _compressedResults = null;
-        });
-      }
+      setState(() {
+        _isSending = false;
+        _compressionProgress = null;
+      });
     }
   }
 
@@ -1116,89 +1107,4 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
     );
   }
 
-  /// Uploads compressed media items with the caption.
-  /// Calls MediaUploadService.uploadBatch and reports progress via
-  /// the MediaUploadState if provided.
-  Future<void> _uploadCompressedItems() async {
-    final compressed = _compressedResults;
-    if (compressed == null || compressed.isEmpty) {
-      if (mounted) Navigator.of(context).pop(null);
-      return;
-    }
-
-    final caption = _captionController.text.trim();
-    final uploadState = widget.mediaUploadState;
-
-    // Generate unique IDs for tracking each file's upload progress
-    final batchId = DateTime.now().millisecondsSinceEpoch.toString();
-    final fileIds = List.generate(
-      compressed.length,
-      (i) => '${batchId}_$i',
-    );
-
-    // Mark all files as pending in the upload state
-    if (uploadState != null) {
-      for (int i = 0; i < compressed.length; i++) {
-        uploadState.updateProgress(
-          fileIds[i],
-          UploadProgress(
-            fileIndex: i,
-            totalFiles: compressed.length,
-            fileProgress: 0.0,
-            status: UploadStatus.pending,
-          ),
-        );
-      }
-    }
-
-    // Initialize upload progress tracking for the overlay
-    if (mounted) {
-      setState(() {
-        _uploadTotalFiles = compressed.length;
-        _uploadFileIndex = 0;
-        _uploadProgress = 0.0;
-      });
-    }
-
-    final results = await MediaUploadService.uploadBatch(
-      files: compressed,
-      recipientId: widget.recipientId,
-      caption: caption.isNotEmpty ? caption : null,
-      onProgress: (progress) {
-        if (uploadState != null && progress.fileIndex < fileIds.length) {
-          uploadState.updateProgress(fileIds[progress.fileIndex], progress);
-        }
-        // Update local overlay progress
-        if (mounted) {
-          setState(() {
-            _uploadFileIndex = progress.fileIndex;
-            _uploadProgress = progress.fileProgress;
-          });
-        }
-      },
-    );
-
-    // Update upload state with final results
-    if (uploadState != null) {
-      for (int i = 0; i < results.length; i++) {
-        if (i < fileIds.length) {
-          if (results[i].success) {
-            // Remove completed uploads from tracking
-            uploadState.removeUpload(fileIds[i]);
-          } else {
-            // Mark failed uploads with error
-            uploadState.markFailed(
-              fileIds[i],
-              results[i].errorMessage ?? 'Upload failed',
-            );
-          }
-        }
-      }
-    }
-
-    // After upload completes, navigate back to chat
-    if (mounted) {
-      Navigator.of(context).pop(null);
-    }
-  }
 }

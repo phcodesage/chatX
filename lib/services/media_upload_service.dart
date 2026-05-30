@@ -54,16 +54,23 @@ class UploadResult {
   /// Number of retry attempts made before final result.
   final int retryCount;
 
+  /// Whether the failure was due to a temporary network issue
+  /// (timeout, connection error, server 5xx). When true, the
+  /// upload can be retried later when connectivity is restored.
+  final bool isNetworkError;
+
   const UploadResult({
     required this.success,
     this.message,
     this.errorMessage,
     required this.retryCount,
+    this.isNetworkError = false,
   });
 
   @override
   String toString() =>
       'UploadResult(success: $success, retries: $retryCount'
+      '${isNetworkError ? ', networkError' : ''}'
       '${errorMessage != null ? ', error: $errorMessage' : ''})';
 }
 
@@ -181,6 +188,7 @@ class MediaUploadService {
             errorMessage:
                 'Server error $statusCode after $retryCount retries',
             retryCount: retryCount,
+            isNetworkError: true,
           );
         } else {
           // Client error (4xx) — don't retry
@@ -221,6 +229,7 @@ class MediaUploadService {
             success: false,
             errorMessage: 'Upload timed out after $retryCount retries',
             retryCount: retryCount,
+            isNetworkError: true,
           );
         }
 
@@ -235,6 +244,7 @@ class MediaUploadService {
           success: false,
           errorMessage: 'Upload failed: ${e.message}',
           retryCount: retryCount,
+          isNetworkError: true,
         );
       } catch (e) {
         // Other unexpected exceptions — retry if attempts remain
@@ -248,6 +258,7 @@ class MediaUploadService {
           success: false,
           errorMessage: 'Upload failed: ${e.toString()}',
           retryCount: retryCount,
+          isNetworkError: true,
         );
       }
     }

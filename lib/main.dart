@@ -28,6 +28,7 @@ import 'services/share_intent_service.dart';
 import 'services/shortcut_service.dart';
 import 'services/socket_service.dart';
 import 'services/presence_service.dart';
+import 'services/media_upload_retry_service.dart';
 import 'services/version_service.dart';
 import 'utils/notification_handler.dart';
 
@@ -244,6 +245,12 @@ class _MessengerAppState extends State<MessengerApp>
     });
 
     _scheduleBannerAutoHide();
+
+    // When connectivity is restored, retry any queued media uploads
+    // that failed due to temporary network issues.
+    if (hasConnection) {
+      MediaUploadRetryService().retryAll();
+    }
   }
 
   void _scheduleBannerAutoHide() {
