@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -123,6 +124,9 @@ class _MediaGalleryViewerState extends State<MediaGalleryViewer> {
   /// Whether a share operation is currently in progress.
   bool _isSharing = false;
 
+  /// Current rotation angle for the displayed media (in radians).
+  double _rotationAngle = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -175,6 +179,8 @@ class _MediaGalleryViewerState extends State<MediaGalleryViewer> {
       _currentIndex = index;
       // Reset zoom state when swiping to a new page.
       _isZoomed = false;
+      // Reset rotation when swiping to a new page.
+      _rotationAngle = 0.0;
     });
   }
 
@@ -194,6 +200,16 @@ class _MediaGalleryViewerState extends State<MediaGalleryViewer> {
         _isZoomed = zoomed;
       });
     }
+  }
+
+  /// Rotates the current media 90 degrees clockwise.
+  void _rotateMedia() {
+    setState(() {
+      _rotationAngle += math.pi / 2;
+      if (_rotationAngle >= 2 * math.pi) {
+        _rotationAngle = 0.0;
+      }
+    });
   }
 
   /// Downloads the current media file and saves it to the device photo library.
@@ -552,6 +568,17 @@ class _MediaGalleryViewerState extends State<MediaGalleryViewer> {
                   tooltip: 'Download',
                 ),
           const SizedBox(width: 32),
+          // Rotate button
+          IconButton(
+            icon: const Icon(
+              Icons.rotate_right,
+              color: Colors.white,
+              size: 28,
+            ),
+            onPressed: _rotateMedia,
+            tooltip: 'Rotate',
+          ),
+          const SizedBox(width: 32),
           // Share button with progress indicator
           _isSharing
               ? const SizedBox(
@@ -606,6 +633,7 @@ class _MediaGalleryViewerState extends State<MediaGalleryViewer> {
     return _ImagePageView(
       imageUrl: fileUrl,
       onScaleStateChanged: _onScaleStateChanged,
+      rotationAngle: _rotationAngle,
     );
   }
 
@@ -621,6 +649,7 @@ class _MediaGalleryViewerState extends State<MediaGalleryViewer> {
             _videoControllers.remove(index);
           });
         },
+        rotationAngle: _rotationAngle,
       );
     }
 
@@ -798,10 +827,12 @@ class _VideoInitializerState extends State<_VideoInitializer> {
 class _VideoPlayerWidget extends StatelessWidget {
   final _VideoControllerEntry entry;
   final VoidCallback onError;
+  final double rotationAngle;
 
   const _VideoPlayerWidget({
     required this.entry,
     required this.onError,
+    required this.rotationAngle,
   });
 
   @override
@@ -824,11 +855,14 @@ class _VideoPlayerWidget extends StatelessWidget {
     }
 
     return Center(
-      child: AspectRatio(
-        aspectRatio: entry.videoPlayerController.value.aspectRatio > 0
-            ? entry.videoPlayerController.value.aspectRatio
-            : 16 / 9,
-        child: Chewie(controller: chewieController),
+      child: Transform.rotate(
+        angle: rotationAngle,
+        child: AspectRatio(
+          aspectRatio: entry.videoPlayerController.value.aspectRatio > 0
+              ? entry.videoPlayerController.value.aspectRatio
+              : 16 / 9,
+          child: Chewie(controller: chewieController),
+        ),
       ),
     );
   }
@@ -839,10 +873,12 @@ class _VideoPlayerWidget extends StatelessWidget {
 class _ImagePageView extends StatefulWidget {
   final String imageUrl;
   final ValueChanged<PhotoViewScaleState> onScaleStateChanged;
+  final double rotationAngle;
 
   const _ImagePageView({
     required this.imageUrl,
     required this.onScaleStateChanged,
+    required this.rotationAngle,
   });
 
   @override
@@ -970,24 +1006,27 @@ class _ImagePageViewState extends State<_ImagePageView> {
       );
     }
 
-    return PhotoView(
-      key: _imageKey,
-      imageProvider: CachedNetworkImageProvider(widget.imageUrl),
-      minScale: PhotoViewComputedScale.contained,
-      maxScale: PhotoViewComputedScale.contained * 5,
-      initialScale: PhotoViewComputedScale.contained,
-      scaleStateController: _scaleStateController,
-      backgroundDecoration: const BoxDecoration(color: Colors.black),
-      loadingBuilder: (context, event) {
-        return Center(
-          child: CircularProgressIndicator(
-            value: event != null && event.expectedTotalBytes != null
-                ? event.cumulativeBytesLoaded / event.expectedTotalBytes!
-                : null,
-            color: Colors.white,
-          ),
-        );
-      },
+    return Transform.rotate(
+      angle: widget.rotationAngle,
+      child: PhotoView(
+        key: _imageKey,
+        imageProvider: CachedNetworkImageProvider(widget.imageUrl),
+        minScale: PhotoViewComputedScale.contained,
+        maxScale: PhotoViewComputedScale.contained * 5,
+        initialScale: PhotoViewComputedScale.contained,
+        scaleStateController: _scaleStateController,
+        backgroundDecoration: const BoxDecoration(color: Colors.black),
+        loadingBuilder: (context, event) {
+          return Center(
+            child: CircularProgressIndicator(
+              value: event != null && event.expectedTotalBytes != null
+                  ? event.cumulativeBytesLoaded / event.expectedTotalBytes!
+                  : null,
+              color: Colors.white,
+            ),
+          );
+        },
+      ),
     );
   }
 }

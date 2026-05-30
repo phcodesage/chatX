@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -89,6 +90,9 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
   final TransformationController _transformationController =
       TransformationController();
 
+  /// Current rotation angle for the displayed preview item (in radians).
+  double _rotationAngle = 0.0;
+
   /// Video player controller for previewing video items.
   VideoPlayerController? _videoController;
   bool _isVideoPlaying = false;
@@ -171,6 +175,19 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
                 'Download',
                 style: TextStyle(color: Colors.white, fontSize: 14),
               ),
+            ),
+            // Rotate button
+            IconButton(
+              icon: const Icon(Icons.rotate_right, color: Colors.white),
+              onPressed: () {
+                setState(() {
+                  _rotationAngle += math.pi / 2;
+                  if (_rotationAngle >= 2 * math.pi) {
+                    _rotationAngle = 0.0;
+                  }
+                });
+              },
+              tooltip: 'Rotate',
             ),
           ],
         ),
@@ -310,6 +327,8 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
             _currentIndex = index;
             // Reset zoom when switching pages
             _transformationController.value = Matrix4.identity();
+            // Reset rotation when switching pages
+            _rotationAngle = 0.0;
           });
         },
         itemBuilder: (context, index) {
@@ -345,9 +364,12 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
                       transformationController: _transformationController,
                       minScale: 1.0,
                       maxScale: 4.0,
-                      child: Image.memory(
-                        snapshot.data!,
-                        fit: BoxFit.contain,
+                      child: Transform.rotate(
+                        angle: _rotationAngle,
+                        child: Image.memory(
+                          snapshot.data!,
+                          fit: BoxFit.contain,
+                        ),
                       ),
                     ),
                   ),
