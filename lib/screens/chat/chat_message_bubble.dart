@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -192,10 +193,9 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
               _buildPinnedExcalidrawLabel(widget.scale, excalidrawAccentColor),
             if (widget.message.replyToId != null || widget.message.replyPreview != null)
               _buildReplyPreview(widget.message, widget.scale),
-            if (isMedia && widget.message.fileUrl != null)
+            if (isMedia && (widget.message.fileUrl != null || widget.message.localFilePath != null))
               _buildMediaContent(isImage, isVideo, widget.message, imageCacheWidth),
-            if (isMedia && widget.message.fileUrl != null)
-              _buildMediaFileInfo(widget.message, widget.scale),
+            // _buildMediaFileInfo removed to prevent duplicate/redundant file info bar below media
             if (isAudio && widget.message.fileUrl != null)
               AudioMessagePlayer(
                 audioUrl: widget.message.fileUrl!,
@@ -422,6 +422,10 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
       ),
     );
 
+    final showLocal = message.localFilePath != null &&
+        message.localFilePath!.isNotEmpty &&
+        File(message.localFilePath!).existsSync();
+
     return RepaintBoundary(
       child: ClipRRect(
         borderRadius: borderRadius,
@@ -437,30 +441,41 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
               alignment: Alignment.center,
               children: [
                 if (isImage)
-                  CachedImage(
-                    url: message.fileUrl!,
-                    fit: BoxFit.contain,
-                    width: double.infinity,
-                    cacheWidth: imageCacheWidth,
-                    filterQuality: FilterQuality.low,
-                    placeholderColor: const Color(0xFF1F2937),
-                    errorWidget: Container(
-                      height: 200,
-                      color: Colors.grey[800],
-                      child: const Center(
-                        child: Icon(
-                          Icons.broken_image,
-                          color: Colors.white54,
-                          size: 40,
-                        ),
-                      ),
-                    ),
-                  )
+                  showLocal
+                      ? Image.file(
+                          File(message.localFilePath!),
+                          fit: BoxFit.contain,
+                          width: double.infinity,
+                        )
+                      : CachedImage(
+                          url: message.fileUrl ?? '',
+                          fit: BoxFit.contain,
+                          width: double.infinity,
+                          cacheWidth: imageCacheWidth,
+                          filterQuality: FilterQuality.low,
+                          placeholderColor: const Color(0xFF1F2937),
+                          errorWidget: Container(
+                            height: 200,
+                            color: Colors.grey[800],
+                            child: const Center(
+                              child: Icon(
+                                Icons.broken_image,
+                                color: Colors.white54,
+                                size: 40,
+                              ),
+                            ),
+                          ),
+                        )
                 else if (isVideo)
-                  _VideoThumbnailWidget(
-                    videoUrl: message.fileUrl!,
-                    cacheWidth: imageCacheWidth,
-                  ),
+                  showLocal
+                      ? _VideoThumbnailWidget(
+                          localFilePath: message.localFilePath,
+                          cacheWidth: imageCacheWidth,
+                        )
+                      : _VideoThumbnailWidget(
+                          videoUrl: message.fileUrl ?? '',
+                          cacheWidth: imageCacheWidth,
+                        ),
 
                 if (isVideo)
                   Container(
@@ -473,6 +488,22 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                       Icons.play_arrow,
                       color: Colors.white,
                       size: 36,
+                    ),
+                  ),
+
+                // Loader overlay inside the bubble when pending (waiting/uploading/retrying)
+                if (message.status == 'pending')
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    padding: const EdgeInsets.all(10),
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 3,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
                   ),
               ],
@@ -1005,11 +1036,13 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
 /// to display the first frame of a video as a preview in chat bubbles.
 /// Disposes the controller when scrolled off-screen.
 class _VideoThumbnailWidget extends StatefulWidget {
-  final String videoUrl;
+  final String? videoUrl;
+  final String? localFilePath;
   final int cacheWidth;
 
   const _VideoThumbnailWidget({
-    required this.videoUrl,
+    this.videoUrl,
+    this.localFilePath,
     required this.cacheWidth,
   });
 
@@ -1030,29 +1063,33 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
 
   Future<void> _initController() async {
     try {
-      // Prefer the on-disk cached file if MediaPreloadService (or a
-      // previous bubble render) already downloaded it. This is what
-      // makes videos viewable offline.
+      // Prefer the local file path if present, otherwise network/cached URL.
       VideoPlayerController controller;
-      final cached = await DefaultCacheManager().getFileFromCache(
-        widget.videoUrl,
-      );
-      if (cached != null) {
-        controller = VideoPlayerController.file(cached.file);
+      if (widget.localFilePath != null && widget.localFilePath!.isNotEmpty && File(widget.localFilePath!).existsSync()) {
+        controller = VideoPlayerController.file(File(widget.localFilePath!));
+      } else if (widget.videoUrl != null && widget.videoUrl!.isNotEmpty) {
+        final cached = await DefaultCacheManager().getFileFromCache(
+          widget.videoUrl!,
+        );
+        if (cached != null) {
+          controller = VideoPlayerController.file(cached.file);
+        } else {
+          controller = VideoPlayerController.networkUrl(
+            Uri.parse(widget.videoUrl!),
+          );
+          // Fire-and-forget: warm the cache so subsequent opens (and
+          // offline reopens) play instantly from disk. Errors are
+          // expected on flaky networks; just swallow them here.
+          unawaited(
+            () async {
+              try {
+                await DefaultCacheManager().downloadFile(widget.videoUrl!);
+              } catch (_) {}
+            }(),
+          );
+        }
       } else {
-        controller = VideoPlayerController.networkUrl(
-          Uri.parse(widget.videoUrl),
-        );
-        // Fire-and-forget: warm the cache so subsequent opens (and
-        // offline reopens) play instantly from disk. Errors are
-        // expected on flaky networks; just swallow them here.
-        unawaited(
-          () async {
-            try {
-              await DefaultCacheManager().downloadFile(widget.videoUrl);
-            } catch (_) {}
-          }(),
-        );
+        throw Exception('No video source provided');
       }
       await controller.initialize();
       if (!mounted) {

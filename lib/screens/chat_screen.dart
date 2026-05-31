@@ -432,6 +432,66 @@ class _ChatScreenState extends State<ChatScreen>
       );
       if (retryProgress.progress.status == UploadStatus.success) {
         _mediaUploadState.removeUpload(retryProgress.trackingId);
+        final serverMessage = retryProgress.message;
+        final optimisticId = MediaUploadRetryService.getOptimisticIdFromTrackingId(
+          retryProgress.trackingId,
+        );
+
+        if (mounted) {
+          setState(() {
+            final index = _messages.indexWhere((m) => m.id == optimisticId);
+            if (index != -1) {
+              final oldMessage = _messages[index];
+              if (serverMessage != null) {
+                // Replace with server message, but keep the local file path to avoid UI flicker
+                _messages[index] = Message(
+                  id: serverMessage.id,
+                  senderId: serverMessage.senderId,
+                  recipientId: serverMessage.recipientId,
+                  content: serverMessage.content.isNotEmpty ? serverMessage.content : oldMessage.content,
+                  messageType: oldMessage.messageType,
+                  timestamp: serverMessage.timestamp,
+                  timestampMs: serverMessage.timestampMs,
+                  isRead: serverMessage.isRead,
+                  status: 'sent', // Explicitly mark sent
+                  threadId: serverMessage.threadId,
+                  reactions: serverMessage.reactions.isNotEmpty ? serverMessage.reactions : oldMessage.reactions,
+                  isDeleted: serverMessage.isDeleted,
+                  fileUrl: (serverMessage.fileUrl?.isNotEmpty == true) ? serverMessage.fileUrl : oldMessage.fileUrl,
+                  fileName: (serverMessage.fileName?.isNotEmpty == true) ? serverMessage.fileName : oldMessage.fileName,
+                  fileType: (serverMessage.fileType?.isNotEmpty == true) ? serverMessage.fileType : oldMessage.fileType,
+                  fileSize: serverMessage.fileSize ?? oldMessage.fileSize,
+                  localFilePath: oldMessage.localFilePath,
+                );
+              } else {
+                // If the backend didn't return a fully parsed message, just mark optimistic as sent
+                _messages[index] = Message(
+                  id: oldMessage.id,
+                  senderId: oldMessage.senderId,
+                  recipientId: oldMessage.recipientId,
+                  content: oldMessage.content,
+                  messageType: oldMessage.messageType,
+                  timestamp: oldMessage.timestamp,
+                  timestampMs: oldMessage.timestampMs,
+                  isRead: oldMessage.isRead,
+                  status: 'sent', // Fix stuck pending indicator
+                  threadId: oldMessage.threadId,
+                  reactions: oldMessage.reactions,
+                  isDeleted: oldMessage.isDeleted,
+                  fileUrl: oldMessage.fileUrl,
+                  fileName: oldMessage.fileName,
+                  fileType: oldMessage.fileType,
+                  fileSize: oldMessage.fileSize,
+                  localFilePath: oldMessage.localFilePath,
+                );
+              }
+              debugPrint('💬 Updated retry-succeeded message in active ChatScreen UI');
+            } else if (serverMessage != null && !_messages.any((m) => m.id == serverMessage.id)) {
+              _messages.insert(0, serverMessage);
+            }
+          });
+          unawaited(_persistConversationCacheSnapshot());
+        }
       } else if (retryProgress.progress.status == UploadStatus.failed) {
         _mediaUploadState.markFailed(
           retryProgress.trackingId,
@@ -7832,7 +7892,7 @@ class _ChatScreenState extends State<ChatScreen>
 
       // Create optimistic message with pending status (clock icon)
       final message = Message(
-        id: int.tryParse(fileIds[i].split('_').first) ?? now.millisecondsSinceEpoch + i,
+        id: (int.tryParse(fileIds[i].split('_').first) ?? now.millisecondsSinceEpoch) + i,
         senderId: _currentUserId!,
         recipientId: widget.otherUser.id,
         content: i == 0 && caption.isNotEmpty ? caption : file.fileName,
@@ -7848,6 +7908,7 @@ class _ChatScreenState extends State<ChatScreen>
         fileName: file.fileName,
         fileType: file.mimeType,
         fileSize: file.compressedSize,
+        localFilePath: file.localFilePath,
       );
 
       optimisticMessages.add(message);
@@ -8703,6 +8764,7 @@ class _ChatScreenState extends State<ChatScreen>
       fileName: uploadFileName,
       fileType: mimeType,
       fileSize: file.lengthSync(),
+      localFilePath: file.path,
     );
 
     setState(() {
@@ -8831,6 +8893,7 @@ class _ChatScreenState extends State<ChatScreen>
           fileName: fileName,
           fileType: mimeType,
           fileSize: file.lengthSync(),
+          localFilePath: file.path, // Preserve local file path
         );
 
         if (mounted) {
@@ -10646,16 +10709,6 @@ class _ChatScreenState extends State<ChatScreen>
                             ),
                           ),
                         ),
-                      // Upload progress indicators
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: !_isAtBottom ? 72 : 8,
-                        child: UploadProgressIndicator(
-                          uploadState: _mediaUploadState,
-                          onRetry: _retryFailedUploads,
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -14301,6 +14354,12 @@ class _ChatScreenState extends State<ChatScreen>
           Icons.done_all,
           size: 16 * scale,
           color: const Color(0xFF00BCD4), // Cyan color like WhatsApp
+        );
+      case 'failed':
+        return Icon(
+          Icons.error_outline,
+          size: 16 * scale,
+          color: const Color(0xFFEF4444),
         );
       default:
         return Icon(Icons.schedule, size: 16 * scale, color: Colors.white54);

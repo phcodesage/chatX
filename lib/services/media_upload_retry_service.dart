@@ -3,10 +3,14 @@ import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../models/message.dart';
+import 'chat_cache_service.dart';
 import 'compression_service.dart';
 import 'media_upload_service.dart';
+import 'storage_service.dart';
 
 /// Progress update emitted by [MediaUploadRetryService] for a specific upload.
 class RetryProgress {
@@ -16,9 +20,13 @@ class RetryProgress {
   /// The current upload progress.
   final UploadProgress progress;
 
+  /// The created message on successful upload.
+  final Message? message;
+
   const RetryProgress({
     required this.trackingId,
     required this.progress,
+    this.message,
   });
 }
 
@@ -55,15 +63,31 @@ class _PendingUpload {
     required this.trackingId,
     this.retryCount = 0,
   });
+
+  Map<String, dynamic> toJson() => {
+        'tempFilePath': tempFilePath,
+        'recipientId': recipientId,
+        'caption': caption,
+        'fileName': fileName,
+        'mimeType': mimeType,
+        'trackingId': trackingId,
+        'retryCount': retryCount,
+      };
+
+  factory _PendingUpload.fromJson(Map<String, dynamic> json) => _PendingUpload(
+        tempFilePath: json['tempFilePath'] as String,
+        recipientId: json['recipientId'] as int,
+        caption: json['caption'] as String?,
+        fileName: json['fileName'] as String,
+        mimeType: json['mimeType'] as String,
+        trackingId: json['trackingId'] as String,
+        retryCount: json['retryCount'] as int? ?? 0,
+      );
 }
 
 /// Global singleton that manages media uploads which failed due to
 /// temporary network issues and automatically retries them when
 /// the device comes back online.
-///
-/// Persists compressed file bytes to the temp directory so that
-/// retries can happen even after the caller (e.g. [MediaPreviewScreen])
-/// has been disposed.
 class MediaUploadRetryService {
   static final MediaUploadRetryService _instance =
       MediaUploadRetryService._internal();
@@ -71,6 +95,7 @@ class MediaUploadRetryService {
   MediaUploadRetryService._internal();
 
   final List<_PendingUpload> _queue = [];
+  static late Box _retryBox;
 
   final StreamController<RetryProgress> _progressController =
       StreamController<RetryProgress>.broadcast();
@@ -81,11 +106,44 @@ class MediaUploadRetryService {
   /// Whether there are uploads currently waiting for connectivity.
   bool get hasPendingUploads => _queue.isNotEmpty;
 
+  /// Initialize the retry box and load any persisted queue items.
+  Future<void> initialize() async {
+    _retryBox = await Hive.openBox('media_upload_retry_cache');
+    final data = _retryBox.get('queue') as List?;
+    if (data != null) {
+      _queue.clear();
+      for (final item in data) {
+        if (item is Map) {
+          final job = _PendingUpload.fromJson(Map<String, dynamic>.from(item));
+          if (File(job.tempFilePath).existsSync()) {
+            _queue.add(job);
+          }
+        }
+      }
+      debugPrint('📤 Loaded ${_queue.length} pending uploads from cache');
+    }
+  }
+
+  /// Persists the current queue state.
+  Future<void> _persistQueue() async {
+    final list = _queue.map((job) => job.toJson()).toList();
+    await _retryBox.put('queue', list);
+  }
+
+  /// Reconstructs the optimistic message ID from tracking ID.
+  static int getOptimisticIdFromTrackingId(String trackingId) {
+    final parts = trackingId.split('_');
+    final baseId = int.tryParse(parts[0]) ?? 0;
+    if (parts.length > 1) {
+      final index = int.tryParse(parts[1]);
+      if (index != null) {
+        return baseId + index;
+      }
+    }
+    return baseId;
+  }
+
   /// Queues a failed upload for automatic retry.
-  ///
-  /// Writes [bytes] to a temp file so the data survives the caller's
-  /// disposal. The upload will be retried by [retryAll] when the device
-  /// regains connectivity.
   Future<void> queueUpload({
     required List<int> bytes,
     required String fileName,
@@ -111,16 +169,14 @@ class MediaUploadRetryService {
       ),
     );
 
+    await _persistQueue();
+
     debugPrint(
       '📤 Queued upload for retry: $fileName (queue size: ${_queue.length})',
     );
   }
 
   /// Retries all pending uploads.
-  ///
-  /// Skips the retry if the device is currently offline.
-  /// On network failure, the upload stays in the queue for the next retry.
-  /// On non-network failure or success, the temp file is cleaned up.
   Future<void> retryAll() async {
     if (_queue.isEmpty) {
       debugPrint('📤 No pending uploads to retry');
@@ -141,6 +197,7 @@ class MediaUploadRetryService {
       if (!await tempFile.exists()) {
         debugPrint('⚠️ Temp file missing for ${job.fileName}, removing from queue');
         _queue.remove(job);
+        await _persistQueue();
         continue;
       }
 
@@ -198,10 +255,41 @@ class MediaUploadRetryService {
                 fileProgress: 1.0,
                 status: UploadStatus.success,
               ),
+              message: result.message,
             ),
           );
+
+          // Update message in cache database
+          final currentUserId = await StorageService.getUserId();
+          if (currentUserId != null && result.message != null) {
+            final optimisticId = getOptimisticIdFromTrackingId(job.trackingId);
+            final cachedMessages = await ChatCacheService.loadConversationMessages(
+              currentUserId,
+              job.recipientId,
+            );
+            final index = cachedMessages.indexWhere((m) => m.id == optimisticId);
+            if (index != -1) {
+              cachedMessages[index] = result.message!;
+              await ChatCacheService.saveConversationMessages(
+                currentUserId,
+                job.recipientId,
+                cachedMessages,
+              );
+              debugPrint('💾 Updated retry-succeeded message in cache database');
+            } else {
+              // If not found in conversation cache, add it as a new message
+              await ChatCacheService.addMessageToCache(
+                currentUserId,
+                job.recipientId,
+                result.message!,
+              );
+              debugPrint('💾 Saved retry-succeeded message directly to cache database');
+            }
+          }
+
           _safeDelete(tempFile);
           _queue.remove(job);
+          await _persistQueue();
         } else if (result.isNetworkError) {
           job.retryCount++;
           debugPrint(
@@ -236,6 +324,7 @@ class MediaUploadRetryService {
           );
           _safeDelete(tempFile);
           _queue.remove(job);
+          await _persistQueue();
         }
       } catch (e) {
         debugPrint('❌ Unexpected error during retry for ${job.fileName}: $e');
@@ -258,7 +347,6 @@ class MediaUploadRetryService {
   }
 
   /// Removes a pending upload by its tracking ID without retrying it.
-  /// Cleans up the associated temp file.
   Future<void> cancelUpload(String trackingId) async {
     final job = _queue.cast<_PendingUpload?>().firstWhere(
       (j) => j?.trackingId == trackingId,
@@ -267,6 +355,7 @@ class MediaUploadRetryService {
     if (job != null) {
       _safeDelete(File(job.tempFilePath));
       _queue.remove(job);
+      await _persistQueue();
       debugPrint('🗑️ Cancelled upload $trackingId');
     }
   }
@@ -277,6 +366,7 @@ class MediaUploadRetryService {
       _safeDelete(File(job.tempFilePath));
     }
     _queue.clear();
+    await _persistQueue();
     debugPrint('🗑️ Retry queue cleared');
   }
 

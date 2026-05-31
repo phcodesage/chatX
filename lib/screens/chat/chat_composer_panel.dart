@@ -311,7 +311,7 @@ class _ComposerInput extends StatelessWidget {
                 final buttonItems = editableTextState.contextMenuButtonItems;
                 final customItems = <ContextMenuButtonItem>[
                   ContextMenuButtonItem(
-                    label: 'Paste Image',
+                    label: 'Paste',
                     onPressed: () {
                       ContextMenuController.removeAny();
                       onClipboardPasteShortcut();

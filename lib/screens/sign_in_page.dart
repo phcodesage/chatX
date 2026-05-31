@@ -190,8 +190,9 @@ class _SignInPageState extends State<SignInPage> {
                 child: const Center(child: CircularProgressIndicator()),
               ),
             SizedBox(height: gap),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 const Text(
                   "Don't have an account?",

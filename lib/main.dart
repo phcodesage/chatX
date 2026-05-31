@@ -48,6 +48,7 @@ void main() async {
   // Keep Android OS launch window visible until we know the first real screen.
   await StorageService.init();
   await ChatCacheService.init();
+  await MediaUploadRetryService().initialize();
   await ShareIntentService.instance.initialize();
   await ShortcutService.instance.initialize();
 
