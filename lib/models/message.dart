@@ -32,6 +32,7 @@ class Message {
   final bool isPinned;
   final String? pinnedAt;
   final int? pinnedByUserId;
+  final String? caption;
   /// Local file path for optimistic media messages (before upload completes).
   /// Used to display the image/video from disk while the upload is in progress.
   /// Never persisted to JSON — only set on in-memory optimistic messages.
@@ -68,6 +69,7 @@ class Message {
     this.isPinned = false,
     this.pinnedAt,
     this.pinnedByUserId,
+    this.caption,
     this.localFilePath,
   });
 
@@ -130,6 +132,7 @@ class Message {
     String? fileName = json['file_name'] as String?;
     String? fileType = json['file_type'] as String?;
     int? fileSize = json['file_size'] as int?;
+    String? caption = json['caption'] as String?;
 
     final rawTaskFlag = json['is_task'] as bool? ?? false;
     final inferredTaskFromType =
@@ -155,6 +158,28 @@ class Message {
           fileName = htmlParseResult['fileName'];
           fileType = htmlParseResult['fileType'];
           fileSize = htmlParseResult['fileSize'];
+        }
+      }
+      // Extract caption from HTML if present and not already provided
+      if (caption == null || caption.isEmpty) {
+        final captionRegex = RegExp(
+          '<div[^>]*class=[\'"]file-caption[\'"][^>]*>(.*?)</div>',
+          caseSensitive: false,
+          dotAll: true,
+        );
+        final captionMatch = captionRegex.firstMatch(content);
+        if (captionMatch != null) {
+          String raw = captionMatch.group(1) ?? '';
+          // Strip any nested tags and decode common HTML entities
+          raw = raw.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+          raw = raw
+              .replaceAll('&lt;', '<')
+              .replaceAll('&gt;', '>')
+              .replaceAll('&amp;', '&')
+              .replaceAll('&quot;', '"')
+              .replaceAll('&#39;', "'")
+              .replaceAll('&nbsp;', ' ');
+          if (raw.isNotEmpty) caption = raw;
         }
       }
       // Always replace raw HTML content with just the filename so it isn't rendered as text
@@ -196,6 +221,7 @@ class Message {
       isPinned: json['is_pinned'] as bool? ?? false,
       pinnedAt: json['pinned_at'] as String?,
       pinnedByUserId: json['pinned_by_user_id'] as int?,
+      caption: caption,
     );
   }
 
@@ -403,6 +429,7 @@ class Message {
       'is_pinned': isPinned,
       'pinned_at': pinnedAt,
       'pinned_by_user_id': pinnedByUserId,
+      'caption': caption,
     };
   }
 

@@ -1723,19 +1723,51 @@ class _ChatScreenState extends State<ChatScreen>
             ? rawFileUrl
             : '${ApiConfig.baseUrl}$rawFileUrl';
 
-        // Use caption/content from backend if available, fall back to file_name
-        final content = (data['content'] as String?)?.isNotEmpty == true
-            ? data['content'] as String
-            : (data['file_name'] as String? ?? 'File');
+        final content = (data['file_name'] as String?)?.isNotEmpty == true
+            ? data['file_name'] as String
+            : 'File';
 
         // Check if there's a pending optimistic message from this sender
-        // that should be replaced with the server-confirmed message
+        // that should be replaced with the server-confirmed message.
+        // Use loose matching to handle type mismatches from the socket payload.
         final pendingIndex = _messages.indexWhere((m) =>
-            m.senderId == senderId &&
-            m.recipientId == recipientId &&
             m.status == 'pending' &&
             m.messageType == messageType &&
+            '${m.senderId}' == '${senderId ?? 0}' &&
             (now.millisecondsSinceEpoch - m.timestampMs).abs() < 60000);
+
+        // Resolve caption — priority order:
+        //  1. Optimistic message caption (what the user typed locally)
+        //  2. Explicit 'caption' field in socket payload
+        //  3. Caption embedded in HTML content as <div class="file-caption">
+        final pendingCaption = pendingIndex != -1
+            ? _messages[pendingIndex].caption
+            : null;
+        final rawCaption = data['caption'] as String?;
+        final rawContent = data['content'] as String? ?? '';
+        String? htmlCaption;
+        if (rawContent.contains('file-caption')) {
+          final captionRegex = RegExp(
+            '<div[^>]*class=[\'"]file-caption[\'"][^>]*>(.*?)</div>',
+            caseSensitive: false,
+            dotAll: true,
+          );
+          final cm = captionRegex.firstMatch(rawContent);
+          if (cm != null) {
+            String c = cm.group(1) ?? '';
+            c = c.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+            c = c
+                .replaceAll('&lt;', '<').replaceAll('&gt;', '>')
+                .replaceAll('&amp;', '&').replaceAll('&quot;', '"')
+                .replaceAll('&#39;', "'").replaceAll('&nbsp;', ' ');
+            if (c.isNotEmpty) htmlCaption = c;
+          }
+        }
+        final resolvedCaption = pendingCaption?.isNotEmpty == true
+            ? pendingCaption
+            : (htmlCaption?.isNotEmpty == true
+                ? htmlCaption
+                : (rawCaption?.isNotEmpty == true ? rawCaption : null));
 
         // Create a message from the file data
         final message = Message(
@@ -1755,6 +1787,7 @@ class _ChatScreenState extends State<ChatScreen>
           fileName: data['file_name'],
           fileType: data['file_type'],
           fileSize: data['file_size'],
+          caption: resolvedCaption,
         );
 
         setState(() {
@@ -4320,6 +4353,7 @@ class _ChatScreenState extends State<ChatScreen>
       isPinned: message.isPinned,
       pinnedAt: message.pinnedAt,
       pinnedByUserId: message.pinnedByUserId,
+      caption: message.caption,
     );
   }
 
@@ -7895,7 +7929,7 @@ class _ChatScreenState extends State<ChatScreen>
         id: (int.tryParse(fileIds[i].split('_').first) ?? now.millisecondsSinceEpoch) + i,
         senderId: _currentUserId!,
         recipientId: widget.otherUser.id,
-        content: i == 0 && caption.isNotEmpty ? caption : file.fileName,
+        content: file.fileName,
         messageType: messageType,
         timestamp: now.toIso8601String(),
         timestampMs: now.millisecondsSinceEpoch + i,
@@ -7909,6 +7943,8 @@ class _ChatScreenState extends State<ChatScreen>
         fileType: file.mimeType,
         fileSize: file.compressedSize,
         localFilePath: file.localFilePath,
+        // Only attach caption to the first file
+        caption: (i == 0 && caption.isNotEmpty) ? caption : null,
       );
 
       optimisticMessages.add(message);
@@ -7971,10 +8007,13 @@ class _ChatScreenState extends State<ChatScreen>
       if (result.success && result.message != null) {
         // Upload succeeded — update message with server data
         final serverMessage = result.message!;
+        // Always use the caption from the original send — the server may not
+        // echo it back, and the socket handler may have already replaced the
+        // optimistic message before this path runs.
+        final preservedCaption = (i == 0 && caption.isNotEmpty) ? caption : null;
         setState(() {
           final index = _messages.indexWhere((m) => m.id == message.id);
           if (index != -1) {
-            // Use server message but preserve file metadata from original
             _messages[index] = Message(
               id: serverMessage.id,
               senderId: serverMessage.senderId,
@@ -7997,7 +8036,46 @@ class _ChatScreenState extends State<ChatScreen>
               fileName: serverMessage.fileName ?? message.fileName,
               fileType: serverMessage.fileType ?? message.fileType,
               fileSize: serverMessage.fileSize ?? message.fileSize,
+              caption: preservedCaption,
             );
+          } else {
+            // Socket already replaced the optimistic message — find the server
+            // message by ID and patch its caption if it's missing.
+            final serverIndex = _messages.indexWhere((m) =>
+                m.id == serverMessage.id ||
+                // Also match by fileName+sender in case IDs differ between socket and REST
+                (m.senderId == serverMessage.senderId &&
+                    m.fileName == (serverMessage.fileName ?? message.fileName) &&
+                    m.status != 'pending'));
+            if (serverIndex != -1 && preservedCaption != null) {
+              final existing = _messages[serverIndex];
+              if (existing.caption == null || existing.caption!.isEmpty) {
+                _messages[serverIndex] = Message(
+                  id: existing.id,
+                  senderId: existing.senderId,
+                  recipientId: existing.recipientId,
+                  content: existing.content,
+                  messageType: existing.messageType,
+                  timestamp: existing.timestamp,
+                  timestampMs: existing.timestampMs,
+                  isRead: existing.isRead,
+                  status: existing.status,
+                  threadId: existing.threadId,
+                  replyToId: existing.replyToId,
+                  replyPreview: existing.replyPreview,
+                  reactions: existing.reactions,
+                  isDeleted: existing.isDeleted,
+                  isTask: existing.isTask,
+                  taskCreatedAt: existing.taskCreatedAt,
+                  taskCompletedAt: existing.taskCompletedAt,
+                  fileUrl: existing.fileUrl,
+                  fileName: existing.fileName,
+                  fileType: existing.fileType,
+                  fileSize: existing.fileSize,
+                  caption: preservedCaption,
+                );
+              }
+            }
           }
         });
         _mediaUploadState.removeUpload(trackingId);
@@ -11975,6 +12053,7 @@ class _ChatScreenState extends State<ChatScreen>
         isPinned: message.isPinned,
         pinnedAt: message.pinnedAt,
         pinnedByUserId: message.pinnedByUserId,
+        caption: message.caption,
       );
       _messages[index] = updatedMessage;
     });
@@ -12370,6 +12449,7 @@ class _ChatScreenState extends State<ChatScreen>
           isPinned: message.isPinned,
           pinnedAt: message.pinnedAt,
           pinnedByUserId: message.pinnedByUserId,
+          caption: message.caption,
         );
         _messages[index] = updatedMessage;
       }
@@ -12428,6 +12508,7 @@ class _ChatScreenState extends State<ChatScreen>
               isPinned: message.isPinned,
               pinnedAt: message.pinnedAt,
               pinnedByUserId: message.pinnedByUserId,
+              caption: message.caption,
             );
             _messages[i] = updatedMessage;
           }

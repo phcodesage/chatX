@@ -306,6 +306,7 @@ class GroupMessage {
   final int? replyToId;
   final String? replyPreview;
   final Map<String, dynamic> reactions;
+  final String? caption;
 
   GroupMessage({
     required this.id,
@@ -325,6 +326,7 @@ class GroupMessage {
     this.replyToId,
     this.replyPreview,
     this.reactions = const {},
+    this.caption,
   });
 
   factory GroupMessage.fromJson(Map<String, dynamic> json) {
@@ -348,6 +350,7 @@ class GroupMessage {
       String? fileName = json['file_name'] as String?;
       String? fileType = json['file_type'] as String?;
       int? fileSize = json['file_size'] as int?;
+      String? caption = json['caption'] as String?;
 
       // Debug logging for file messages (commented out to reduce noise)
       /*
@@ -380,6 +383,18 @@ class GroupMessage {
               fileName = htmlParseResult['fileName'];
               fileType = htmlParseResult['fileType'];
               fileSize = htmlParseResult['fileSize'];
+            }
+          }
+          // Extract caption from HTML if present and not already provided
+          if (caption == null || caption.isEmpty) {
+            final captionRegex = RegExp(
+              '<div[^>]*class=[\'"]file-caption[\'"][^>]*>(.*?)</div>',
+              caseSensitive: false,
+              dotAll: true,
+            );
+            final captionMatch = captionRegex.firstMatch(content);
+            if (captionMatch != null) {
+              caption = captionMatch.group(1)?.replaceAll(RegExp(r'<[^>]*>'), '').trim();
             }
           }
           // Always replace raw HTML content with just the filename so it isn't rendered as text
@@ -420,6 +435,7 @@ class GroupMessage {
         replyToId: json['reply_to_id'] as int?,
         replyPreview: replyPreviewText,
         reactions: _normalizeGroupReactionsMap(json['reactions']),
+        caption: caption,
       );
     } catch (e, stackTrace) {
       debugPrint('❌ Error parsing GroupMessage: $e');
@@ -645,6 +661,7 @@ class GroupMessage {
       'reply_to_id': replyToId,
       'reply_preview': replyPreview,
       'reactions': reactions,
+      'caption': caption,
     };
   }
 

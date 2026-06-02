@@ -213,7 +213,9 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
                     (widget.message.content.isNotEmpty &&
                         !widget.isOnlyFilename(widget.message.content) &&
                         !isAudio &&
-                        !isGenericFile)))
+                        !isGenericFile) ||
+                    (widget.message.caption != null &&
+                        widget.message.caption!.isNotEmpty)))
               _buildTextContent(
                 widget.message,
                 isTaskMessage,
@@ -407,16 +409,19 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
   }
 
   Widget _buildMediaContent(bool isImage, bool isVideo, Message message, int imageCacheWidth) {
+    final hasText = (message.content.isNotEmpty && !widget.isOnlyFilename(message.content)) ||
+        (message.caption != null && message.caption!.isNotEmpty);
+        
     final borderRadius = BorderRadius.only(
       topLeft: const Radius.circular(16),
       topRight: const Radius.circular(16),
       bottomLeft: Radius.circular(
-        message.content.isNotEmpty && !widget.isOnlyFilename(message.content)
+        hasText
             ? 0
             : (widget.isSentByMe ? 16 : 4),
       ),
       bottomRight: Radius.circular(
-        message.content.isNotEmpty && !widget.isOnlyFilename(message.content)
+        hasText
             ? 0
             : (widget.isSentByMe ? 4 : 16),
       ),
@@ -703,6 +708,9 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
   }
 
   String isMediaDescription(Message message, {required bool isMedia}) {
+    if (message.caption != null && message.caption!.isNotEmpty) {
+      return message.caption!;
+    }
     return message.content;
   }
 

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
@@ -1864,14 +1864,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 topLeft: const Radius.circular(16),
                 topRight: const Radius.circular(16),
                 bottomLeft: Radius.circular(
-                  message.content.isNotEmpty &&
-                          !_isOnlyFilename(message.content)
+                  (message.content.isNotEmpty &&
+                          !_isOnlyFilename(message.content)) ||
+                      (message.caption != null && message.caption!.isNotEmpty)
                       ? 0
                       : (isSentByMe ? 16 : 4),
                 ),
                 bottomRight: Radius.circular(
-                  message.content.isNotEmpty &&
-                          !_isOnlyFilename(message.content)
+                  (message.content.isNotEmpty &&
+                          !_isOnlyFilename(message.content)) ||
+                      (message.caption != null && message.caption!.isNotEmpty)
                       ? 0
                       : (isSentByMe ? 4 : 16),
                 ),
@@ -2121,7 +2123,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   !_isOnlyFilename(message.content) &&
                   !isAudio &&
                   message.messageType != 'file' &&
-                  message.messageType != 'document'))
+                  message.messageType != 'document') ||
+              (message.caption != null && message.caption!.isNotEmpty))
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Column(
@@ -2130,9 +2133,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 children: [
                   // Original message text
                   Text(
-                    isMedia
+                    message.caption ?? (isMedia
                         ? (message.fileName ?? message.content)
-                        : message.content,
+                        : message.content),
                     style: const TextStyle(color: Colors.white, fontSize: 15),
                   ),
                   // Translation (if available)
