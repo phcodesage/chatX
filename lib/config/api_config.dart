@@ -8,7 +8,7 @@ class ApiConfig {
   static const String baseUrl = String.fromEnvironment(
     'BASE_URL',
     //defaultValue: 'https://web.flask-call-app.site/',
-    defaultValue: 'https://check.flask-meet.site',
+    defaultValue: 'https://check.flask-meet.site/',
   );
 
   // API endpoints
@@ -109,4 +109,16 @@ class ApiConfig {
     final base = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
     return '$base/api/ai/generate_phrase';
   }
+
+  // Pomodoro & Alarm endpoints
+  static const String pomodoroPrefix = '/api/pomodoro';
+  static const String pomodoroStateUrl = '$baseUrl$pomodoroPrefix/state';
+  static const String pomodoroLogsUrl = '$baseUrl$pomodoroPrefix/logs';
+  static String getPomodoroLogUrl(int logId) => '$baseUrl$pomodoroPrefix/logs/$logId';
+
+  static const String alarmsPrefix = '/api/alarms';
+  static const String alarmsUrl = '$baseUrl$alarmsPrefix';
+  static String getAlarmUrl(int alarmId) => '$baseUrl$alarmsPrefix/$alarmId';
+  static String getAlarmToggleUrl(int alarmId) =>
+      '$baseUrl$alarmsPrefix/$alarmId/toggle';
 }

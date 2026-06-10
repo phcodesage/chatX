@@ -1880,66 +1880,79 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ),
               child: GestureDetector(
                 onTap: () => _openMediaViewer(message),
-                child: Container(
-                  constraints: const BoxConstraints(
-                    maxHeight: 320,
-                    minHeight: 100,
-                  ),
-                  color: Colors.grey[850],
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      if (isImage)
-                        CachedImage(
-                          url: message.fileUrl!,
-                          fit: BoxFit.contain,
-                          width: double.infinity,
-                          placeholderColor: Colors.grey.shade800,
-                          errorWidget: Container(
-                            height: 100,
-                            color: Colors.grey[800],
-                            child: const Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.broken_image,
-                                    color: Colors.white54,
-                                    size: 40,
-                                  ),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    'Image failed to load',
-                                    style: TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 12,
+                child: Builder(
+                  builder: (context) {
+                    // Fixed media box so the bubble never resizes (no layout
+                    // jump) between placeholder, loaded, and error states.
+                    final mediaWidth =
+                        MediaQuery.of(context).size.width * 0.70;
+                    final mediaHeight =
+                        (mediaWidth * 0.75).clamp(180.0, 300.0);
+                    return SizedBox(
+                      width: mediaWidth,
+                      height: mediaHeight,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Positioned.fill(
+                            child: Container(color: Colors.grey[850]),
+                          ),
+                          if (isImage)
+                            Positioned.fill(
+                              child: CachedImage(
+                                url: message.fileUrl!,
+                                fit: BoxFit.cover,
+                                placeholderColor: Colors.grey.shade800,
+                                errorWidget: Container(
+                                  color: Colors.grey[800],
+                                  child: const Center(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.broken_image,
+                                          color: Colors.white54,
+                                          size: 40,
+                                        ),
+                                        SizedBox(height: 8),
+                                        Text(
+                                          'Image failed to load',
+                                          style: TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ],
+                                ),
+                              ),
+                            )
+                          else if (isVideo)
+                            Positioned.fill(
+                              child: _GroupVideoThumbnailWidget(
+                                videoUrl: message.fileUrl!,
                               ),
                             ),
-                          ),
-                        )
-                      else if (isVideo)
-                        _GroupVideoThumbnailWidget(
-                          videoUrl: message.fileUrl!,
-                        ),
-                      // Play button overlay for video
-                      if (isVideo)
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: const BoxDecoration(
-                            color: Colors.black45,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.play_arrow,
-                            color: Colors.white,
-                            size: 36,
-                          ),
-                        ),
-                    ],
-                  ),
+                          // Play button overlay for video
+                          if (isVideo)
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: const BoxDecoration(
+                                color: Colors.black45,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.play_arrow,
+                                color: Colors.white,
+                                size: 36,
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -5089,11 +5102,11 @@ class _GroupVideoThumbnailWidgetState extends State<_GroupVideoThumbnailWidget> 
 
   @override
   Widget build(BuildContext context) {
+    // Every state fills the parent's fixed media box so the bubble never
+    // resizes (no layout jump) as the controller initialises.
     if (_hasError || (!_initialized && _controller == null)) {
       return Container(
         color: Colors.grey[900],
-        height: 200,
-        width: double.infinity,
         child: const Center(
           child: Icon(
             Icons.videocam,
@@ -5107,8 +5120,6 @@ class _GroupVideoThumbnailWidgetState extends State<_GroupVideoThumbnailWidget> 
     if (!_initialized) {
       return Container(
         color: Colors.grey[900],
-        height: 200,
-        width: double.infinity,
         child: const Center(
           child: SizedBox(
             width: 24,
@@ -5123,15 +5134,16 @@ class _GroupVideoThumbnailWidgetState extends State<_GroupVideoThumbnailWidget> 
     }
 
     final controller = _controller!;
-    final aspectRatio = controller.value.aspectRatio > 0
-        ? controller.value.aspectRatio
-        : 16 / 9;
-
-    return SizedBox(
-      width: double.infinity,
-      child: AspectRatio(
-        aspectRatio: aspectRatio,
-        child: VideoPlayer(controller),
+    final size = controller.value.size;
+    return ClipRect(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: size.width <= 0 ? 16 : size.width,
+          height: size.height <= 0 ? 9 : size.height,
+          child: VideoPlayer(controller),
+        ),
       ),
     );
   }

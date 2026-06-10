@@ -54,7 +54,11 @@ class ChatMessageList extends StatelessWidget {
             physics: const ChatScrollPhysics(
               parent: AlwaysScrollableScrollPhysics(),
             ),
-            cacheExtent: MediaQuery.sizeOf(context).height * 2,
+            // One viewport of pre-build buffer keeps fast scrolling smooth
+            // without decoding ~2 extra screens of off-screen image bubbles
+            // (the old height * 2 caused memory/decode pressure on
+            // image-heavy chats).
+            cacheExtent: MediaQuery.sizeOf(context).height,
             itemCount: messages.length + (hasMoreMessages ? 1 : 0),
             addAutomaticKeepAlives: false,
             addRepaintBoundaries: true,

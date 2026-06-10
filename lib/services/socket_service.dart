@@ -14,6 +14,7 @@ class SocketService {
   SocketService._internal();
 
   io.Socket? _socket;
+  io.Socket? get socket => _socket;
   String? _authToken;
   int? _currentUserId;
 

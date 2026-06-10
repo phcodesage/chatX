@@ -29,8 +29,11 @@ import 'services/shortcut_service.dart';
 import 'services/socket_service.dart';
 import 'services/presence_service.dart';
 import 'services/media_upload_retry_service.dart';
+import 'services/text_message_retry_service.dart';
 import 'services/version_service.dart';
 import 'utils/notification_handler.dart';
+
+import 'services/alarm_notification_service.dart';
 
 final Completer<void> _bootstrapReadyCompleter = Completer<void>();
 
@@ -49,8 +52,10 @@ void main() async {
   await StorageService.init();
   await ChatCacheService.init();
   await MediaUploadRetryService().initialize();
+  await TextMessageRetryService().initialize();
   await ShareIntentService.instance.initialize();
   await ShortcutService.instance.initialize();
+  await AlarmNotificationService().initialize();
 
   final initialHome = await _resolveInitialHome();
 
@@ -89,10 +94,11 @@ Future<Widget> _resolveInitialHome() async {
   final sharedItems = await ShareIntentService.instance
       .takePendingSharedItems();
   if (sharedItems.isNotEmpty) {
-    final directShareUserId = sharedItems
-        .map((item) => item.directShareUserId)
-      .firstWhere((id) => id != null, orElse: () => null) ??
-      await ShareIntentService.instance.takePendingDirectShareUserId();
+    final directShareUserId =
+        sharedItems
+            .map((item) => item.directShareUserId)
+            .firstWhere((id) => id != null, orElse: () => null) ??
+        await ShareIntentService.instance.takePendingDirectShareUserId();
 
     return ShareTargetScreen(
       sharedItems: sharedItems,
@@ -114,7 +120,10 @@ Future<Widget> _resolveInitialHome() async {
   return const LobbyScreen();
 }
 
-Future<LobbyUser?> _resolveLobbyUser(int targetUserId, int currentUserId) async {
+Future<LobbyUser?> _resolveLobbyUser(
+  int targetUserId,
+  int currentUserId,
+) async {
   final cachedUsers = await ChatCacheService.loadLobbyUsers(currentUserId);
   for (final user in cachedUsers) {
     if (user.id == targetUserId) {
@@ -308,8 +317,7 @@ class _MessengerAppState extends State<MessengerApp>
 
     final now = DateTime.now();
     if (_lastResumeUpdateCheck != null &&
-        now.difference(_lastResumeUpdateCheck!) <
-            const Duration(seconds: 5)) {
+        now.difference(_lastResumeUpdateCheck!) < const Duration(seconds: 5)) {
       return;
     }
 
@@ -380,9 +388,7 @@ class _MessengerAppState extends State<MessengerApp>
             appContent,
             if (showOfflineBorder)
               const Positioned.fill(
-                child: IgnorePointer(
-                  child: _OfflineBorderOverlay(),
-                ),
+                child: IgnorePointer(child: _OfflineBorderOverlay()),
               ),
             if (showStatusBanner)
               AnimatedSwitcher(
@@ -553,9 +559,7 @@ class _OfflineBorderOverlay extends StatelessWidget {
     const Color edgeColor = Color(0xFFC62828);
     return DecoratedBox(
       decoration: const BoxDecoration(
-        border: Border(
-          top: BorderSide(color: edgeColor, width: 3.0),
-        ),
+        border: Border(top: BorderSide(color: edgeColor, width: 3.0)),
       ),
     );
   }

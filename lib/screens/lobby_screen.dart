@@ -35,6 +35,8 @@ import '../utils/notification_handler.dart';
 import '../utils/chat_scroll_physics.dart';
 import 'share_target_screen.dart';
 import 'ai_chat_screen.dart';
+import 'pomodoro/pomodoro_view.dart';
+import '../services/pomodoro_service.dart';
 
 /// Lobby/Chat list screen
 class LobbyScreen extends StatefulWidget {
@@ -45,7 +47,7 @@ class LobbyScreen extends StatefulWidget {
   State<LobbyScreen> createState() => _LobbyScreenState();
 }
 
-enum LobbyQuickFilter { all, online, groups, offline }
+enum LobbyQuickFilter { all, online, groups, alarmX }
 
 class _LobbyScreenState extends State<LobbyScreen> {
   List<LobbyUser> _lobbyUsers = [];
@@ -2669,7 +2671,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         return 1;
       case LobbyQuickFilter.groups:
         return 2;
-      case LobbyQuickFilter.offline:
+      case LobbyQuickFilter.alarmX:
         return 3;
     }
   }
@@ -2716,7 +2718,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _activeFilter = LobbyQuickFilter.groups;
           break;
         case 3:
-          _activeFilter = LobbyQuickFilter.offline;
+          _activeFilter = LobbyQuickFilter.alarmX;
+          final pomService = PomodoroService();
+          pomService.addLog('Opened Not Pomodoro Suite', 'navigation');
           break;
       }
     });
@@ -2964,21 +2968,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
       LobbyQuickFilter.all => _filteredUsers,
       LobbyQuickFilter.online => onlineUsers,
       LobbyQuickFilter.groups => const <LobbyUser>[],
-      LobbyQuickFilter.offline => offlineUsers,
+      LobbyQuickFilter.alarmX => const <LobbyUser>[],
     };
 
     final selectedSectionTitle = switch (_activeFilter) {
       LobbyQuickFilter.all => 'CHATS',
       LobbyQuickFilter.online => 'ONLINE',
       LobbyQuickFilter.groups => 'GROUPS',
-      LobbyQuickFilter.offline => 'OFFLINE',
+      LobbyQuickFilter.alarmX => 'ALARM X',
     };
 
     final selectedSectionColor = switch (_activeFilter) {
       LobbyQuickFilter.all => const Color(0xFF00D9FF),
       LobbyQuickFilter.online => const Color(0xFF00E676),
       LobbyQuickFilter.groups => const Color(0xFF00D9FF),
-      LobbyQuickFilter.offline => Colors.grey,
+      LobbyQuickFilter.alarmX => Colors.orange,
     };
 
     final isFilterEmpty = _activeFilter == LobbyQuickFilter.all
@@ -3055,163 +3059,168 @@ class _LobbyScreenState extends State<LobbyScreen> {
       body: Column(
         children: [
           // Search bar
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16.0,
-              vertical: 8.0,
-            ),
-            child: TextField(
-              controller: _searchController,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Search conversations or Ask AI',
-                hintStyle: TextStyle(color: Colors.grey[500]),
-                prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
-                suffixIcon: _showAiSuggestion
-                    ? Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: TextButton.icon(
-                          onPressed: () {
-                            final query = _searchController.text.trim();
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => AiChatScreen(
-                                  initialPrompt: query,
+          if (_activeFilter != LobbyQuickFilter.alarmX)
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 8.0,
+              ),
+              child: TextField(
+                controller: _searchController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Search conversations or Ask AI',
+                  hintStyle: TextStyle(color: Colors.grey[500]),
+                  prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
+                  suffixIcon: _showAiSuggestion
+                      ? Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: TextButton.icon(
+                            onPressed: () {
+                              final query = _searchController.text.trim();
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => AiChatScreen(
+                                    initialPrompt: query,
+                                  ),
                                 ),
+                              ).then((_) {
+                                _loadAiSessionPresence();
+                                _loadLobby(useCacheFirst: false);
+                              });
+                            },
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF00D9FF),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
                               ),
-                            ).then((_) {
-                              _loadAiSessionPresence();
-                              _loadLobby(useCacheFirst: false);
-                            });
-                          },
-                          style: TextButton.styleFrom(
-                            foregroundColor: const Color(0xFF00D9FF),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 8,
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            icon: const Icon(Icons.auto_awesome, size: 16),
+                            label: const Text(
+                              'Ask AI',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
                           ),
-                          icon: const Icon(Icons.auto_awesome, size: 16),
-                          label: const Text(
-                            'Ask AI',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                      )
-                    : null,
-                suffixIconConstraints: const BoxConstraints(
-                  minWidth: 0,
-                  minHeight: 0,
-                ),
-                filled: true,
-                fillColor: const Color(0xFF252542),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+                        )
+                      : null,
+                  suffixIconConstraints: const BoxConstraints(
+                    minWidth: 0,
+                    minHeight: 0,
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF252542),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                 ),
               ),
             ),
-          ),
           Expanded(
-            child: (_isLoading && _lobbyUsers.isEmpty && _groups.isEmpty)
-                ? _buildLoadingPlaceholder()
-                : !hasVisibleResults
-                ? Center(
-                    child: Text(
-                      _searchController.text.isEmpty
-                          ? _activeFilter == LobbyQuickFilter.all
-                                ? 'No chats yet'
-                                : 'No ${selectedSectionTitle.toLowerCase()} yet'
-                          : 'No results found',
-                      style: TextStyle(color: Colors.grey[500], fontSize: 16),
-                    ),
-                  )
-                : RefreshIndicator(
-                    onRefresh: () => _loadLobby(useCacheFirst: false),
-                    color: const Color(0xFF00D9FF),
-                    backgroundColor: const Color(0xFF252542),
-                    child: ListView.builder(
-                      padding: EdgeInsets.zero,
-                      physics: const ChatScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics(),
-                      ),
-                      cacheExtent: MediaQuery.sizeOf(context).height * 2,
-                      addAutomaticKeepAlives: false,
-                      addRepaintBoundaries: true,
-                      itemCount: lobbyItemBuilders.length,
-                      itemBuilder: (context, index) {
-                        return lobbyItemBuilders[index]();
-                      },
-                    ),
-                  ),
+            child: _activeFilter == LobbyQuickFilter.alarmX
+                ? const PomodoroView()
+                : (_isLoading && _lobbyUsers.isEmpty && _groups.isEmpty)
+                    ? _buildLoadingPlaceholder()
+                    : !hasVisibleResults
+                        ? Center(
+                            child: Text(
+                              _searchController.text.isEmpty
+                                  ? _activeFilter == LobbyQuickFilter.all
+                                      ? 'No chats yet'
+                                      : 'No ${selectedSectionTitle.toLowerCase()} yet'
+                                  : 'No results found',
+                              style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                            ),
+                          )
+                        : RefreshIndicator(
+                            onRefresh: () => _loadLobby(useCacheFirst: false),
+                            color: const Color(0xFF00D9FF),
+                            backgroundColor: const Color(0xFF252542),
+                            child: ListView.builder(
+                              padding: EdgeInsets.zero,
+                              physics: const ChatScrollPhysics(
+                                parent: AlwaysScrollableScrollPhysics(),
+                              ),
+                              cacheExtent: MediaQuery.sizeOf(context).height * 2,
+                              addAutomaticKeepAlives: false,
+                              addRepaintBoundaries: true,
+                              itemCount: lobbyItemBuilders.length,
+                              itemBuilder: (context, index) {
+                                return lobbyItemBuilders[index]();
+                              },
+                            ),
+                          ),
           ),
         ],
       ),
-      floatingActionButton: _activeFilter != LobbyQuickFilter.groups
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // AI Chat mini FAB
-                FloatingActionButton.small(
-                  heroTag: 'fab_ai',
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const AiChatScreen(),
-                      ),
-                    ).then((_) {
-                      _loadAiSessionPresence();
-                      _loadLobby(useCacheFirst: false);
-                    });
-                  },
-                  backgroundColor: const Color(0xFF00D9FF),
-                  foregroundColor: Colors.white,
-                  elevation: 4,
-                  shape: const CircleBorder(),
-                  child: const Icon(Icons.smart_toy_rounded, size: 20),
-                ),
-                const SizedBox(height: 12),
-                // New Chat main FAB
-                FloatingActionButton(
-                  heroTag: 'fab_chat',
-                  onPressed: _openNewChatPicker,
-                  backgroundColor: const Color(0xFF4C1D95),
-                  foregroundColor: Colors.white,
-                  elevation: 6,
-                  shape: const CircleBorder(),
-                  child: const Icon(Icons.chat_rounded, size: 26),
-                ),
-              ],
-            )
-          : (_isCurrentUserAdmin
-              ? FloatingActionButton(
-                  heroTag: 'fab_group',
-                  onPressed: () async {
-                    final result = await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const CreateGroupScreen(),
-                      ),
-                    );
-                    if (result == true) {
-                      _loadLobby(useCacheFirst: false);
-                    }
-                  },
-                  backgroundColor: const Color(0xFF4C1D95),
-                  foregroundColor: Colors.white,
-                  elevation: 6,
-                  shape: const CircleBorder(),
-                  child: const Icon(Icons.group_add_rounded, size: 26),
+      floatingActionButton: (_activeFilter == LobbyQuickFilter.alarmX)
+          ? null
+          : (_activeFilter != LobbyQuickFilter.groups)
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // AI Chat mini FAB
+                    FloatingActionButton.small(
+                      heroTag: 'fab_ai',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AiChatScreen(),
+                          ),
+                        ).then((_) {
+                          _loadAiSessionPresence();
+                          _loadLobby(useCacheFirst: false);
+                        });
+                      },
+                      backgroundColor: const Color(0xFF00D9FF),
+                      foregroundColor: Colors.white,
+                      elevation: 4,
+                      shape: const CircleBorder(),
+                      child: const Icon(Icons.smart_toy_rounded, size: 20),
+                    ),
+                    const SizedBox(height: 12),
+                    // New Chat main FAB
+                    FloatingActionButton(
+                      heroTag: 'fab_chat',
+                      onPressed: _openNewChatPicker,
+                      backgroundColor: const Color(0xFF4C1D95),
+                      foregroundColor: Colors.white,
+                      elevation: 6,
+                      shape: const CircleBorder(),
+                      child: const Icon(Icons.chat_rounded, size: 26),
+                    ),
+                  ],
                 )
-              : null),
+              : (_isCurrentUserAdmin
+                  ? FloatingActionButton(
+                      heroTag: 'fab_group',
+                      onPressed: () async {
+                        final result = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const CreateGroupScreen(),
+                          ),
+                        );
+                        if (result == true) {
+                          _loadLobby(useCacheFirst: false);
+                        }
+                      },
+                      backgroundColor: const Color(0xFF4C1D95),
+                      foregroundColor: Colors.white,
+                      elevation: 6,
+                      shape: const CircleBorder(),
+                      child: const Icon(Icons.group_add_rounded, size: 26),
+                    )
+                  : null),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: NavigationBar(
         backgroundColor: const Color(0xFF1A1A2E),
@@ -3236,9 +3245,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
             label: 'Groups',
           ),
           NavigationDestination(
-            icon: Icon(Icons.circle_outlined),
-            selectedIcon: Icon(Icons.circle, color: Colors.grey),
-            label: 'Offline',
+            icon: Icon(Icons.alarm_outlined),
+            selectedIcon: Icon(Icons.alarm, color: Colors.orange),
+            label: 'Alarm X',
           ),
         ],
       ),

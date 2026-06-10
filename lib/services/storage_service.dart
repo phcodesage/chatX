@@ -15,6 +15,7 @@ class StorageService {
   static const String _rememberedUsernameKey = 'remembered_username';
   static const String _rememberedPasswordKey = 'remembered_password';
   static const String _useMilitaryTimeKey = 'use_military_time';
+  static const String _pomodoroStateKey = 'pomodoro_state';
 
   static bool useMilitaryTime = false;
 
@@ -417,6 +418,27 @@ class StorageService {
       await _secureStorage.delete(key: sessionKey);
     } catch (e) {
       debugPrint('Error clearing AI session ID from secure storage: $e');
+    }
+  }
+
+  /// Save Pomodoro state to local storage
+  static Future<void> savePomodoroState(String stateJson) async {
+    try {
+      final prefs = await _getPrefs();
+      await prefs.setString(_pomodoroStateKey, stateJson);
+    } catch (e) {
+      debugPrint('Error saving pomodoro state: $e');
+    }
+  }
+
+  /// Get Pomodoro state from local storage
+  static Future<String?> getPomodoroState() async {
+    try {
+      final prefs = await _getPrefs();
+      return prefs.getString(_pomodoroStateKey);
+    } catch (e) {
+      debugPrint('Error getting pomodoro state: $e');
+      return null;
     }
   }
 }

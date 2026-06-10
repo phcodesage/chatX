@@ -79,8 +79,13 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
   @override
   void initState() {
     super.initState();
-    // Only fetch previews for non-deleted text messages
-    if (widget.message.messageType == 'text' && !widget.message.isDeleted) {
+    // Only fetch previews for non-deleted text messages that actually
+    // contain a URL. Without the URL guard every plain-text bubble fired an
+    // async pass + an extra setState as it scrolled into view — wasted work
+    // on the scroll hot path for the common (no-link) case.
+    if (widget.message.messageType == 'text' &&
+        !widget.message.isDeleted &&
+        LinkPreviewService().extractFirstUrl(widget.message.content) != null) {
       _fetchPreview();
     }
   }
@@ -431,56 +436,65 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
         message.localFilePath!.isNotEmpty &&
         File(message.localFilePath!).existsSync();
 
+    // Fixed media box: the bubble reserves the same space whether the image/
+    // video is still loading, loaded, or failed. This eliminates the layout
+    // "jump" that happened when the placeholder (no intrinsic size) was
+    // replaced by an aspect-ratio-sized image. A stable box + BoxFit.cover
+    // means zero relayout on load. The full, uncropped media is shown in the
+    // media viewer on tap.
+    final mediaWidth = MediaQuery.of(context).size.width *
+        (widget.scale < 0.9 ? 0.82 : 0.70);
+    final mediaHeight = (mediaWidth * 0.75).clamp(180.0, 300.0);
+
     return RepaintBoundary(
       child: ClipRRect(
         borderRadius: borderRadius,
         child: GestureDetector(
           onTap: () => widget.onOpenMediaViewer(message),
-          child: Container(
-            constraints: const BoxConstraints(
-              maxHeight: 320,
-              minHeight: 100,
-            ),
-            color: Colors.grey[850],
+          child: SizedBox(
+            width: mediaWidth,
+            height: mediaHeight,
             child: Stack(
               alignment: Alignment.center,
               children: [
+                Positioned.fill(child: Container(color: Colors.grey[850])),
                 if (isImage)
-                  showLocal
-                      ? Image.file(
-                          File(message.localFilePath!),
-                          fit: BoxFit.contain,
-                          width: double.infinity,
-                        )
-                      : CachedImage(
-                          url: message.fileUrl ?? '',
-                          fit: BoxFit.contain,
-                          width: double.infinity,
-                          cacheWidth: imageCacheWidth,
-                          filterQuality: FilterQuality.low,
-                          placeholderColor: const Color(0xFF1F2937),
-                          errorWidget: Container(
-                            height: 200,
-                            color: Colors.grey[800],
-                            child: const Center(
-                              child: Icon(
-                                Icons.broken_image,
-                                color: Colors.white54,
-                                size: 40,
+                  Positioned.fill(
+                    child: showLocal
+                        ? Image.file(
+                            File(message.localFilePath!),
+                            fit: BoxFit.cover,
+                          )
+                        : CachedImage(
+                            url: message.fileUrl ?? '',
+                            fit: BoxFit.cover,
+                            cacheWidth: imageCacheWidth,
+                            filterQuality: FilterQuality.low,
+                            placeholderColor: const Color(0xFF1F2937),
+                            errorWidget: Container(
+                              color: Colors.grey[800],
+                              child: const Center(
+                                child: Icon(
+                                  Icons.broken_image,
+                                  color: Colors.white54,
+                                  size: 40,
+                                ),
                               ),
                             ),
                           ),
-                        )
+                  )
                 else if (isVideo)
-                  showLocal
-                      ? _VideoThumbnailWidget(
-                          localFilePath: message.localFilePath,
-                          cacheWidth: imageCacheWidth,
-                        )
-                      : _VideoThumbnailWidget(
-                          videoUrl: message.fileUrl ?? '',
-                          cacheWidth: imageCacheWidth,
-                        ),
+                  Positioned.fill(
+                    child: showLocal
+                        ? _VideoThumbnailWidget(
+                            localFilePath: message.localFilePath,
+                            cacheWidth: imageCacheWidth,
+                          )
+                        : _VideoThumbnailWidget(
+                            videoUrl: message.fileUrl ?? '',
+                            cacheWidth: imageCacheWidth,
+                          ),
+                  ),
 
                 if (isVideo)
                   Container(
@@ -1128,11 +1142,11 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
 
   @override
   Widget build(BuildContext context) {
+    // Every state fills the parent's fixed media box so the bubble never
+    // resizes (no layout jump) as the controller initialises.
     if (_hasError || (!_initialized && _controller == null)) {
       return Container(
         color: Colors.grey[900],
-        height: 200,
-        width: double.infinity,
         child: const Center(
           child: Icon(
             Icons.videocam,
@@ -1146,8 +1160,6 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
     if (!_initialized) {
       return Container(
         color: Colors.grey[900],
-        height: 200,
-        width: double.infinity,
         child: const Center(
           child: SizedBox(
             width: 24,
@@ -1162,15 +1174,16 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
     }
 
     final controller = _controller!;
-    final aspectRatio = controller.value.aspectRatio > 0
-        ? controller.value.aspectRatio
-        : 16 / 9;
-
-    return SizedBox(
-      width: double.infinity,
-      child: AspectRatio(
-        aspectRatio: aspectRatio,
-        child: VideoPlayer(controller),
+    final size = controller.value.size;
+    return ClipRect(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: size.width <= 0 ? 16 : size.width,
+          height: size.height <= 0 ? 9 : size.height,
+          child: VideoPlayer(controller),
+        ),
       ),
     );
   }
