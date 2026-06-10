@@ -10,6 +10,7 @@ import '../models/message.dart';
 import 'chat_cache_service.dart';
 import 'compression_service.dart';
 import 'media_upload_service.dart';
+import 'socket_service.dart';
 import 'storage_service.dart';
 
 /// Progress update emitted by [MediaUploadRetryService] for a specific upload.
@@ -65,24 +66,24 @@ class _PendingUpload {
   });
 
   Map<String, dynamic> toJson() => {
-        'tempFilePath': tempFilePath,
-        'recipientId': recipientId,
-        'caption': caption,
-        'fileName': fileName,
-        'mimeType': mimeType,
-        'trackingId': trackingId,
-        'retryCount': retryCount,
-      };
+    'tempFilePath': tempFilePath,
+    'recipientId': recipientId,
+    'caption': caption,
+    'fileName': fileName,
+    'mimeType': mimeType,
+    'trackingId': trackingId,
+    'retryCount': retryCount,
+  };
 
   factory _PendingUpload.fromJson(Map<String, dynamic> json) => _PendingUpload(
-        tempFilePath: json['tempFilePath'] as String,
-        recipientId: json['recipientId'] as int,
-        caption: json['caption'] as String?,
-        fileName: json['fileName'] as String,
-        mimeType: json['mimeType'] as String,
-        trackingId: json['trackingId'] as String,
-        retryCount: json['retryCount'] as int? ?? 0,
-      );
+    tempFilePath: json['tempFilePath'] as String,
+    recipientId: json['recipientId'] as int,
+    caption: json['caption'] as String?,
+    fileName: json['fileName'] as String,
+    mimeType: json['mimeType'] as String,
+    trackingId: json['trackingId'] as String,
+    retryCount: json['retryCount'] as int? ?? 0,
+  );
 }
 
 /// Global singleton that manages media uploads which failed due to
@@ -121,6 +122,36 @@ class MediaUploadRetryService {
         }
       }
       debugPrint('📤 Loaded ${_queue.length} pending uploads from cache');
+    }
+
+    // Listen for connectivity changes to automatically retry queued uploads,
+    // regardless of which screen is currently active. (Previously the only
+    // trigger was a chat-screen-scoped socket 'reconnected' listener, so an
+    // upload queued offline was never retried after the app was killed or while
+    // the user was outside the chat — it sat in the queue, never reaching the
+    // socket.)
+    Connectivity().onConnectivityChanged.listen((results) {
+      if (results.isNotEmpty && results.first != ConnectivityResult.none) {
+        if (_queue.isNotEmpty) {
+          debugPrint('📡 Connectivity restored, retrying queued uploads...');
+          retryAll();
+        }
+      }
+    });
+
+    // Also retry immediately when the socket reconnects.
+    SocketService().addListener('reconnected', 'MediaUploadRetryService', () {
+      if (_queue.isNotEmpty) {
+        debugPrint('🔌 Socket reconnected, retrying queued uploads...');
+        retryAll();
+      }
+    });
+
+    // Kick a retry on startup so uploads queued in a previous (offline) session
+    // are sent as soon as the app launches with connectivity. retryAll() itself
+    // checks connectivity and auth before doing any work.
+    if (_queue.isNotEmpty) {
+      retryAll();
     }
   }
 
@@ -176,10 +207,21 @@ class MediaUploadRetryService {
     );
   }
 
+  bool _isRetrying = false;
+
   /// Retries all pending uploads.
   Future<void> retryAll() async {
     if (_queue.isEmpty) {
       debugPrint('📤 No pending uploads to retry');
+      return;
+    }
+
+    // Prevent concurrent retry cycles. retryAll() can now be triggered from
+    // several sources (connectivity change, socket reconnect, startup kick, and
+    // the chat screen). Without this guard, overlapping cycles would upload the
+    // same file twice and deliver duplicate messages to the recipient.
+    if (_isRetrying) {
+      debugPrint('📤 Retry already in progress, skipping');
       return;
     }
 
@@ -189,13 +231,33 @@ class MediaUploadRetryService {
       return;
     }
 
+    // Don't attempt (and thus permanently fail/drop) queued uploads before the
+    // user is authenticated — keep them in the queue until a token exists.
+    final token = await StorageService.getToken();
+    if (token == null) {
+      debugPrint('📤 No auth token yet, keeping uploads queued');
+      return;
+    }
+
+    _isRetrying = true;
+    try {
+      await _runRetryCycle();
+    } finally {
+      _isRetrying = false;
+    }
+  }
+
+  /// Runs a single pass over the queue, uploading each pending file.
+  Future<void> _runRetryCycle() async {
     final toRetry = List<_PendingUpload>.from(_queue);
     debugPrint('🔄 Retrying ${toRetry.length} pending uploads...');
 
     for (final job in toRetry) {
       final tempFile = File(job.tempFilePath);
       if (!await tempFile.exists()) {
-        debugPrint('⚠️ Temp file missing for ${job.fileName}, removing from queue');
+        debugPrint(
+          '⚠️ Temp file missing for ${job.fileName}, removing from queue',
+        );
         _queue.remove(job);
         await _persistQueue();
         continue;
@@ -263,19 +325,30 @@ class MediaUploadRetryService {
           final currentUserId = await StorageService.getUserId();
           if (currentUserId != null && result.message != null) {
             final optimisticId = getOptimisticIdFromTrackingId(job.trackingId);
-            final cachedMessages = await ChatCacheService.loadConversationMessages(
-              currentUserId,
-              job.recipientId,
+            final cachedMessages =
+                await ChatCacheService.loadConversationMessages(
+                  currentUserId,
+                  job.recipientId,
+                );
+            final index = cachedMessages.indexWhere(
+              (m) => m.id == optimisticId,
             );
-            final index = cachedMessages.indexWhere((m) => m.id == optimisticId);
             if (index != -1) {
-              cachedMessages[index] = result.message!;
+              // Preserve the user's caption — the upload echo frequently omits
+              // it, which previously made a photo's caption vanish after an
+              // offline→online retry.
+              cachedMessages[index] =
+                  (result.message!.caption?.isNotEmpty == true)
+                  ? result.message!
+                  : result.message!.copyWith(caption: job.caption);
               await ChatCacheService.saveConversationMessages(
                 currentUserId,
                 job.recipientId,
                 cachedMessages,
               );
-              debugPrint('💾 Updated retry-succeeded message in cache database');
+              debugPrint(
+                '💾 Updated retry-succeeded message in cache database',
+              );
             } else {
               // If not found in conversation cache, add it as a new message
               await ChatCacheService.addMessageToCache(
@@ -283,7 +356,9 @@ class MediaUploadRetryService {
                 job.recipientId,
                 result.message!,
               );
-              debugPrint('💾 Saved retry-succeeded message directly to cache database');
+              debugPrint(
+                '💾 Saved retry-succeeded message directly to cache database',
+              );
             }
           }
 

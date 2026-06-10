@@ -3,6 +3,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'dart:async';
 import '../config/api_config.dart';
 import 'auth_error_handler.dart';
+import 'socket_event_queue_service.dart';
 
 /// Service for handling Socket.IO real-time communication.
 /// Uses a multi-listener broadcast pattern so multiple screens
@@ -1498,6 +1499,15 @@ class SocketService {
   }
 
   /// Emit an event to the server
+  /// Fire-and-forget events that must survive being sent while offline: they have
+  /// no REST fallback and no ack, so if dropped they're lost forever. They are
+  /// persisted by [SocketEventQueueService] and replayed on reconnect.
+  static const Set<String> _replayableEvents = {
+    'ring_doorbell',
+    'change_color',
+    'reset_color',
+  };
+
   void emit(String event, dynamic data) {
     if (_socket?.connected ?? false) {
       if (kDebugMode) {
@@ -1512,7 +1522,17 @@ class SocketService {
         debugPrint('🎨 [SOCKET DEBUG] Socket ID: ${_socket?.id}');
       }
     } else {
-      if (kDebugMode) {
+      // Offline: persist replayable events so a doorbell / color change sent while
+      // disconnected isn't silently lost — it's replayed once we reconnect.
+      if (_replayableEvents.contains(event) && data is Map) {
+        SocketEventQueueService().queueEvent(
+          event,
+          Map<String, dynamic>.from(data),
+        );
+        if (kDebugMode) {
+          debugPrint('🔔 Queued offline event $event for replay on reconnect');
+        }
+      } else if (kDebugMode) {
         debugPrint('⚠️ Cannot emit $event - socket not connected');
         debugPrint(
           '⚠️ Socket state: connected=${_socket?.connected}, socket=${_socket != null}',

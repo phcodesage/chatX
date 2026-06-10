@@ -83,10 +83,14 @@ class MediaPickerService {
         file = await _imagePicker.pickVideo(
           source: ImageSource.camera,
           maxDuration: maxVideoDuration,
+          // Default to the rear (back) camera rather than the selfie camera.
+          preferredCameraDevice: CameraDevice.rear,
         );
       } else {
         file = await _imagePicker.pickImage(
           source: ImageSource.camera,
+          // Default to the rear (back) camera rather than the selfie camera.
+          preferredCameraDevice: CameraDevice.rear,
         );
       }
 
@@ -132,8 +136,10 @@ class MediaPickerService {
       }
 
       // Check if permanently denied — if so, open settings
-      final photosPermanent = statuses[Permission.photos]?.isPermanentlyDenied ?? false;
-      final videosPermanent = statuses[Permission.videos]?.isPermanentlyDenied ?? false;
+      final photosPermanent =
+          statuses[Permission.photos]?.isPermanentlyDenied ?? false;
+      final videosPermanent =
+          statuses[Permission.videos]?.isPermanentlyDenied ?? false;
 
       if (photosPermanent || videosPermanent) {
         await openAppSettings();
@@ -191,7 +197,8 @@ class MediaPickerService {
 
     // Determine if it's a video or image based on mime type
     final mimeType = file.mimeType ?? '';
-    final isVideo = mimeType.startsWith('video') ||
+    final isVideo =
+        mimeType.startsWith('video') ||
         fileName.toLowerCase().endsWith('.mp4') ||
         fileName.toLowerCase().endsWith('.mov');
 
@@ -229,13 +236,9 @@ class MediaPickerService {
         elevation: 0,
       ),
       scaffoldBackgroundColor: const Color(0xFF121212),
-      bottomAppBarTheme: const BottomAppBarThemeData(
-        color: Color(0xFF1E1E1E),
-      ),
+      bottomAppBarTheme: const BottomAppBarThemeData(color: Color(0xFF1E1E1E)),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(
-          foregroundColor: primaryColor,
-        ),
+        style: TextButton.styleFrom(foregroundColor: primaryColor),
       ),
       iconTheme: const IconThemeData(color: Colors.white),
     );

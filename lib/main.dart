@@ -30,6 +30,7 @@ import 'services/socket_service.dart';
 import 'services/presence_service.dart';
 import 'services/media_upload_retry_service.dart';
 import 'services/text_message_retry_service.dart';
+import 'services/socket_event_queue_service.dart';
 import 'services/version_service.dart';
 import 'utils/notification_handler.dart';
 
@@ -53,6 +54,7 @@ void main() async {
   await ChatCacheService.init();
   await MediaUploadRetryService().initialize();
   await TextMessageRetryService().initialize();
+  await SocketEventQueueService().initialize();
   await ShareIntentService.instance.initialize();
   await ShortcutService.instance.initialize();
   await AlarmNotificationService().initialize();

@@ -33,6 +33,7 @@ class Message {
   final String? pinnedAt;
   final int? pinnedByUserId;
   final String? caption;
+
   /// Local file path for optimistic media messages (before upload completes).
   /// Used to display the image/video from disk while the upload is in progress.
   /// Never persisted to JSON — only set on in-memory optimistic messages.
@@ -72,6 +73,79 @@ class Message {
     this.caption,
     this.localFilePath,
   });
+
+  /// Returns a copy of this message with the given fields replaced.
+  /// Only non-null arguments override the existing value, so this cannot be
+  /// used to clear a field back to null (no use case needs that today).
+  Message copyWith({
+    int? id,
+    int? senderId,
+    int? recipientId,
+    String? content,
+    String? messageType,
+    String? timestamp,
+    int? timestampMs,
+    bool? isRead,
+    String? readAt,
+    int? readAtMs,
+    String? deliveredAt,
+    int? deliveredAtMs,
+    String? status,
+    String? threadId,
+    int? replyToId,
+    String? replyPreview,
+    Map<String, dynamic>? reactions,
+    String? fileUrl,
+    String? fileName,
+    int? fileSize,
+    String? fileType,
+    bool? isDeleted,
+    bool? isTask,
+    String? taskCreatedAt,
+    String? taskCompletedAt,
+    bool? isExcalidrawLink,
+    String? excalidrawPinnedAt,
+    bool? isPinned,
+    String? pinnedAt,
+    int? pinnedByUserId,
+    String? caption,
+    String? localFilePath,
+  }) {
+    return Message(
+      id: id ?? this.id,
+      senderId: senderId ?? this.senderId,
+      recipientId: recipientId ?? this.recipientId,
+      content: content ?? this.content,
+      messageType: messageType ?? this.messageType,
+      timestamp: timestamp ?? this.timestamp,
+      timestampMs: timestampMs ?? this.timestampMs,
+      isRead: isRead ?? this.isRead,
+      readAt: readAt ?? this.readAt,
+      readAtMs: readAtMs ?? this.readAtMs,
+      deliveredAt: deliveredAt ?? this.deliveredAt,
+      deliveredAtMs: deliveredAtMs ?? this.deliveredAtMs,
+      status: status ?? this.status,
+      threadId: threadId ?? this.threadId,
+      replyToId: replyToId ?? this.replyToId,
+      replyPreview: replyPreview ?? this.replyPreview,
+      reactions: reactions ?? this.reactions,
+      fileUrl: fileUrl ?? this.fileUrl,
+      fileName: fileName ?? this.fileName,
+      fileSize: fileSize ?? this.fileSize,
+      fileType: fileType ?? this.fileType,
+      isDeleted: isDeleted ?? this.isDeleted,
+      isTask: isTask ?? this.isTask,
+      taskCreatedAt: taskCreatedAt ?? this.taskCreatedAt,
+      taskCompletedAt: taskCompletedAt ?? this.taskCompletedAt,
+      isExcalidrawLink: isExcalidrawLink ?? this.isExcalidrawLink,
+      excalidrawPinnedAt: excalidrawPinnedAt ?? this.excalidrawPinnedAt,
+      isPinned: isPinned ?? this.isPinned,
+      pinnedAt: pinnedAt ?? this.pinnedAt,
+      pinnedByUserId: pinnedByUserId ?? this.pinnedByUserId,
+      caption: caption ?? this.caption,
+      localFilePath: localFilePath ?? this.localFilePath,
+    );
+  }
 
   /// Parse reply_preview which can be String or Map from backend
   /// Also handles HTML content for file messages

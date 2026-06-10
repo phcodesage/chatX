@@ -63,6 +63,7 @@ import '../services/compression_service.dart';
 import '../services/media_picker_service.dart';
 import '../services/media_upload_retry_service.dart';
 import '../services/text_message_retry_service.dart';
+import '../services/socket_event_queue_service.dart';
 import '../services/media_upload_service.dart';
 import '../state/media_upload_state.dart';
 import '../widgets/upload_progress_indicator.dart';
@@ -474,6 +475,12 @@ class _ChatScreenState extends State<ChatScreen>
                       ? serverMessage.fileType
                       : oldMessage.fileType,
                   fileSize: serverMessage.fileSize ?? oldMessage.fileSize,
+                  // Preserve the caption the user typed — the upload echo often
+                  // omits it, and losing it here is why a photo's caption
+                  // disappeared after an offline→online retry.
+                  caption: (serverMessage.caption?.isNotEmpty == true)
+                      ? serverMessage.caption
+                      : oldMessage.caption,
                   localFilePath: oldMessage.localFilePath,
                 );
               } else {
@@ -495,6 +502,7 @@ class _ChatScreenState extends State<ChatScreen>
                   fileName: oldMessage.fileName,
                   fileType: oldMessage.fileType,
                   fileSize: oldMessage.fileSize,
+                  caption: oldMessage.caption,
                   localFilePath: oldMessage.localFilePath,
                 );
               }
@@ -6472,11 +6480,22 @@ class _ChatScreenState extends State<ChatScreen>
                 .toRadixString(16)
                 .substring(2)
                 .toUpperCase();
-            _socketService.emit('change_color', {
+            final colorPayload = {
               'recipient_id': widget.otherUser.id,
               'color': '#$colorHex',
               'sender_name': 'You',
-            });
+            };
+            if (_socketService.isConnected) {
+              _socketService.emit('change_color', colorPayload);
+            } else {
+              // Offline — queue so it reaches the recipient once we reconnect.
+              unawaited(
+                SocketEventQueueService().queueEvent(
+                  'change_color',
+                  colorPayload,
+                ),
+              );
+            }
 
             // Add outgoing system message to show we changed their color
             final colorMessage = Message(
@@ -6542,8 +6561,17 @@ class _ChatScreenState extends State<ChatScreen>
     // Mark that we locally triggered the doorbell so we can suppress the echo
     _localDoorbellPending = true;
 
-    // Send doorbell via Socket.IO
-    _socketService.ringDoorbell(widget.otherUser.id);
+    // Send doorbell via Socket.IO, or queue it for replay if we're offline so
+    // the notification still reaches the recipient once we reconnect.
+    if (_socketService.isConnected) {
+      _socketService.ringDoorbell(widget.otherUser.id);
+    } else {
+      unawaited(
+        SocketEventQueueService().queueEvent('ring_doorbell', {
+          'recipient_id': widget.otherUser.id,
+        }),
+      );
+    }
 
     // Play doorbell notification sound (each tap gets its own player so rapid rings don't cancel each other)
     _playDoorbellSound();
@@ -8883,7 +8911,13 @@ class _ChatScreenState extends State<ChatScreen>
                             child: ElevatedButton.icon(
                               onPressed: () {
                                 Navigator.pop(modalContext);
-                                // Send all files
+                                // Send all files through the same pipeline as
+                                // single-file sends so each gets an optimistic
+                                // pending message and, crucially, is queued to
+                                // MediaUploadRetryService when offline — earlier
+                                // this used _uploadAndSendFile, which silently
+                                // dropped files on a network error instead of
+                                // retrying them after reconnect.
                                 for (int i = 0; i < files.length; i++) {
                                   final mimeType =
                                       lookupMimeType(files[i].path) ??
@@ -8893,10 +8927,12 @@ class _ChatScreenState extends State<ChatScreen>
                                     mimeType: mimeType,
                                     isFromCamera: false,
                                   );
-                                  _uploadAndSendFile(
+                                  _startFileUpload(
                                     files[i],
                                     uploadName,
+                                    names[i],
                                     mimeType,
+                                    idOffset: i,
                                   );
                                 }
                               },
@@ -9096,10 +9132,15 @@ class _ChatScreenState extends State<ChatScreen>
     File file,
     String uploadFileName,
     String displayName,
-    String mimeType,
-  ) {
+    String mimeType, {
+    int idOffset = 0,
+  }) {
     final now = DateTime.now();
-    final optimisticId = now.millisecondsSinceEpoch;
+    // [idOffset] keeps optimistic IDs unique when several files are started in
+    // the same millisecond (batch sends), mirroring _uploadMediaBatch's `+ i`.
+    // Without it, two files could share an ID and one would overwrite the other
+    // during retry reconciliation.
+    final optimisticId = now.millisecondsSinceEpoch + idOffset;
     final trackingId = '${optimisticId}_$uploadFileName';
 
     final messageType = mimeType.startsWith('image/')
@@ -10711,7 +10752,14 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  /// Upload file to server and send via socket
+  /// Upload file to server and send via socket.
+  ///
+  /// Kept for reference: superseded by [_startFileUpload], which inserts an
+  /// optimistic message, reports progress, and (critically) queues the upload to
+  /// [MediaUploadRetryService] when offline. This variant silently dropped files
+  /// on a network error, so multi-file sends made while offline never reached
+  /// the socket after reconnect.
+  // ignore: unused_element
   Future<void> _uploadAndSendFile(
     File file,
     String fileName,
