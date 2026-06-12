@@ -3261,6 +3261,26 @@ class _ChatScreenState extends State<ChatScreen>
     _doJumpToTaskBubble(task);
   }
 
+  /// Keeps the keyboard closed while jumping to a bubble. Closing the tasks
+  /// modal restores focus to the message input (which pops the keyboard open),
+  /// and that restoration lands across the modal's close animation — so we drop
+  /// focus now and again over the next few frames to override it.
+  void _dismissKeyboardForJump() {
+    void drop() {
+      if (!mounted) return;
+      _inputFocusNode.unfocus();
+      FocusManager.instance.primaryFocus?.unfocus();
+      try {
+        SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+      } catch (_) {}
+    }
+
+    drop();
+    for (final ms in const [80, 200, 350]) {
+      Future.delayed(Duration(milliseconds: ms), drop);
+    }
+  }
+
   /// Scroll to the original message that [replyToId] points to and flash it.
   void _jumpToRepliedMessage(int replyToId) {
     final existing = _messages.firstWhere(
@@ -3284,6 +3304,8 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _doJumpToTaskBubble(Message task) async {
+    // Jumping should never pop the keyboard open.
+    _dismissKeyboardForJump();
     setState(() {
       _bubbleFlashId = task.id;
     });
@@ -12642,62 +12664,61 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Handle excalidraw pinned event from socket
   void _handleExcalidrawPinned(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
-    if (messageId == null) return;
-
+    final messageId = _toInt(data['message_id']);
     final pinnedAt =
         _extractExcalidrawPinnedAtFromEvent(data) ??
         DateTime.now().toIso8601String();
 
-    setState(() {
-      final index = _messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        final message = _messages[index];
-        final hasExcalidrawUrl = _extractExcalidrawUrl(message.content) != null;
-        final updatedMessage = _copyMessageWithExcalidrawState(
-          message,
-          isExcalidrawLink: hasExcalidrawUrl,
-          excalidrawPinnedAt: pinnedAt,
-        );
-        _messages[index] = updatedMessage;
-
-        // Add to pinned links if not already present
-        if (!_pinnedExcalidrawLinks.any(
-          (l) => (l['id'] as int?) == messageId,
-        )) {
-          _pinnedExcalidrawLinks.add({
-            'id': messageId,
-            'sender_id': message.senderId,
-            'recipient_id': message.recipientId,
-            'content': message.content,
-            'is_excalidraw_link': hasExcalidrawUrl,
-            'excalidraw_pinned_at': pinnedAt,
-          });
+    if (messageId != null) {
+      setState(() {
+        final index = _messages.indexWhere((m) => m.id == messageId);
+        if (index != -1) {
+          final message = _messages[index];
+          final hasExcalidrawUrl =
+              _extractExcalidrawUrl(message.content) != null;
+          _messages[index] = _copyMessageWithExcalidrawState(
+            message,
+            isExcalidrawLink: hasExcalidrawUrl,
+            excalidrawPinnedAt: pinnedAt,
+          );
         }
-      }
-    });
+      });
+    }
+
+    // Reconcile the pinned-links section from the server so the badge/modal
+    // update live. Previously this only updated when the message was already
+    // loaded AND its id matched the event's server message_id — so a freshly
+    // pasted/sent link (whose local optimistic copy has a temporary id) never
+    // appeared until leaving and re-entering the room.
+    unawaited(_loadPinnedExcalidrawLinks());
   }
 
   /// Handle excalidraw unpinned event from socket
   void _handleExcalidrawUnpinned(Map<String, dynamic> data) {
-    final messageId = data['message_id'] as int?;
-    if (messageId == null) return;
+    final messageId = _toInt(data['message_id']);
 
-    setState(() {
-      final index = _messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        final message = _messages[index];
-        final hasExcalidrawUrl = _extractExcalidrawUrl(message.content) != null;
-        final updatedMessage = _copyMessageWithExcalidrawState(
-          message,
-          isExcalidrawLink: hasExcalidrawUrl,
-          excalidrawPinnedAt: null,
+    if (messageId != null) {
+      setState(() {
+        final index = _messages.indexWhere((m) => m.id == messageId);
+        if (index != -1) {
+          final message = _messages[index];
+          final hasExcalidrawUrl =
+              _extractExcalidrawUrl(message.content) != null;
+          _messages[index] = _copyMessageWithExcalidrawState(
+            message,
+            isExcalidrawLink: hasExcalidrawUrl,
+            excalidrawPinnedAt: null,
+          );
+        }
+        // Optimistically drop it locally for instant feedback.
+        _pinnedExcalidrawLinks.removeWhere(
+          (l) => (l['id'] as int?) == messageId,
         );
-        _messages[index] = updatedMessage;
-      }
-      // Remove from pinned links
-      _pinnedExcalidrawLinks.removeWhere((l) => (l['id'] as int?) == messageId);
-    });
+      });
+    }
+
+    // Reconcile the pinned-links section from the server (see _handleExcalidrawPinned).
+    unawaited(_loadPinnedExcalidrawLinks());
   }
 
   /// Safely parse any numeric type (int, double, String) to int.
