@@ -150,7 +150,7 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
           context,
           icon: Icons.task_alt,
           count: taskCount,
-          color: const Color(0xFFF59E0B),
+          color: const Color(0xFF14B8A6), // teal — matches web Tasks button
           onPressed: onShowTasks,
           tooltip: 'Tasks',
           scale: scale,
@@ -159,7 +159,7 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
           context,
           icon: Icons.draw_outlined,
           count: excalidrawCount,
-          color: const Color(0xFF7C3AED),
+          color: const Color(0xFFF97316), // orange — matches web Excalidraw button
           onPressed: onShowExcalidraw,
           tooltip: 'Excalidraw',
           scale: scale,
@@ -298,7 +298,9 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
       clipBehavior: Clip.none,
       children: [
         IconButton(
-          icon: Icon(icon, color: Colors.white, size: 24 * scale),
+          // Tint the glyph with its accent color so Tasks (teal) / Excalidraw
+          // (orange) match the web header buttons.
+          icon: Icon(icon, color: color, size: 24 * scale),
           onPressed: onPressed,
           tooltip: tooltip,
         ),
@@ -313,7 +315,8 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
                 minHeight: 16 * scale,
               ),
               decoration: BoxDecoration(
-                color: color,
+                // Red count badge to match the web header badges.
+                color: const Color(0xFFDC2626),
                 shape: BoxShape.circle,
                 border: Border.all(
                   color: Colors.black.withValues(alpha: 0.3),

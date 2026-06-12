@@ -4988,16 +4988,13 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       _buildCompressedActionChip(
         label: _autoTranslate ? 'Translate On' : 'Translate Off',
-        backgroundColor: _autoTranslate
-            ? const Color(0xFF059669)
-            : const Color(0xFF0891B2),
+        backgroundColor: const Color(0xFFC026D3), // web Auto-Translate (darkened for white text)
         onPressed: _toggleAutoTranslate,
       ),
       _buildCompressedActionChip(
         label: _stampEnabled ? 'Stamp On' : 'Stamp Off',
-        backgroundColor: _stampEnabled
-            ? const Color(0xFF0F766E)
-            : const Color(0xFF0E7490),
+        backgroundColor: const Color(0xFF0C95D4), // web Stamp Name
+
         onPressed: () {
           setState(() {
             _stampEnabled = !_stampEnabled;
@@ -5017,7 +5014,7 @@ class _ChatScreenState extends State<ChatScreen>
       // Row 2 extras (after username + paste): Change Color, [Reset Color], Export Chat, Show Timestamps, [Delete Messages]
       _buildCompressedActionChip(
         label: 'Change Color',
-        backgroundColor: const Color(0xFFA855F7),
+        backgroundColor: const Color(0xFF9333EA), // Change Color (darkened for white text)
         onPressed: _changeColor,
       ),
       if (_showResetButton)
@@ -5028,20 +5025,19 @@ class _ChatScreenState extends State<ChatScreen>
         ),
       _buildCompressedActionChip(
         label: 'Export Chat',
-        backgroundColor: const Color(0xFF475569),
+        backgroundColor: const Color(0xFF6B7280), // web Export Chat (gray-500)
         onPressed: _exportChat,
       ),
       _buildCompressedActionChip(
         label: _showTimestamps ? 'Hide\nTimestamps' : 'Show\nTimestamps',
-        backgroundColor: _showTimestamps
-            ? const Color(0xFF4338CA)
-            : const Color(0xFF6366F1),
+        backgroundColor: const Color(0xFF4F46E5), // web Show Timestamps (darkened for white text)
+
         onPressed: _toggleTimestamps,
       ),
       if (_currentUserIsAdmin)
         _buildCompressedActionChip(
           label: 'Delete Messages',
-          backgroundColor: const Color(0xFFDC2626),
+          backgroundColor: const Color(0xFF6D28D9), // web Delete (violet-700)
           onPressed: _adminDeleteAllMessages,
         ),
     ];
@@ -5115,17 +5111,17 @@ class _ChatScreenState extends State<ChatScreen>
     final bottomRow = <Widget>[
       _buildCompressedActionChip(
         label: widget.otherUser.firstName,
-        backgroundColor: const Color(0xFF0D9488),
+        backgroundColor: const Color(0xFF0F766E), // web partner-name button
         onPressed: _insertOtherUserFirstName,
       ),
       _buildCompressedActionChip(
         label: 'Paste',
-        backgroundColor: const Color(0xFF7C3AED),
+        backgroundColor: const Color(0xFF1D4ED8), // web Paste (blue-700)
         onPressed: _pasteFromClipboard,
       ),
       _buildCompressedActionChip(
         label: 'Common\nPhrases',
-        backgroundColor: const Color(0xFF0F766E),
+        backgroundColor: const Color(0xFFEC4899), // web Common Phrases (pink-500)
         onPressed: _showCommonPhrasesModal,
       ),
       ...allButtons.skip(itemsPerRow),
@@ -6167,7 +6163,7 @@ class _ChatScreenState extends State<ChatScreen>
                       ? const Color(0xFF7C3AED)
                       : isUploading
                       ? const Color(0xFF7C3AED)
-                      : const Color(0xFF10B981),
+                      : const Color(0xFF16A34A), // web Send File (darkened green-600 for white text)
                   onPressed: _isActivelyUploading || _pendingFile != null
                       ? _reopenFileUploadModal
                       : _pendingMediaItems != null &&
@@ -7064,7 +7060,7 @@ class _ChatScreenState extends State<ChatScreen>
     final actionButtons = <Widget>[
       _buildActionSheetButton(
         label: 'Change Color',
-        backgroundColor: const Color(0xFFA855F7),
+        backgroundColor: const Color(0xFF9333EA), // Change Color (darkened for white text)
         onPressed: () => _runActionSheetAction(() {
           _changeColor();
         }),
@@ -7082,7 +7078,7 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       _buildActionSheetButton(
         label: 'Send File',
-        backgroundColor: const Color(0xFF10B981),
+        backgroundColor: const Color(0xFF16A34A), // web Send File (darkened green-600 for white text)
         onPressed: () => _runActionSheetAction(_pickFile),
       ),
       if (Platform.isAndroid)
@@ -7105,29 +7101,26 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       _buildActionSheetButton(
         label: _autoTranslate ? 'Translate On' : 'Translate Off',
-        backgroundColor: _autoTranslate
-            ? const Color(0xFF059669)
-            : const Color(0xFF0891B2),
+        backgroundColor: const Color(0xFFC026D3), // web Auto-Translate (darkened for white text)
         onPressed: () => _runActionSheetAction(_toggleAutoTranslate),
       ),
       _buildActionSheetButton(
         label: _showTimestamps ? 'Hide Timestamps' : 'Show Timestamps',
-        backgroundColor: _showTimestamps
-            ? const Color(0xFF4338CA)
-            : const Color(0xFF6366F1),
+        backgroundColor: const Color(0xFF4F46E5), // web Show Timestamps (darkened for white text)
+
         onPressed: () {
           _toggleTimestamps();
         },
       ),
       _buildActionSheetButton(
         label: 'Export Chat',
-        backgroundColor: const Color(0xFF475569),
+        backgroundColor: const Color(0xFF6B7280), // web Export Chat (gray-500)
         onPressed: () => _runActionSheetAction(_exportChat),
       ),
       if (_currentUserIsAdmin)
         _buildActionSheetButton(
           label: 'Delete Messages',
-          backgroundColor: const Color(0xFFDC2626),
+          backgroundColor: const Color(0xFF6D28D9), // web Delete (violet-700)
           onPressed: () => _runActionSheetAction(_adminDeleteAllMessages),
         ),
     ];
@@ -10935,7 +10928,9 @@ class _ChatScreenState extends State<ChatScreen>
       backgroundColor: const Color(0xFF2C2C2C),
       appBar: ChatHeader(
         otherUser: widget.otherUser,
-        headerColor: _headerColor,
+        // Fixed violet header to match the web (bg-violet-900), independent of
+        // the chat color-change feature (which still themes the composer below).
+        headerColor: const Color(0xFF4C1D95),
         isSelfChat: _isSelfChat,
         callInProgressOnOtherDevice: _callInProgressOnOtherDevice,
         partnerStatus: _getEffectivePartnerStatus(),
@@ -13849,8 +13844,9 @@ class _ChatScreenState extends State<ChatScreen>
                       Container(
                         padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
                         decoration: const BoxDecoration(
+                          // Orange gradient to match the web Excalidraw modal.
                           gradient: LinearGradient(
-                            colors: [Color(0xFF2A2147), Color(0xFF1C1734)],
+                            colors: [Color(0xFFF97316), Color(0xFFEA580C)],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
@@ -13864,19 +13860,15 @@ class _ChatScreenState extends State<ChatScreen>
                               width: 34,
                               height: 34,
                               decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF7C3AED,
-                                ).withValues(alpha: 0.22),
+                                color: Colors.white.withValues(alpha: 0.2),
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                  color: const Color(
-                                    0xFF7C3AED,
-                                  ).withValues(alpha: 0.65),
+                                  color: Colors.white.withValues(alpha: 0.5),
                                 ),
                               ),
                               child: const Icon(
                                 Icons.draw_outlined,
-                                color: Color(0xFFC4B5FD),
+                                color: Colors.white,
                                 size: 19,
                               ),
                             ),
@@ -13898,20 +13890,16 @@ class _ChatScreenState extends State<ChatScreen>
                                 vertical: 5,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFF7C3AED,
-                                ).withValues(alpha: 0.22),
+                                color: Colors.white.withValues(alpha: 0.2),
                                 borderRadius: BorderRadius.circular(999),
                                 border: Border.all(
-                                  color: const Color(
-                                    0xFF7C3AED,
-                                  ).withValues(alpha: 0.6),
+                                  color: Colors.white.withValues(alpha: 0.5),
                                 ),
                               ),
                               child: Text(
                                 '${excalidrawLinks.length} pinned',
                                 style: const TextStyle(
-                                  color: Color(0xFFE9D5FF),
+                                  color: Colors.white,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -13956,13 +13944,13 @@ class _ChatScreenState extends State<ChatScreen>
                                         height: 70,
                                         decoration: BoxDecoration(
                                           color: const Color(
-                                            0xFF7C3AED,
-                                          ).withValues(alpha: 0.14),
+                                            0xFFF97316,
+                                          ).withValues(alpha: 0.16),
                                           shape: BoxShape.circle,
                                         ),
                                         child: const Icon(
                                           Icons.draw,
-                                          color: Color(0xFFC4B5FD),
+                                          color: Color(0xFFFB923C),
                                           size: 34,
                                         ),
                                       ),
@@ -13988,15 +13976,8 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                 ),
                               )
-                            : GridView.builder(
-                                padding: const EdgeInsets.all(8),
-                                gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: 2,
-                                      crossAxisSpacing: 6,
-                                      mainAxisSpacing: 6,
-                                      childAspectRatio: 1.2,
-                                    ),
+                            : ListView.builder(
+                                padding: const EdgeInsets.all(10),
                                 itemCount: excalidrawLinks.length,
                                 itemBuilder: (context, index) {
                                   final link = excalidrawLinks[index];
@@ -14009,108 +13990,185 @@ class _ChatScreenState extends State<ChatScreen>
                                       (extractedUrl ?? content).trim().isEmpty
                                       ? 'Excalidraw link'
                                       : (extractedUrl ?? content).trim();
+                                  final openLink = () {
+                                    Navigator.pop(context);
+                                    if (extractedUrl != null) {
+                                      _openMessageUrl(extractedUrl);
+                                    } else {
+                                      _openExcalidrawLink(content);
+                                    }
+                                  };
                                   return Container(
+                                    margin: const EdgeInsets.only(bottom: 10),
                                     decoration: BoxDecoration(
                                       color: const Color(0xFF252542),
-                                      borderRadius: BorderRadius.circular(10),
+                                      borderRadius: BorderRadius.circular(12),
                                       border: Border.all(
                                         color: const Color(
-                                          0xFF7C3AED,
-                                        ).withValues(alpha: 0.5),
+                                          0xFFF97316,
+                                        ).withValues(alpha: 0.45),
                                       ),
                                     ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Padding(
-                                          padding: const EdgeInsets.fromLTRB(
-                                            8,
-                                            6,
-                                            6,
-                                            4,
-                                          ),
-                                          child: Row(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(12),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          // Title row
+                                          Row(
                                             children: [
-                                              InkWell(
-                                                onTap: () async {
-                                                  Navigator.pop(context);
-                                                  await _unpinExcalidrawFromModal(
-                                                    link,
-                                                  );
-                                                },
-                                                child: const Icon(
-                                                  Icons.push_pin,
-                                                  color: Color(0xFFA78BFA),
-                                                  size: 18,
-                                                ),
+                                              const Icon(
+                                                Icons.draw_outlined,
+                                                color: Color(0xFFFB923C),
+                                                size: 18,
                                               ),
-                                              const Spacer(),
-                                              InkWell(
-                                                onTap: () {
-                                                  Navigator.pop(context);
-                                                  if (extractedUrl != null) {
-                                                    _openMessageUrl(
-                                                      extractedUrl,
-                                                    );
-                                                  } else {
-                                                    _openExcalidrawLink(
-                                                      content,
-                                                    );
-                                                  }
-                                                },
-                                                child: const Icon(
-                                                  Icons.open_in_new,
-                                                  color: Color(0xFF60A5FA),
-                                                  size: 16,
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                'Link #${index + 1}',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.w700,
                                                 ),
                                               ),
                                             ],
                                           ),
-                                        ),
-                                        Expanded(
-                                          child: Padding(
-                                            padding: const EdgeInsets.fromLTRB(
-                                              8,
-                                              0,
-                                              8,
-                                              6,
-                                            ),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Expanded(
-                                                  child: Text(
-                                                    displayText,
-                                                    style: TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 11,
-                                                      fontWeight:
-                                                          FontWeight.w500,
-                                                      height: 1.3,
-                                                    ),
-                                                    maxLines: 4,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                  ),
+                                          const SizedBox(height: 8),
+                                          // Full URL (tap to open, wraps)
+                                          GestureDetector(
+                                            onTap: openLink,
+                                            child: Text(
+                                              displayText,
+                                              style: const TextStyle(
+                                                color: Color(0xFF93C5FD),
+                                                fontSize: 14,
+                                                height: 1.4,
+                                                decoration:
+                                                    TextDecoration.underline,
+                                                decorationColor: Color(
+                                                  0xFF93C5FD,
                                                 ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  _formatPinnedAt(
-                                                    link['excalidraw_pinned_at']
-                                                        as String?,
-                                                  ),
-                                                  style: TextStyle(
-                                                    color: Colors.grey[500],
-                                                    fontSize: 9,
-                                                  ),
-                                                ),
-                                              ],
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      ],
+                                          const SizedBox(height: 8),
+                                          // Colored full timestamp (wraps)
+                                          Text(
+                                            _formatPinnedAt(
+                                              link['excalidraw_pinned_at']
+                                                  as String?,
+                                            ),
+                                            style: const TextStyle(
+                                              color: Color(0xFFFBBF24),
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                              height: 1.3,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 12),
+                                          // Action buttons
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: InkWell(
+                                                  onTap: openLink,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  child: Container(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          vertical: 9,
+                                                        ),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(
+                                                        0xFF2563EB,
+                                                      ),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            8,
+                                                          ),
+                                                    ),
+                                                    child: const Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .center,
+                                                      children: [
+                                                        Icon(
+                                                          Icons.open_in_new,
+                                                          color: Colors.white,
+                                                          size: 16,
+                                                        ),
+                                                        SizedBox(width: 6),
+                                                        Text(
+                                                          'Open',
+                                                          style: TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 14,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: InkWell(
+                                                  onTap: () async {
+                                                    Navigator.pop(context);
+                                                    await _unpinExcalidrawFromModal(
+                                                      link,
+                                                    );
+                                                  },
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                  child: Container(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          vertical: 9,
+                                                        ),
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(
+                                                        0xFFDC2626,
+                                                      ),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            8,
+                                                          ),
+                                                    ),
+                                                    child: const Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .center,
+                                                      children: [
+                                                        Icon(
+                                                          Icons
+                                                              .push_pin_outlined,
+                                                          color: Colors.white,
+                                                          size: 16,
+                                                        ),
+                                                        SizedBox(width: 6),
+                                                        Text(
+                                                          'Unpin',
+                                                          style: TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 14,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   );
                                 },
@@ -14127,27 +14185,35 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Full timestamp matching the web Excalidraw modal, e.g.
+  /// "2026-06-12 23:46:50 GMT+8 - Friday, June 12, 2026".
   String _formatPinnedAt(String? pinnedAt) {
     if (pinnedAt == null) return '';
     try {
       final dt = DateTime.parse(pinnedAt).toLocal();
-      final now = DateTime.now();
-      final diff = now.difference(dt);
-      final hour = dt.hour;
-      final min = dt.minute.toString().padLeft(2, '0');
-      final period = hour >= 12 ? 'PM' : 'AM';
-      final h = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-      final timeStr = '$h:$min $period';
+      String two(int n) => n.toString().padLeft(2, '0');
 
-      if (diff.inDays == 0) {
-        return timeStr;
-      } else if (diff.inDays == 1) {
-        return 'Yesterday $timeStr';
-      } else if (diff.inDays < 7) {
-        return '${diff.inDays}d ago $timeStr';
-      } else {
-        return '${dt.month}/${dt.day}/${dt.year}';
-      }
+      final dateStr = '${dt.year}-${two(dt.month)}-${two(dt.day)}';
+      final timeStr = '${two(dt.hour)}:${two(dt.minute)}:${two(dt.second)}';
+
+      final off = dt.timeZoneOffset;
+      final sign = off.isNegative ? '-' : '+';
+      final offH = off.inHours.abs();
+      final offM = off.inMinutes.abs() % 60;
+      final gmt = 'GMT$sign$offH${offM != 0 ? ':${two(offM)}' : ''}';
+
+      const weekdays = [
+        'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+        'Friday', 'Saturday', 'Sunday',
+      ];
+      const months = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+      ];
+      final longStr =
+          '${weekdays[dt.weekday - 1]}, ${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+
+      return '$dateStr $timeStr $gmt - $longStr';
     } catch (_) {
       return '';
     }

@@ -94,6 +94,54 @@ class LobbyUser {
     };
   }
 
+  /// Returns a copy with the given fields replaced. Used by the lobby to update
+  /// a contact's preview / unread / presence without rebuilding every field.
+  LobbyUser copyWith({
+    int? id,
+    String? username,
+    String? email,
+    String? firstName,
+    String? lastName,
+    String? fullName,
+    String? avatarUrl,
+    String? bio,
+    String? status,
+    String? statusMessage,
+    String? lastSeen,
+    bool? isOnline,
+    bool? isAdmin,
+    String? timezone,
+    int? unreadCount,
+    bool? isContact,
+    bool? isAdminUser,
+    String? lastMessage,
+    String? lastMessageTime,
+    bool? lastMessageIsFromMe,
+  }) {
+    return LobbyUser(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      email: email ?? this.email,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
+      fullName: fullName ?? this.fullName,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      bio: bio ?? this.bio,
+      status: status ?? this.status,
+      statusMessage: statusMessage ?? this.statusMessage,
+      lastSeen: lastSeen ?? this.lastSeen,
+      isOnline: isOnline ?? this.isOnline,
+      isAdmin: isAdmin ?? this.isAdmin,
+      timezone: timezone ?? this.timezone,
+      unreadCount: unreadCount ?? this.unreadCount,
+      isContact: isContact ?? this.isContact,
+      isAdminUser: isAdminUser ?? this.isAdminUser,
+      lastMessage: lastMessage ?? this.lastMessage,
+      lastMessageTime: lastMessageTime ?? this.lastMessageTime,
+      lastMessageIsFromMe: lastMessageIsFromMe ?? this.lastMessageIsFromMe,
+    );
+  }
+
   /// Get initials for avatar (first letter of first and last name)
   String get initials {
     final first = firstName.isNotEmpty ? firstName[0].toUpperCase() : '';

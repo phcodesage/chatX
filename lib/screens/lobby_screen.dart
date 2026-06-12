@@ -49,7 +49,8 @@ class LobbyScreen extends StatefulWidget {
 
 enum LobbyQuickFilter { all, online, groups, alarmX }
 
-class _LobbyScreenState extends State<LobbyScreen> {
+class _LobbyScreenState extends State<LobbyScreen>
+    with WidgetsBindingObserver {
   List<LobbyUser> _lobbyUsers = [];
   List<LobbyUser> _filteredUsers = [];
   List<Group> _groups = []; // Group chats
@@ -61,6 +62,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final SocketService _socketService = SocketService();
   Timer? _lastSeenRefreshTimer;
   Timer? _searchDebounceTimer;
+  // Throttles automatic lobby re-syncs (app resume / socket reconnect) so a
+  // resume that also triggers a reconnect doesn't fire two back-to-back fetches.
+  DateTime? _lastAutoResyncAt;
   StreamSubscription<List<SharedMediaItem>>? _shareIntentSubscription;
   StreamSubscription<int>? _shortcutLaunchSubscription;
   StreamSubscription<RemoteMessage>? _fcmForegroundSubscription;
@@ -105,6 +109,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadLobby();
     _loadAiSessionPresence();
     _loadAdminStatus();
@@ -132,6 +137,33 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
 
     _startPendingNotificationRetryWindow();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // When the app returns to the foreground, messages may have arrived via FCM
+    // while we were backgrounded (no live socket events). Re-fetch so the
+    // contact list reflects the latest-message order without a manual refresh,
+    // matching the web app.
+    if (state == AppLifecycleState.resumed) {
+      _resyncLobbyOrder('app resumed');
+    }
+  }
+
+  /// Re-fetches the lobby from the server so tiles re-sort by most recent
+  /// activity. Throttled so a foreground resume that also triggers a socket
+  /// reconnect doesn't fire two fetches in quick succession.
+  void _resyncLobbyOrder(String reason) {
+    if (!mounted) return;
+    final now = DateTime.now();
+    if (_lastAutoResyncAt != null &&
+        now.difference(_lastAutoResyncAt!) < const Duration(seconds: 3)) {
+      return;
+    }
+    _lastAutoResyncAt = now;
+    debugPrint('🔄 Re-syncing lobby order ($reason)');
+    _loadLobby(useCacheFirst: false);
   }
 
   void _handleBgUpdateStateChange() {
@@ -424,12 +456,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void _setupRealtimeListeners() {
     const key = 'lobby';
 
-    // Listen for doorbell rings (only incoming — ignore self-sent for cross-device sync)
+    // Listen for doorbell rings. The backend echoes the event to the sender's
+    // room too, so self-sent notifications update the recipient's tile as an
+    // outgoing "You sent a notification" — matching the web app.
     _socketService.addListener('doorbellRing', key, (
       Map<String, dynamic> data,
     ) {
-      final senderId = data['sender_id'] as int?;
-      if (senderId == _socketService.currentUserId) return;
       _handleDoorbellRing(data);
     });
 
@@ -542,6 +574,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // This prevents UI flickering and allows smooth presence updates.
     _socketService.addListener('reconnected', key, () {
       debugPrint('🔄 Backend reconnected - waiting for presence snapshot');
+      // Messages may have arrived while the socket was down; re-fetch so the
+      // contact list re-sorts by most recent activity automatically.
+      _resyncLobbyOrder('socket reconnected');
     });
 
     // Listen for group events
@@ -1407,46 +1442,46 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _activeIncomingCallRoomId = null;
   }
 
-  void _handleDoorbellRing(Map<String, dynamic> data) {
-    // Doorbell ring sound is already played via the socket service
-    // No modal needed - the notification sound is sufficient
-    if (_isDuplicateRealtimeEvent(data)) return;
-
+  /// Applies a 1:1 realtime conversation event (message / file / voice /
+  /// doorbell) to the contact list: updates the partner tile's preview +
+  /// timestamp and bumps it to the top — for BOTH incoming and outgoing
+  /// directions, mirroring the web app.
+  ///
+  /// The backend echoes these events to the sender's own room for cross-device
+  /// sync, so an event where `sender_id == me` is an OUTGOING action and must
+  /// update the recipient's tile (not our own), shown as "You: …".
+  void _applyConversationActivity(
+    Map<String, dynamic> data, {
+    required String preview,
+  }) {
     final senderId = _toInt(data['sender_id']);
     if (senderId == null) return;
 
-    // Don't increment unread if user is currently viewing this conversation
-    final isViewingThisChat = _currentlyViewingChatUserId == senderId;
+    final myId = _socketService.currentUserId;
+    final isFromMe = myId != null && senderId == myId;
+    final targetId = isFromMe
+        ? (_toInt(data['recipient_id']) ?? _toInt(data['receiver_id']))
+        : senderId;
+    if (targetId == null) return;
 
-    final createdAt = _extractEventTimestamp(data) ?? DateTime.now().toIso8601String();
-    const doorbellPreview = 'sent a notification';
+    final createdAt =
+        _extractEventTimestamp(data) ?? DateTime.now().toIso8601String();
+    // Only incoming activity affects the unread badge, and not while we're
+    // already viewing that conversation.
+    final isViewingThisChat = _currentlyViewingChatUserId == targetId;
 
     setState(() {
-      final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
+      final userIndex = _lobbyUsers.indexWhere((u) => u.id == targetId);
       if (userIndex == -1) return;
 
       final user = _lobbyUsers[userIndex];
-      final updatedUser = LobbyUser(
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        fullName: user.fullName,
-        avatarUrl: user.avatarUrl,
-        bio: user.bio,
-        status: user.status,
-        statusMessage: user.statusMessage,
-        lastSeen: user.lastSeen,
-        isOnline: user.isOnline,
-        isAdmin: user.isAdmin,
-        timezone: user.timezone,
-        unreadCount: isViewingThisChat ? 0 : user.unreadCount + 1,
-        isContact: user.isContact,
-        isAdminUser: user.isAdminUser,
-        lastMessage: doorbellPreview,
+      final updatedUser = user.copyWith(
+        unreadCount: isFromMe
+            ? user.unreadCount
+            : (isViewingThisChat ? 0 : user.unreadCount + 1),
+        lastMessage: preview,
         lastMessageTime: createdAt,
-        lastMessageIsFromMe: false,
+        lastMessageIsFromMe: isFromMe,
       );
 
       _lobbyUsers[userIndex] = updatedUser;
@@ -1454,8 +1489,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
       _lobbyUsers.insert(0, updatedUser);
       _updateFilteredLists();
     });
+  }
 
-    debugPrint('Doorbell ring received from ${data['sender_name']}');
+  void _handleDoorbellRing(Map<String, dynamic> data) {
+    // Doorbell ring sound is already played via the socket service
+    // No modal needed - the notification sound is sufficient
+    if (_isDuplicateRealtimeEvent(data)) return;
+
+    // Matches the persisted doorbell message content so realtime and a server
+    // refresh show the same preview text.
+    _applyConversationActivity(data, preview: 'Sent a Notification!');
+
+    debugPrint('Doorbell ring from ${data['sender_name']}');
   }
 
   bool _isDuplicateRealtimeEvent(Map<String, dynamic> data) {
@@ -1675,101 +1720,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void _handleFileMessage(Map<String, dynamic> data) {
     if (_isDuplicateRealtimeEvent(data)) return;
 
-    final senderId = _toInt(data['sender_id']);
-    if (senderId == null) return;
     final fileName = data['file_name'] as String?;
-    final createdAt = _extractEventTimestamp(data);
-
-    // Don't increment unread if user is currently viewing this conversation
-    final isViewingThisChat = _currentlyViewingChatUserId == senderId;
-
-    // Show file name as last message preview
     final filePreview = fileName != null ? "📎 $fileName" : "📎 File";
-
-    setState(() {
-      final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
-      if (userIndex != -1) {
-        final user = _lobbyUsers[userIndex];
-        final updatedUser = LobbyUser(
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          fullName: user.fullName,
-          avatarUrl: user.avatarUrl,
-          bio: user.bio,
-          status: user.status,
-          statusMessage: user.statusMessage,
-          lastSeen: user.lastSeen,
-          isOnline: user.isOnline,
-          isAdmin: user.isAdmin,
-          timezone: user.timezone,
-          unreadCount: isViewingThisChat ? 0 : user.unreadCount + 1,
-          isContact: user.isContact,
-          isAdminUser: user.isAdminUser,
-          lastMessage: filePreview,
-          lastMessageTime: createdAt ?? user.lastMessageTime,
-          lastMessageIsFromMe: false,
-        );
-
-        _lobbyUsers[userIndex] = updatedUser;
-        _lobbyUsers.removeAt(userIndex);
-        _lobbyUsers.insert(0, updatedUser);
-        _updateFilteredLists();
-      }
-    });
+    _applyConversationActivity(data, preview: filePreview);
   }
 
   void _handleVoiceMessage(Map<String, dynamic> data) {
     if (_isDuplicateRealtimeEvent(data)) return;
 
-    final senderId = _toInt(data['sender_id']);
-    if (senderId == null) return;
     final duration = data['duration'] as int?;
-    final createdAt = _extractEventTimestamp(data);
-
-    // Don't increment unread if user is currently viewing this conversation
-    final isViewingThisChat = _currentlyViewingChatUserId == senderId;
-
-    // Show voice message with duration as last message preview
-    final voicePreview = duration != null
-        ? "🎤 Voice ${duration}s"
-        : "🎤 Voice message";
-
-    setState(() {
-      final userIndex = _lobbyUsers.indexWhere((u) => u.id == senderId);
-      if (userIndex != -1) {
-        final user = _lobbyUsers[userIndex];
-        final updatedUser = LobbyUser(
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          fullName: user.fullName,
-          avatarUrl: user.avatarUrl,
-          bio: user.bio,
-          status: user.status,
-          statusMessage: user.statusMessage,
-          lastSeen: user.lastSeen,
-          isOnline: user.isOnline,
-          isAdmin: user.isAdmin,
-          timezone: user.timezone,
-          unreadCount: isViewingThisChat ? 0 : user.unreadCount + 1,
-          isContact: user.isContact,
-          isAdminUser: user.isAdminUser,
-          lastMessage: voicePreview,
-          lastMessageTime: createdAt ?? user.lastMessageTime,
-          lastMessageIsFromMe: false,
-        );
-
-        _lobbyUsers[userIndex] = updatedUser;
-        _lobbyUsers.removeAt(userIndex);
-        _lobbyUsers.insert(0, updatedUser);
-        _updateFilteredLists();
-      }
-    });
+    final voicePreview =
+        duration != null ? "🎤 Voice ${duration}s" : "🎤 Voice message";
+    _applyConversationActivity(data, preview: voicePreview);
   }
 
   void _updateUserPresence(Map<String, dynamic> data) {
@@ -1860,6 +1822,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.removeListener(_onSearchQueryChanged);
     _searchDebounceTimer?.cancel();
     _searchController.dispose();
