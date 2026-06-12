@@ -5096,7 +5096,10 @@ class _ChatScreenState extends State<ChatScreen>
     // "is" → "this Amol is", reusing the existing space, adding one after.)
     final spaceBefore =
         (before.isEmpty || RegExp(r'\s$').hasMatch(before)) ? '' : ' ';
-    final spaceAfter = RegExp(r'^\s').hasMatch(after) ? '' : ' ';
+    // No trailing space when inserting at the very end; otherwise add one
+    // unless the following text already starts with whitespace.
+    final spaceAfter =
+        (after.isEmpty || RegExp(r'^\s').hasMatch(after)) ? '' : ' ';
 
     final inserted = '$spaceBefore$firstName$spaceAfter';
     final newText = '$before$inserted$after';
