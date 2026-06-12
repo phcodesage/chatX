@@ -358,8 +358,12 @@ class _ComposerInput extends StatelessWidget {
               keyboardType: TextInputType.multiline,
               textCapitalization: TextCapitalization.sentences,
               enableInteractiveSelection: true,
-              autocorrect: true,
-              enableSuggestions: true,
+              // Keep the IME from re-composing/selecting the word you tap into
+              // (which made it replace the word instead of inserting). The app
+              // runs its own auto-correction (_applyAutoCorrection), so the
+              // keyboard's is redundant here.
+              autocorrect: false,
+              enableSuggestions: false,
               stylusHandwritingEnabled: false,
             ),
           ),

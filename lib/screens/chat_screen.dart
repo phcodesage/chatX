@@ -5077,9 +5077,15 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _insertOtherUserFirstName() {
+    // Capitalize the first letter, and collapse any trailing spaces the user
+    // already typed so we never end up with double spaces before the name.
+    final raw = widget.otherUser.firstName.trim();
+    if (raw.isEmpty) return;
+    final firstName = raw[0].toUpperCase() + raw.substring(1);
+
     final current = _messageController.text;
-    final firstName = widget.otherUser.firstName;
-    final newText = current.isEmpty ? '$firstName ' : '$current $firstName ';
+    final trimmed = current.replaceFirst(RegExp(r'\s+$'), '');
+    final newText = trimmed.isEmpty ? '$firstName ' : '$trimmed $firstName ';
     _messageController.value = TextEditingValue(
       text: newText,
       selection: TextSelection.collapsed(offset: newText.length),
