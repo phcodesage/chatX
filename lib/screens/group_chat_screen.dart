@@ -28,6 +28,7 @@ import '../services/firebase_messaging_service.dart';
 import '../widgets/reaction_picker.dart';
 import '../widgets/color_picker_modal.dart';
 import '../widgets/cached_image.dart';
+import '../widgets/file_type_icon.dart';
 
 /// Group chat screen for messaging in a group
 class GroupChatScreen extends StatefulWidget {
@@ -2071,62 +2072,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           ],
           // Generic file message (not image, video, or audio)
-          if (isGenericFile) ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.attach_file,
-                        color: Colors.white70,
-                        size: 24,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              message.fileName ?? 'File',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              message.fileUrl != null
-                                  ? ((message.fileSize != null && message.fileSize! > 0)
-                                        ? _formatFileSize(message.fileSize!)
-                                        : 'Unknown size')
-                                  : 'File not available',
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (message.fileUrl != null && isSentByMe)
-                        IconButton(
-                          onPressed: () => _openFile(message.fileUrl!),
-                          icon: const Icon(
-                            Icons.open_in_new,
-                            color: Colors.white70,
-                            size: 20,
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
+          if (isGenericFile) _buildGroupGenericFile(message),
           // Text content (if not just filename and not audio)
           if ((!isMedia &&
                   !isAudio &&
@@ -2370,6 +2316,64 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
+  // Generic (non-media) file bubble content: web-matching document icon, name,
+  // "EXT · size". The open-on-web button was intentionally removed (Save remains).
+  Widget _buildGroupGenericFile(GroupMessage message) {
+    final String fileName =
+        (message.fileName != null && message.fileName!.isNotEmpty)
+            ? message.fileName!
+            : (message.fileUrl != null
+                ? (Uri.tryParse(message.fileUrl!)
+                        ?.pathSegments
+                        .last
+                        .replaceAll('%20', ' ') ??
+                    'File')
+                : 'File');
+    final String ext = FileTypeIcon.extensionOf(fileName);
+    final String sizeStr = (message.fileSize != null && message.fileSize! > 0)
+        ? _formatFileSize(message.fileSize!)
+        : (message.fileUrl != null ? 'Unknown size' : 'File not available');
+    final String subtitle =
+        ext.isNotEmpty ? '${ext.toUpperCase()} · $sizeStr' : sizeStr;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          FileTypeIcon(fileName: fileName),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  fileName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 12,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Resolve a directory to save downloaded files
   Future<Directory> _resolveDownloadDirectory() async {
     if (Platform.isAndroid) {
@@ -2488,20 +2492,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   /// Open file URL (for downloads or external viewing)
-  void _openFile(String fileUrl) {
-    _showTopSnackBar(
-      SnackBar(
-        content: Text('File URL: $fileUrl'),
-        action: SnackBarAction(
-          label: 'Copy',
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: fileUrl));
-          },
-        ),
-      ),
-    );
-  }
-
   /// Open full screen media viewer
   void _openMediaViewer(GroupMessage message) {
     if (message.fileUrl == null) return;

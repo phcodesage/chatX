@@ -10,6 +10,7 @@ import '../../models/link_preview.dart';
 import '../../models/message.dart';
 import '../../services/link_preview_service.dart';
 import '../../widgets/cached_image.dart';
+import '../../widgets/file_type_icon.dart';
 import '../../widgets/link_preview_card.dart';
 import '../../widgets/youtube_preview_card.dart';
 import 'audio_message_player.dart';
@@ -594,66 +595,55 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
     Color taskAccentColor,
     double scale,
   ) {
+    final String fileName = (message.fileName?.isNotEmpty ?? false)
+        ? message.fileName!
+        : (message.fileUrl != null
+            ? (Uri.tryParse(message.fileUrl!)
+                    ?.pathSegments
+                    .last
+                    .replaceAll('%20', ' ') ??
+                'File')
+            : 'File');
+    final String ext = FileTypeIcon.extensionOf(fileName);
+    final String sizeStr = (message.fileSize != null && message.fileSize! > 0)
+        ? widget.formatFileSize(message.fileSize!)
+        : (message.fileUrl != null ? 'Unknown size' : 'File not available');
+    final String subtitle =
+        ext.isNotEmpty ? '${ext.toUpperCase()} · $sizeStr' : sizeStr;
+
     return Container(
-      padding: EdgeInsets.all(16 * scale),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      padding: EdgeInsets.all(14 * scale),
+      child: Row(
         children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.attach_file,
-                color: Colors.white70,
-                size: 24,
-              ),
-              SizedBox(width: 12 * scale),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      (message.fileName?.isNotEmpty ?? false)
-                          ? message.fileName!
-                          : (message.fileUrl != null
-                              ? Uri.tryParse(message.fileUrl!)
-                                      ?.pathSegments
-                                      .last
-                                      .replaceAll('%20', ' ') ??
-                                  'File'
-                              : 'File'),
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12 * scale,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    SizedBox(height: 4 * scale),
-                    Text(
-                      message.fileUrl != null
-                          ? ((message.fileSize != null && message.fileSize! > 0)
-                            ? widget.formatFileSize(message.fileSize!)
-                              : 'Unknown size')
-                          : 'File not available',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
-                        fontSize: 12 * scale,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (message.fileUrl != null && widget.isSentByMe)
-                IconButton(
-                  onPressed: () => widget.onOpenMessageUrl(message.fileUrl!),
-                  icon: const Icon(
-                    Icons.open_in_new,
-                    color: Colors.white70,
-                    size: 20,
+          // Web-matching document icon with the extension baked in.
+          FileTypeIcon(fileName: fileName, scale: scale),
+          SizedBox(width: 12 * scale),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  fileName,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13 * scale,
+                    fontWeight: FontWeight.w600,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-            ],
+                SizedBox(height: 3 * scale),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 12 * scale,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ],
       ),
