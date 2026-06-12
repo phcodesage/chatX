@@ -2367,6 +2367,131 @@ class _LobbyScreenState extends State<LobbyScreen>
     return avatarColors[index % avatarColors.length];
   }
 
+  /// The current user's own entry in the lobby (the self/note-to-self chat),
+  /// if it has already been loaded. Used to render the self FAB avatar.
+  LobbyUser? get _selfUser {
+    final id = _socketService.currentUserId;
+    if (id == null) return null;
+    for (final user in _lobbyUsers) {
+      if (user.id == id) return user;
+    }
+    return null;
+  }
+
+  /// Floating button for AI Chat, styled to match the gradient bot avatar used
+  /// in the lobby list (teal -> purple), rather than a flat fill.
+  Widget _buildAiFab() {
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Material(
+        elevation: 4,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        color: Colors.transparent,
+        child: Ink(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF00C9A7), Color(0xFF845EC2)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+          ),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const AiChatScreen(),
+                ),
+              ).then((_) {
+                _loadAiSessionPresence();
+                _loadLobby(useCacheFirst: false);
+              });
+            },
+            child: const Icon(
+              Icons.smart_toy_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Floating button that jumps straight into the chat with yourself, styled
+  /// with your own avatar initials/color (same avatar as in the chat list).
+  Widget _buildSelfFab() {
+    final self = _selfUser;
+    final initials = (self != null && self.initials.isNotEmpty)
+        ? self.initials
+        : 'You';
+    const color = Color(0xFF475569); // slate gray
+    return FloatingActionButton.small(
+      heroTag: 'fab_self',
+      tooltip: 'Message yourself',
+      onPressed: _openSelfChat,
+      backgroundColor: color,
+      foregroundColor: Colors.white,
+      elevation: 4,
+      shape: const CircleBorder(),
+      child: Text(
+        initials,
+        style: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  /// Open the chat with yourself, ensuring the self user exists in the lobby
+  /// first (so it works even before the list has hydrated it).
+  Future<void> _openSelfChat() async {
+    final id = _socketService.currentUserId ?? await _currentUserId;
+    if (id == null || !mounted) return;
+
+    LobbyUser? selfUser;
+    for (final user in _lobbyUsers) {
+      if (user.id == id) {
+        selfUser = user;
+        break;
+      }
+    }
+
+    if (selfUser == null) {
+      final username = await StorageService.getUsername();
+      final withSelf = await _ensureSelfUserInLobby(
+        users: _lobbyUsers,
+        currentUserId: id,
+        currentUsername: username,
+      );
+      for (final user in withSelf) {
+        if (user.id == id) {
+          selfUser = user;
+          break;
+        }
+      }
+    }
+
+    if (selfUser == null || !mounted) return;
+    final target = selfUser;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(otherUser: target),
+      ),
+    ).then((_) {
+      _currentlyViewingChatUserId = null;
+      _loadLobby(useCacheFirst: false);
+    });
+    _currentlyViewingChatUserId = id;
+  }
+
   /// Parse a timestamp string, treating it as UTC if no timezone info is present
   /// (matches the web app's parseTs() behavior)
   DateTime _parseUtcTimestamp(String timestamp) {
@@ -3131,26 +3256,11 @@ class _LobbyScreenState extends State<LobbyScreen>
               ? Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // AI Chat mini FAB
-                    FloatingActionButton.small(
-                      heroTag: 'fab_ai',
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const AiChatScreen(),
-                          ),
-                        ).then((_) {
-                          _loadAiSessionPresence();
-                          _loadLobby(useCacheFirst: false);
-                        });
-                      },
-                      backgroundColor: const Color(0xFF00D9FF),
-                      foregroundColor: Colors.white,
-                      elevation: 4,
-                      shape: const CircleBorder(),
-                      child: const Icon(Icons.smart_toy_rounded, size: 20),
-                    ),
+                    // Self (message yourself) mini FAB
+                    _buildSelfFab(),
+                    const SizedBox(height: 12),
+                    // AI Chat mini FAB (matches the lobby list's gradient bot avatar)
+                    _buildAiFab(),
                     const SizedBox(height: 12),
                     // New Chat main FAB
                     FloatingActionButton(
