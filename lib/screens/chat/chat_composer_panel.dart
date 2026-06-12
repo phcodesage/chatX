@@ -13,6 +13,7 @@ class ChatComposerPanel extends StatelessWidget {
     required this.backgroundColor,
     required this.composerInset,
     required this.showEmojiPicker,
+    required this.isEditing,
     required this.stablePanelHeight,
     required this.onShowEmojiPickerModal,
     required this.onClipboardPasteShortcut,
@@ -35,6 +36,7 @@ class ChatComposerPanel extends StatelessWidget {
   final Color backgroundColor;
   final double composerInset;
   final bool showEmojiPicker;
+  final bool isEditing;
   final double stablePanelHeight;
   final VoidCallback onShowEmojiPickerModal;
   final VoidCallback onClipboardPasteShortcut;
@@ -197,7 +199,7 @@ class ChatComposerPanel extends StatelessWidget {
                                 ),
                               ),
                               child: Text(
-                                'Send',
+                                isEditing ? 'Save' : 'Send',
                                 style: TextStyle(
                                   fontSize: 13.5 * scale,
                                   fontWeight: FontWeight.w600,

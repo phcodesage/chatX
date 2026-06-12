@@ -5077,18 +5077,34 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _insertOtherUserFirstName() {
-    // Capitalize the first letter, and collapse any trailing spaces the user
-    // already typed so we never end up with double spaces before the name.
+    // Capitalize the first letter.
     final raw = widget.otherUser.firstName.trim();
     if (raw.isEmpty) return;
     final firstName = raw[0].toUpperCase() + raw.substring(1);
 
-    final current = _messageController.text;
-    final trimmed = current.replaceFirst(RegExp(r'\s+$'), '');
-    final newText = trimmed.isEmpty ? '$firstName ' : '$trimmed $firstName ';
+    final text = _messageController.text;
+    final sel = _messageController.selection;
+    // Insert at the caret (replacing any selected range); fall back to the end
+    // when there's no valid selection.
+    final int start = sel.isValid ? sel.start : text.length;
+    final int end = sel.isValid ? sel.end : text.length;
+    final before = text.substring(0, start);
+    final after = text.substring(end);
+
+    // Add exactly one separating space on each side, but never a double: skip
+    // the space if one already exists there. (e.g. caret between "this" and
+    // "is" → "this Amol is", reusing the existing space, adding one after.)
+    final spaceBefore =
+        (before.isEmpty || RegExp(r'\s$').hasMatch(before)) ? '' : ' ';
+    final spaceAfter = RegExp(r'^\s').hasMatch(after) ? '' : ' ';
+
+    final inserted = '$spaceBefore$firstName$spaceAfter';
+    final newText = '$before$inserted$after';
+    final caret = (before + inserted).length;
+
     _messageController.value = TextEditingValue(
       text: newText,
-      selection: TextSelection.collapsed(offset: newText.length),
+      selection: TextSelection.collapsed(offset: caret),
       composing: TextRange.empty,
     );
     _inputFocusNode.requestFocus();
@@ -11217,6 +11233,7 @@ class _ChatScreenState extends State<ChatScreen>
                       backgroundColor: _headerColor,
                       composerInset: composerInset,
                       showEmojiPicker: _showEmojiPicker,
+                      isEditing: _editingMessage != null,
                       stablePanelHeight: stablePanelHeight,
                       onShowEmojiPickerModal: () =>
                           _showEmojiPickerModal(context),
