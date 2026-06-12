@@ -101,8 +101,10 @@ class LobbyUser {
     return first + last;
   }
 
-  /// Get a color for the avatar based on username
+  /// Get a color for the avatar based on user id.
+  /// Matches the web app (generate_avatar_url: colors[user.id % len]) so the
+  /// same person gets the same avatar background color on both platforms.
   int get avatarColorIndex {
-    return username.hashCode.abs() % 10;
+    return id % 10;
   }
 }

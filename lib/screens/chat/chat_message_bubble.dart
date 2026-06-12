@@ -356,15 +356,21 @@ class _ChatMessageBubbleState extends State<ChatMessageBubble> {
     final senderName = colonIndex > 0 ? preview.substring(0, colonIndex) : 'Reply';
     var contentText = colonIndex > 0 ? preview.substring(colonIndex + 1).trim() : preview;
 
-    if (contentText.contains('<audio') || contentText.contains('audio/')) {
-      contentText = '🎤 Voice message';
-    } else if (contentText.contains('<img') || contentText.contains('image/')) {
-      contentText = '🖼️ Photo';
-    } else if (contentText.contains('<video') || contentText.contains('video/')) {
-      contentText = '🎥 Video';
-    } else if (contentText.contains('file/') || contentText.endsWith('.pdf') ||
-        contentText.endsWith('.doc')) {
-      contentText = '📄 File';
+    // Safety net only for legacy/raw HTML that wasn't already cleaned upstream
+    // (the model parser + backend normally provide a clean label or filename).
+    // We intentionally do NOT collapse filenames like "report.pdf" into a generic
+    // "File" anymore — the real name is shown instead.
+    if (contentText.contains('<') && contentText.contains('>')) {
+      if (contentText.contains('<audio')) {
+        contentText = '🎤 Voice message';
+      } else if (contentText.contains('<img')) {
+        contentText = '🖼️ Photo';
+      } else if (contentText.contains('<video')) {
+        contentText = '🎥 Video';
+      } else {
+        contentText = contentText.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+        if (contentText.isEmpty) contentText = '📎 File';
+      }
     }
 
     return Opacity(

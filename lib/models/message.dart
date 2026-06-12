@@ -161,6 +161,15 @@ class Message {
       sender = value['sender']?.toString() ?? value['sender_id']?.toString();
       rawContent =
           value['content']?.toString() ?? value['message']?.toString() ?? '';
+      // For file/document replies, prefer the original filename so the preview
+      // shows e.g. "report.gp" instead of an empty/generic "File".
+      final messageType = value['message_type']?.toString() ?? '';
+      final fileName = value['file_name']?.toString();
+      if ((messageType == 'file' || messageType == 'document') &&
+          fileName != null &&
+          fileName.isNotEmpty) {
+        rawContent = fileName;
+      }
     }
 
     if (rawContent == null || rawContent.isEmpty) return null;

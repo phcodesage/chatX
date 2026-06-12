@@ -44,16 +44,16 @@ class ChatHeader extends StatelessWidget implements PreferredSizeWidget {
   // Same palette used in the contacts/lobby list so the chat header avatar
   // matches the contact tile exactly.
   static const List<Color> _avatarColors = [
-    Color(0xFFE91E63),
-    Color(0xFF9C27B0),
-    Color(0xFF673AB7),
-    Color(0xFF3F51B5),
-    Color(0xFF2196F3),
-    Color(0xFF00BCD4),
-    Color(0xFF009688),
-    Color(0xFF4CAF50),
-    Color(0xFFFF9800),
-    Color(0xFFFF5722),
+    Color(0xFF1F77B4),
+    Color(0xFFFF7F0E),
+    Color(0xFF2CA02C),
+    Color(0xFFD62728),
+    Color(0xFF9467BD),
+    Color(0xFF8C564B),
+    Color(0xFFE377C2),
+    Color(0xFF7F7F7F),
+    Color(0xFFBCBD22),
+    Color(0xFF17BECF),
   ];
 
   @override

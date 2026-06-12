@@ -4104,13 +4104,13 @@ class _ChatScreenState extends State<ChatScreen>
       if (msg.isDeleted) {
         previewText = 'Deleted message';
       } else if (msg.messageType == 'voice' || msg.messageType == 'audio') {
-        previewText = 'ðŸŽ¤ Voice message';
+        previewText = '🎤 Voice message';
       } else if (msg.messageType == 'image') {
-        previewText = 'ðŸ“· Photo';
+        previewText = '📷 Photo';
       } else if (msg.messageType == 'video') {
-        previewText = 'ðŸŽ¬ Video';
-      } else if (msg.messageType == 'file') {
-        previewText = 'ðŸ“Ž ${msg.fileName ?? "File"}';
+        previewText = '🎬 Video';
+      } else if (msg.messageType == 'file' || msg.messageType == 'document') {
+        previewText = '📎 ${msg.fileName ?? "File"}';
       } else if (msg.messageType == 'contact') {
         final contactName = ContactVCard.fromVCardString(msg.content)?.name;
         previewText = '[Contact] ${contactName ?? 'Contact'}';
@@ -14423,13 +14423,14 @@ class _ChatScreenState extends State<ChatScreen>
       content = 'Deleted message';
     } else if (message.messageType == 'voice' ||
         message.messageType == 'audio') {
-      content = 'ðŸŽ¤ Voice message';
+      content = '🎤 Voice message';
     } else if (message.messageType == 'image') {
-      content = 'ðŸ“· Photo';
+      content = '📷 Photo';
     } else if (message.messageType == 'video') {
-      content = 'ðŸŽ¬ Video';
-    } else if (message.messageType == 'file') {
-      content = 'ðŸ“Ž ${message.fileName ?? "File"}';
+      content = '🎬 Video';
+    } else if (message.messageType == 'file' ||
+        message.messageType == 'document') {
+      content = '📎 ${message.fileName ?? "File"}';
     } else {
       content = message.content.length > 50
           ? '${message.content.substring(0, 50)}...'
@@ -14937,16 +14938,16 @@ class _ChatScreenState extends State<ChatScreen>
 
   Color _getAvatarColor() {
     const colors = [
-      Color(0xFFE91E63),
-      Color(0xFF9C27B0),
-      Color(0xFF673AB7),
-      Color(0xFF3F51B5),
-      Color(0xFF2196F3),
-      Color(0xFF00BCD4),
-      Color(0xFF009688),
-      Color(0xFF4CAF50),
-      Color(0xFFFF9800),
-      Color(0xFFFF5722),
+      Color(0xFF1F77B4),
+      Color(0xFFFF7F0E),
+      Color(0xFF2CA02C),
+      Color(0xFFD62728),
+      Color(0xFF9467BD),
+      Color(0xFF8C564B),
+      Color(0xFFE377C2),
+      Color(0xFF7F7F7F),
+      Color(0xFFBCBD22),
+      Color(0xFF17BECF),
     ];
     return colors[widget.otherUser.avatarColorIndex % colors.length];
   }

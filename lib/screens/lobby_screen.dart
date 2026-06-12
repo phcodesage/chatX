@@ -85,18 +85,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
   // Typing indicator: maps userId → auto-clear timer
   final Map<int, Timer> _typingUsers = {};
 
-  // Avatar colors palette
+  // Avatar colors palette — matches the web app (generate_avatar_url) exactly
+  // so the same user shows the same avatar background color on both platforms.
   static const List<Color> avatarColors = [
-    Color(0xFFE91E63), // Pink
-    Color(0xFF9C27B0), // Purple
-    Color(0xFF673AB7), // Deep Purple
-    Color(0xFF3F51B5), // Indigo
-    Color(0xFF2196F3), // Blue
-    Color(0xFF00BCD4), // Cyan
-    Color(0xFF009688), // Teal
-    Color(0xFF4CAF50), // Green
-    Color(0xFFFF9800), // Orange
-    Color(0xFFFF5722), // Deep Orange
+    Color(0xFF1F77B4), // Blue
+    Color(0xFFFF7F0E), // Orange
+    Color(0xFF2CA02C), // Green
+    Color(0xFFD62728), // Red
+    Color(0xFF9467BD), // Purple
+    Color(0xFF8C564B), // Brown
+    Color(0xFFE377C2), // Pink
+    Color(0xFF7F7F7F), // Gray
+    Color(0xFFBCBD22), // Olive
+    Color(0xFF17BECF), // Cyan
   ];
 
   bool get _showAiSuggestion => true;
