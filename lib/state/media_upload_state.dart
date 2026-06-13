@@ -9,6 +9,13 @@ import '../services/media_upload_service.dart';
 class MediaUploadState extends ChangeNotifier {
   final Map<String, _UploadEntry> _uploads = {};
 
+  /// IDs of uploads that have been finalized (completed/removed). A late
+  /// progress callback can arrive AFTER an upload is removed on success and
+  /// would otherwise re-insert the entry at 100% — leaving the "Send File"
+  /// chip stuck showing 100% even though the message was already sent. We
+  /// remember finalized IDs and ignore any further updates for them.
+  final Set<String> _finalized = {};
+
   /// Updates the progress for a specific file upload.
   ///
   /// Enforces monotonic progress: ignores stale values where progress
@@ -16,6 +23,26 @@ class MediaUploadState extends ChangeNotifier {
   /// when the status indicates a retry (transitioning to retrying or
   /// uploading from a different status).
   void updateProgress(String fileId, UploadProgress progress) {
+    // A finalized upload can only be revived by an explicit retry; ignore any
+    // other (late) progress callbacks that would resurrect a finished upload.
+    if (_finalized.contains(fileId)) {
+      if (progress.status == UploadStatus.retrying) {
+        _finalized.remove(fileId);
+      } else {
+        return;
+      }
+    }
+
+    // A `success` update means the upload finished — the batch uploader emits a
+    // final progress event with status=success at 100%. Storing it would leave
+    // the entry sitting in the map (hasActiveUploads stays true, overallProgress
+    // = 1.0), so the "Send File" chip would be stuck at 100%. Treat it as a
+    // removal/finalize instead.
+    if (progress.status == UploadStatus.success) {
+      removeUpload(fileId);
+      return;
+    }
+
     final existing = _uploads[fileId];
 
     // Allow progress reset only on retry (status change to retrying/uploading from a different status)
@@ -38,15 +65,20 @@ class MediaUploadState extends ChangeNotifier {
 
   /// Marks a file upload as failed with an error message.
   void markFailed(String fileId, String errorMessage) {
-    final existing = _uploads[fileId];
+    // Don't resurrect an already-finalized (successfully removed) upload.
+    if (_finalized.contains(fileId)) return;
+    final existing = _uploads[fileId]?.progress;
     _uploads[fileId] = _UploadEntry(
-      progress: existing?.progress ??
-          UploadProgress(
-            fileIndex: 0,
-            totalFiles: 1,
-            fileProgress: 0.0,
-            status: UploadStatus.failed,
-          ),
+      // Force the status to `failed` (preserving the file index/progress).
+      // Previously this kept the existing progress as-is, which left the
+      // status at `uploading` at ~100% — so failed uploads were neither
+      // detected as failed nor cleaned up, and the chip stayed at 100%.
+      progress: UploadProgress(
+        fileIndex: existing?.fileIndex ?? 0,
+        totalFiles: existing?.totalFiles ?? 1,
+        fileProgress: existing?.fileProgress ?? 0.0,
+        status: UploadStatus.failed,
+      ),
       errorMessage: errorMessage,
     );
     notifyListeners();
@@ -55,12 +87,27 @@ class MediaUploadState extends ChangeNotifier {
   /// Removes a completed or cancelled upload from tracking.
   void removeUpload(String fileId) {
     _uploads.remove(fileId);
+    _finalized.add(fileId);
     notifyListeners();
+  }
+
+  /// Removes an upload only if it's still in a non-terminal in-flight state
+  /// (pending/uploading). Used to sweep orphaned entries after an upload flow
+  /// concludes without explicitly removing them (e.g. an unexpected exception,
+  /// or the message was confirmed via the socket echo instead of the REST
+  /// result) — otherwise the "Send File" chip stays stuck at 100%. Intentional
+  /// `retrying`/`failed` entries are left untouched.
+  void clearIfInFlight(String fileId) {
+    final status = _uploads[fileId]?.progress.status;
+    if (status == UploadStatus.pending || status == UploadStatus.uploading) {
+      removeUpload(fileId);
+    }
   }
 
   /// Clears all tracked uploads.
   void clearAll() {
     _uploads.clear();
+    _finalized.clear();
     notifyListeners();
   }
 

@@ -8296,23 +8296,51 @@ class _ChatScreenState extends State<ChatScreen>
     String caption,
     List<Message> optimisticMessages,
   ) async {
-    final results = await MediaUploadService.uploadBatch(
-      files: files,
-      recipientId: widget.otherUser.id,
-      caption: caption.isNotEmpty ? caption : null,
-      onProgress: (progress) {
-        // Update upload progress state
-        if (progress.fileIndex < trackingIds.length) {
-          _mediaUploadState.updateProgress(
-            trackingIds[progress.fileIndex],
-            progress,
-          );
-        }
-      },
-    );
+    try {
+      final results = await MediaUploadService.uploadBatch(
+        files: files,
+        recipientId: widget.otherUser.id,
+        caption: caption.isNotEmpty ? caption : null,
+        onProgress: (progress) {
+          // Update upload progress state
+          if (progress.fileIndex < trackingIds.length) {
+            _mediaUploadState.updateProgress(
+              trackingIds[progress.fileIndex],
+              progress,
+            );
+          }
+        },
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
+      await _processMediaBatchResults(
+        results,
+        files,
+        trackingIds,
+        caption,
+        optimisticMessages,
+      );
+    } catch (e) {
+      debugPrint('Error uploading media batch: $e');
+    } finally {
+      // Sweep any orphaned in-flight entries (e.g. uploadBatch threw, or a file
+      // was confirmed via the socket echo rather than the REST result) so the
+      // "Send File" chip doesn't stay stuck at 100%. Intentional failed/retrying
+      // entries are preserved.
+      for (final id in trackingIds) {
+        _mediaUploadState.clearIfInFlight(id);
+      }
+    }
+  }
+
+  Future<void> _processMediaBatchResults(
+    List<UploadResult> results,
+    List<CompressionResult> files,
+    List<String> trackingIds,
+    String caption,
+    List<Message> optimisticMessages,
+  ) async {
     // Process upload results
     for (int i = 0; i < results.length; i++) {
       if (i >= optimisticMessages.length || i >= trackingIds.length) continue;
@@ -9268,7 +9296,11 @@ class _ChatScreenState extends State<ChatScreen>
           });
         }
       },
-    ).then((_) {
+    ).whenComplete(() {
+      // Sweep an orphaned in-flight entry (e.g. the message was confirmed via
+      // the socket echo rather than the REST success branch) so the chip
+      // doesn't stay at 100%. Preserves intentional failed/retrying entries.
+      _mediaUploadState.clearIfInFlight(trackingId);
       if (mounted) {
         setState(() {
           _isActivelyUploading = false;
@@ -15772,6 +15804,7 @@ class _FilePreviewModalContent extends StatefulWidget {
 class _FilePreviewModalContentState extends State<_FilePreviewModalContent> {
   bool _isSending = false;
   double _lastProgress = 0.0;
+  bool _didAutoDismiss = false;
 
   String _formatFileSize(int bytes) {
     if (bytes < 1024) return '$bytes B';
@@ -15796,9 +15829,22 @@ class _FilePreviewModalContentState extends State<_FilePreviewModalContent> {
 
   void _onProgressChanged() {
     final progress = widget.uploadProgressNotifier.value;
-    // Upload completed: progress was > 0 (uploading) and reset to 0 (done)
-    if (_isSending && _lastProgress > 0.05 && progress == 0.0) {
-      // Auto-dismiss the modal after a brief moment to show 100%
+    // Upload completed — dismiss the modal. We detect completion two ways:
+    //  1. Progress reaches 100% (the reliable signal; the parent removes the
+    //     upload right after, so we must not wait for a reset to 0.0 that the
+    //     UI may never re-render in time).
+    //  2. Fallback: progress was mid-upload (>0.05) then reset to 0.0.
+    if (_isSending && !_didAutoDismiss && progress >= 1.0) {
+      _didAutoDismiss = true;
+      // Show 100% briefly, then close.
+      Future.delayed(const Duration(milliseconds: 350), () {
+        if (mounted && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+      });
+    } else if (_isSending && !_didAutoDismiss &&
+        _lastProgress > 0.05 && progress == 0.0) {
+      _didAutoDismiss = true;
       if (mounted) {
         Navigator.of(context).pop();
       }
